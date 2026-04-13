@@ -1,4 +1,5 @@
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,6 +30,11 @@ async function listFiles(dir) {
   }
 }
 
+async function sha256(filePath) {
+  const content = await readFile(filePath);
+  return createHash("sha256").update(content).digest("hex");
+}
+
 function requireFiles(files, required, label) {
   for (const fileName of required) {
     if (!files.includes(fileName)) {
@@ -38,12 +44,33 @@ function requireFiles(files, required, label) {
   }
 }
 
+async function requireMatchingFile(fileName) {
+  const buildPath = path.join(buildDir, fileName);
+  const stagedPath = path.join(vendorDir, fileName);
+  const [buildHash, stagedHash] = await Promise.all([
+    sha256(buildPath),
+    sha256(stagedPath)
+  ]);
+
+  if (buildHash !== stagedHash) {
+    throw new Error(
+      `staged artifact drift detected for ${fileName}: build=${buildHash} staged=${stagedHash}`
+    );
+  }
+
+  console.log(`verified staged artifact matches build output: ${fileName}`);
+}
+
 async function main() {
   const buildFiles = await listFiles(buildDir);
   const stagedFiles = await listFiles(vendorDir);
 
   requireFiles(buildFiles, REQUIRED_ARTIFACTS, "build");
   requireFiles(stagedFiles, REQUIRED_ARTIFACTS, "staged");
+
+  for (const fileName of REQUIRED_ARTIFACTS) {
+    await requireMatchingFile(fileName);
+  }
 
   const buildWorkers = buildFiles.filter((fileName) =>
     OPTIONAL_PTHREAD_WORKER_PATTERN.test(fileName)
@@ -86,6 +113,10 @@ async function main() {
 
   for (const fileName of stagedWorkers) {
     console.log(`found staged pthread worker helper: ${fileName}`);
+  }
+
+  for (const fileName of buildWorkers) {
+    await requireMatchingFile(fileName);
   }
 }
 

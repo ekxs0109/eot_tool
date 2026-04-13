@@ -7,6 +7,11 @@ BUILD_DIR="$ROOT_DIR/build"
 PACKAGE_DIR="$ROOT_DIR/packages/fonttool-wasm"
 STAGED_WASM_DIR="$PACKAGE_DIR/vendor/wasm"
 
+if ! command -v node >/dev/null 2>&1; then
+  echo "error: node is required for wasm artifact staging and verification" >&2
+  exit 1
+fi
+
 required_artifacts=(
   "$BUILD_DIR/fonttool-wasm.js"
   "$BUILD_DIR/fonttool-wasm.wasm"
@@ -62,8 +67,7 @@ else
   echo "optional pthread worker helper not emitted by this toolchain"
 fi
 
-if command -v node >/dev/null 2>&1; then
-  BUILD_DIR="$BUILD_DIR" node <<'EOF'
+BUILD_DIR="$BUILD_DIR" node <<'EOF'
 const { pathToFileURL } = require('url');
 const path = require('path');
 
@@ -104,8 +108,5 @@ main().catch((error) => {
   process.exit(1);
 });
 EOF
-else
-  echo "note: node not available; skipping runtime mode metadata verification"
-fi
 
 echo "PASS: wasm artifacts verified"
