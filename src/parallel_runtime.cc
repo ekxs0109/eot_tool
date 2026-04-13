@@ -101,6 +101,10 @@ static size_t parallel_runtime_default_threads(void) {
   return native_threads;
 }
 
+static bool parallel_runtime_fallback_reason_is_none(const char *reason) {
+  return reason == NULL || reason[0] == '\0';
+}
+
 static parallel_runtime_resolution_t parallel_runtime_resolve(size_t task_count) {
   parallel_runtime_resolution_t resolution;
   const char *configured_threads = parallel_runtime_get_env("EOT_TOOL_THREADS");
@@ -139,9 +143,15 @@ static parallel_runtime_resolution_t parallel_runtime_resolve(size_t task_count)
   if (resolution.effective_threads > task_count) {
     resolution.effective_threads = task_count;
     if (resolution.effective_threads > 0u && resolution.requested_threads > resolution.effective_threads &&
-        resolution.fallback_reason == kFallbackReasonNone) {
+        parallel_runtime_fallback_reason_is_none(resolution.fallback_reason)) {
       resolution.fallback_reason = kFallbackReasonTaskCountClamped;
     }
+  }
+
+  if (resolution.effective_threads <= 1u) {
+    resolution.resolved_mode = kResolvedModeSingle;
+  } else {
+    resolution.resolved_mode = kResolvedModeThreaded;
   }
 
   return resolution;

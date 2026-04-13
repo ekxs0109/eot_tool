@@ -126,6 +126,13 @@ static void test_parallel_runtime_supports_single_thread_test_override(void) {
   parallel_runtime_clear_test_env();
 }
 
+static void test_parallel_runtime_effective_threads_reports_preferred_workers_before_task_clamp(void) {
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_EQ_SIZE(parallel_runtime_effective_threads(), 8u);
+  parallel_runtime_clear_test_env();
+}
+
 static void test_parallel_runtime_runs_indexed_tasks_in_order(void) {
   indexed_context context = {0, {0}};
 
@@ -174,11 +181,35 @@ static void test_parallel_runtime_forces_single_thread_mode(void) {
   parallel_runtime_clear_test_env();
   ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
   ASSERT_OK(parallel_runtime_set_requested_mode("single"));
+  ASSERT_EQ_SIZE(parallel_runtime_effective_threads(), 1u);
   ASSERT_OK(parallel_runtime_run_indexed_tasks(4u, ok_task, NULL));
   ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 1u);
   ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 1u);
   ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "single");
   ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "requested-single");
+}
+
+static void test_parallel_runtime_reports_single_mode_after_task_clamp(void) {
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK(parallel_runtime_run_indexed_tasks(1u, ok_task, NULL));
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 8u);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 1u);
+  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "single");
+  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "task-count-clamped");
+}
+
+static void test_parallel_runtime_threaded_mode_restores_normal_parallel_resolution(void) {
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK(parallel_runtime_set_requested_mode("single"));
+  ASSERT_OK(parallel_runtime_set_requested_mode("threaded"));
+  ASSERT_EQ_SIZE(parallel_runtime_effective_threads(), 8u);
+  ASSERT_OK(parallel_runtime_run_indexed_tasks(4u, ok_task, NULL));
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 8u);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 4u);
+  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "threaded");
+  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "task-count-clamped");
 }
 
 static void test_parallel_runtime_clamps_effective_threads_to_task_count(void) {
@@ -246,6 +277,8 @@ extern "C" void register_parallel_runtime_tests(void) {
                 test_parallel_runtime_defaults_to_at_least_one_thread);
   test_register("test_parallel_runtime_supports_single_thread_test_override",
                 test_parallel_runtime_supports_single_thread_test_override);
+  test_register("test_parallel_runtime_effective_threads_reports_preferred_workers_before_task_clamp",
+                test_parallel_runtime_effective_threads_reports_preferred_workers_before_task_clamp);
   test_register("test_parallel_runtime_runs_indexed_tasks_in_order",
                 test_parallel_runtime_runs_indexed_tasks_in_order);
   test_register("test_parallel_runtime_invalid_override_falls_back_to_at_least_one_thread",
@@ -256,6 +289,10 @@ extern "C" void register_parallel_runtime_tests(void) {
                 test_parallel_runtime_reports_requested_and_effective_threads);
   test_register("test_parallel_runtime_forces_single_thread_mode",
                 test_parallel_runtime_forces_single_thread_mode);
+  test_register("test_parallel_runtime_reports_single_mode_after_task_clamp",
+                test_parallel_runtime_reports_single_mode_after_task_clamp);
+  test_register("test_parallel_runtime_threaded_mode_restores_normal_parallel_resolution",
+                test_parallel_runtime_threaded_mode_restores_normal_parallel_resolution);
   test_register("test_parallel_runtime_clamps_effective_threads_to_task_count",
                 test_parallel_runtime_clamps_effective_threads_to_task_count);
   test_register("test_parallel_runtime_waits_for_all_started_tasks_before_reporting_error",
