@@ -111,6 +111,22 @@ static void test_wasm_api_exposes_single_mode_runtime_diagnostics(void) {
   parallel_runtime_clear_test_env();
 }
 
+static void test_wasm_api_rejects_null_diagnostics_pointer(void) {
+  ASSERT_TRUE(wasm_runtime_get_diagnostics(nullptr) == EOT_ERR_INVALID_ARGUMENT);
+}
+
+static void test_wasm_api_reports_zero_effective_threads_for_zero_task_run(void) {
+  wasm_runtime_diagnostics_t diagnostics = {};
+
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK(parallel_runtime_run_indexed_tasks(0u, nullptr, nullptr));
+  ASSERT_OK(wasm_runtime_get_diagnostics(&diagnostics));
+  ASSERT_EQ_SIZE(diagnostics.requested_threads, 8u);
+  ASSERT_EQ_SIZE(diagnostics.effective_threads, 0u);
+  parallel_runtime_clear_test_env();
+}
+
 extern "C" void register_wasm_api_tests(void) {
   test_register("test_browser_wasm_api_converts_cff2_instance",
                 test_browser_wasm_api_converts_cff2_instance);
@@ -120,4 +136,8 @@ extern "C" void register_wasm_api_tests(void) {
                 test_wasm_api_exposes_runtime_diagnostics_struct);
   test_register("test_wasm_api_exposes_single_mode_runtime_diagnostics",
                 test_wasm_api_exposes_single_mode_runtime_diagnostics);
+  test_register("test_wasm_api_rejects_null_diagnostics_pointer",
+                test_wasm_api_rejects_null_diagnostics_pointer);
+  test_register("test_wasm_api_reports_zero_effective_threads_for_zero_task_run",
+                test_wasm_api_reports_zero_effective_threads_for_zero_task_run);
 }

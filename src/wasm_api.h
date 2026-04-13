@@ -18,7 +18,11 @@ typedef struct {
 typedef struct {
   size_t requested_threads;
   size_t effective_threads;
-  /* These strings point to static process-lifetime storage. */
+  /*
+   * Diagnostics for the most recent native parallel-runtime run.
+   * effective_threads may be 0 when the most recent run had zero tasks.
+   * These strings point to static process-lifetime storage.
+   */
   const char *resolved_mode;
   const char *fallback_reason;
 } wasm_runtime_diagnostics_t;
@@ -30,6 +34,7 @@ eot_status_t wasm_convert_otf_to_embedded_font(const uint8_t *input,
                                                const char *output_kind,
                                                const char *variation_axes,
                                                wasm_buffer_t *out);
+/* Returns process-global diagnostics for the most recent native runtime run. */
 eot_status_t wasm_runtime_get_diagnostics(wasm_runtime_diagnostics_t *diagnostics);
 
 #ifdef __cplusplus
