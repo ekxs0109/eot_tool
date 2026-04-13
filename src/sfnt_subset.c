@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "byte_io.h"
+#include "parallel_runtime.h"
 #include "subset_backend_harfbuzz.h"
 #include "table_policy.h"
 
@@ -58,6 +59,14 @@ typedef struct {
   uint32_t end_code;
   uint32_t start_glyph_id;
 } cmap12_group_t;
+
+typedef struct {
+  const sfnt_font_t *input;
+  const subset_plan_t *plan;
+  sfnt_font_t *output;
+  subset_warnings_t *warnings;
+  eot_status_t status;
+} subset_font_task_t;
 
 static sfnt_table_t *get_table(const sfnt_font_t *font, uint32_t tag) {
   return sfnt_font_get_table((sfnt_font_t *)font, tag);
@@ -933,6 +942,23 @@ eot_status_t sfnt_subset_apply_output_table_policy(sfnt_font_t *output,
   }
 
   return EOT_OK;
+}
+
+static eot_status_t run_subset_font_task(void *task_context) {
+  subset_font_task_t *task = (subset_font_task_t *)task_context;
+
+  if (task == NULL || task->input == NULL || task->plan == NULL ||
+      task->output == NULL) {
+    return EOT_ERR_INVALID_ARGUMENT;
+  }
+
+  task->status = subset_backend_harfbuzz_run(task->input, task->plan,
+                                             task->output, task->warnings);
+  if (task->status == EOT_OK) {
+    task->status = sfnt_subset_apply_output_table_policy(task->output,
+                                                         task->warnings);
+  }
+  return task->status;
 }
 
 static eot_status_t build_head_table(const sfnt_font_t *input, uint8_t **out_data,
@@ -1827,6 +1853,7 @@ eot_status_t sfnt_subset_font_with_warnings(const sfnt_font_t *input,
                                             sfnt_font_t *output,
                                             subset_warnings_t *warnings) {
   subset_plan_t plan;
+  subset_font_task_t task;
   eot_status_t status;
 
   if (input == NULL || request == NULL || output == NULL) {
@@ -1852,9 +1879,18 @@ eot_status_t sfnt_subset_font_with_warnings(const sfnt_font_t *input,
     return status;
   }
 
-  status = subset_backend_harfbuzz_run(input, &plan, output, warnings);
+  /* Keep subsetting itself serial until the backend exposes safe internal
+   * parallel work, but route the stage through the shared runtime so its
+   * execution model and diagnostics are explicit and testable. */
+  task.input = input;
+  task.plan = &plan;
+  task.output = output;
+  task.warnings = warnings;
+  task.status = EOT_OK;
+  status = parallel_runtime_run_task_list(&task, 1u, sizeof(task),
+                                          run_subset_font_task);
   if (status == EOT_OK) {
-    status = sfnt_subset_apply_output_table_policy(output, warnings);
+    status = task.status;
   }
 
   subset_plan_destroy(&plan);

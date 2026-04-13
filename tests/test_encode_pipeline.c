@@ -299,12 +299,32 @@ static void test_encode_opensans_matches_with_single_thread_override(void) {
              "assertion failed: parallel_runtime_last_run_effective_threads() == 1u");
     goto cleanup;
   }
+  if (parallel_runtime_last_run_task_count() != 3u) {
+    snprintf(failure, sizeof(failure),
+             "assertion failed: parallel_runtime_last_run_task_count() == 3u");
+    goto cleanup;
+  }
+  if (parallel_runtime_last_run_requested_threads() != 1u) {
+    snprintf(failure, sizeof(failure),
+             "assertion failed: parallel_runtime_last_run_requested_threads() == 1u");
+    goto cleanup;
+  }
+  if (strcmp(parallel_runtime_last_run_resolved_mode(), "single") != 0) {
+    snprintf(failure, sizeof(failure),
+             "assertion failed: parallel_runtime_last_run_resolved_mode() == \"single\"");
+    goto cleanup;
+  }
+  if (strcmp(parallel_runtime_last_run_fallback_reason(), "") != 0) {
+    snprintf(failure, sizeof(failure),
+             "assertion failed: parallel_runtime_last_run_fallback_reason() == \"\"");
+    goto cleanup;
+  }
 
   parallel_runtime_clear_test_env();
-  status = parallel_runtime_set_test_env("EOT_TOOL_THREADS", "3");
+  status = parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8");
   if (status != EOT_OK) {
     snprintf(failure, sizeof(failure),
-             "assertion failed: parallel_runtime_set_test_env(\"EOT_TOOL_THREADS\", \"3\") returned %d",
+             "assertion failed: parallel_runtime_set_test_env(\"EOT_TOOL_THREADS\", \"8\") returned %d",
              status);
     goto cleanup;
   }
@@ -320,15 +340,24 @@ static void test_encode_opensans_matches_with_single_thread_override(void) {
              "assertion failed: parallel_runtime_last_run_task_count() == 3u");
     goto cleanup;
   }
-
-  if (parallel_runtime_last_run_effective_threads() <= 1u) {
-    snprintf(failure, sizeof(failure),
-             "assertion failed: parallel_runtime_last_run_effective_threads() > 1u");
-    goto cleanup;
-  }
   if (parallel_runtime_last_run_effective_threads() != 3u) {
     snprintf(failure, sizeof(failure),
              "assertion failed: parallel_runtime_last_run_effective_threads() == 3u");
+    goto cleanup;
+  }
+  if (parallel_runtime_last_run_requested_threads() != 8u) {
+    snprintf(failure, sizeof(failure),
+             "assertion failed: parallel_runtime_last_run_requested_threads() == 8u");
+    goto cleanup;
+  }
+  if (strcmp(parallel_runtime_last_run_resolved_mode(), "threaded") != 0) {
+    snprintf(failure, sizeof(failure),
+             "assertion failed: parallel_runtime_last_run_resolved_mode() == \"threaded\"");
+    goto cleanup;
+  }
+  if (strcmp(parallel_runtime_last_run_fallback_reason(), "task-count-clamped") != 0) {
+    snprintf(failure, sizeof(failure),
+             "assertion failed: parallel_runtime_last_run_fallback_reason() == \"task-count-clamped\"");
     goto cleanup;
   }
   if (serial.length != parallel.length) {
