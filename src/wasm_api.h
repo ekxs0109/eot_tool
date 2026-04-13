@@ -18,6 +18,7 @@ typedef struct {
 typedef struct {
   size_t requested_threads;
   size_t effective_threads;
+  /* These strings point to static process-lifetime storage. */
   const char *resolved_mode;
   const char *fallback_reason;
 } wasm_runtime_diagnostics_t;

@@ -3,6 +3,8 @@
 #include <cstring>
 #include <cstdlib>
 
+#include "parallel_runtime.h"
+
 extern "C" {
 #include "cff_reader.h"
 #include "cff_variation.h"
@@ -59,6 +61,19 @@ eot_status_t ResolveVariationLocation(const uint8_t *input, size_t input_size,
 
 extern "C" const char *wasm_runtime_thread_mode(void) {
   return GetRuntimeThreadMode();
+}
+
+extern "C" eot_status_t wasm_runtime_get_diagnostics(
+    wasm_runtime_diagnostics_t *diagnostics) {
+  if (diagnostics == nullptr) {
+    return EOT_ERR_INVALID_ARGUMENT;
+  }
+
+  diagnostics->requested_threads = parallel_runtime_last_run_requested_threads();
+  diagnostics->effective_threads = parallel_runtime_last_run_effective_threads();
+  diagnostics->resolved_mode = parallel_runtime_last_run_resolved_mode();
+  diagnostics->fallback_reason = parallel_runtime_last_run_fallback_reason();
+  return EOT_OK;
 }
 
 extern "C" void wasm_buffer_destroy(wasm_buffer_t *buffer) {

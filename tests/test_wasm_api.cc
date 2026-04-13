@@ -3,6 +3,7 @@
 
 extern "C" {
 #include "../src/file_io.h"
+#include "../src/parallel_runtime.h"
 #include "../src/wasm_api.h"
 void test_register(const char *name, void (*fn)(void));
 void test_fail_with_message(const char *message);
@@ -26,6 +27,38 @@ void test_fail_with_message(const char *message);
     return; \
   } \
 } while (0)
+
+#define ASSERT_EQ_SIZE(actual, expected) do { \
+  size_t actual__ = (size_t)(actual); \
+  size_t expected__ = (size_t)(expected); \
+  if (actual__ != expected__) { \
+    char msg[256]; \
+    snprintf(msg, sizeof(msg), "assertion failed: %s == %s (actual=%zu expected=%zu)", \
+             #actual, #expected, actual__, expected__); \
+    test_fail_with_message(msg); \
+    return; \
+  } \
+} while (0)
+
+#define ASSERT_STREQ(actual, expected) do { \
+  const char *actual__ = (actual); \
+  const char *expected__ = (expected); \
+  if (((actual__ == nullptr) != (expected__ == nullptr)) || \
+      (actual__ != nullptr && strcmp(actual__, expected__) != 0)) { \
+    char msg[256]; \
+    snprintf(msg, sizeof(msg), "assertion failed: %s == %s (actual=%s expected=%s)", \
+             #actual, #expected, actual__ != nullptr ? actual__ : "(null)", \
+             expected__ != nullptr ? expected__ : "(null)"); \
+    test_fail_with_message(msg); \
+    return; \
+  } \
+} while (0)
+
+static eot_status_t ok_task(size_t index, void *context) {
+  (void)index;
+  (void)context;
+  return EOT_OK;
+}
 
 static void test_browser_wasm_api_converts_cff2_instance(void) {
   file_buffer_t input = {};
@@ -52,8 +85,30 @@ static void test_wasm_runtime_mode_constant_is_exposed(void) {
 static void test_wasm_api_exposes_runtime_diagnostics_struct(void) {
   wasm_runtime_diagnostics_t diagnostics = {};
 
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK(parallel_runtime_run_indexed_tasks(3u, ok_task, nullptr));
   ASSERT_OK(wasm_runtime_get_diagnostics(&diagnostics));
+  ASSERT_EQ_SIZE(diagnostics.requested_threads, 8u);
+  ASSERT_EQ_SIZE(diagnostics.effective_threads, 3u);
+  ASSERT_STREQ(diagnostics.resolved_mode, "threaded");
+  ASSERT_STREQ(diagnostics.fallback_reason, "task-count-clamped");
+  parallel_runtime_clear_test_env();
+}
+
+static void test_wasm_api_exposes_single_mode_runtime_diagnostics(void) {
+  wasm_runtime_diagnostics_t diagnostics = {};
+
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK(parallel_runtime_set_requested_mode("single"));
+  ASSERT_OK(parallel_runtime_run_indexed_tasks(4u, ok_task, nullptr));
+  ASSERT_OK(wasm_runtime_get_diagnostics(&diagnostics));
+  ASSERT_EQ_SIZE(diagnostics.requested_threads, 1u);
   ASSERT_TRUE(diagnostics.effective_threads >= 1u);
+  ASSERT_STREQ(diagnostics.resolved_mode, "single");
+  ASSERT_STREQ(diagnostics.fallback_reason, "requested-single");
+  parallel_runtime_clear_test_env();
 }
 
 extern "C" void register_wasm_api_tests(void) {
@@ -63,4 +118,6 @@ extern "C" void register_wasm_api_tests(void) {
                 test_wasm_runtime_mode_constant_is_exposed);
   test_register("test_wasm_api_exposes_runtime_diagnostics_struct",
                 test_wasm_api_exposes_runtime_diagnostics_struct);
+  test_register("test_wasm_api_exposes_single_mode_runtime_diagnostics",
+                test_wasm_api_exposes_single_mode_runtime_diagnostics);
 }
