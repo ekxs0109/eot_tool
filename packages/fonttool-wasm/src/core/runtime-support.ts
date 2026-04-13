@@ -25,6 +25,7 @@ export function detectRuntimeSupport(): RuntimeSupport {
     isBrowser && !isNode && sharedArrayBuffer && crossOriginIsolated;
 
   return {
+    runtimeKind: isNode ? "node" : "browser",
     sharedArrayBuffer,
     crossOriginIsolated,
     pthreadsPossible

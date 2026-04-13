@@ -16,7 +16,11 @@ export type {
   OutputKind,
   ResolvedMode,
   RuntimeAssets,
+  RuntimeDecision,
+  RuntimeDiagnostics,
+  RuntimeKind,
   RuntimeStrategy,
   RuntimeSupport,
+  RuntimeVariant,
   RuntimeVariantAssets
 } from "./types.js";

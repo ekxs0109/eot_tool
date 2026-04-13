@@ -1,12 +1,15 @@
 export type RuntimeStrategy = "single" | "pthreads" | "auto";
 
 export type ResolvedMode = "single-thread" | "pthreads";
+export type RuntimeKind = "node" | "browser";
+export type RuntimeVariant = "single" | "pthread";
 
 export type OutputKind = "eot" | "fntdata";
 
 export type FonttoolBinaryInput = ArrayBuffer | ArrayBufferView;
 
 export interface RuntimeSupport {
+  runtimeKind: RuntimeKind;
   sharedArrayBuffer: boolean;
   crossOriginIsolated: boolean;
   pthreadsPossible: boolean;
@@ -29,21 +32,32 @@ export interface LoadRuntimeOptions {
   support?: RuntimeSupport;
 }
 
+export interface RuntimeDecision {
+  requestedStrategy: RuntimeStrategy;
+  resolvedMode: ResolvedMode;
+  runtimeKind: RuntimeKind;
+  variant: RuntimeVariant;
+  fallbackReason?: string;
+}
+
+export interface RuntimeDiagnostics extends RuntimeDecision {
+  requestedThreads: number;
+  effectiveThreads: number;
+}
+
 export interface ConvertOptions extends LoadRuntimeOptions {
   outputKind: OutputKind;
   variationAxes?: string;
 }
 
 export interface ConvertResult {
-  requestedStrategy: RuntimeStrategy;
-  resolvedMode: ResolvedMode;
+  diagnostics: RuntimeDiagnostics;
   outputKind: OutputKind;
   data: Uint8Array;
 }
 
 export interface LoadedFonttoolRuntime {
-  readonly requestedStrategy: RuntimeStrategy;
-  readonly resolvedMode: ResolvedMode;
+  readonly diagnostics: RuntimeDiagnostics;
   readonly assets: RuntimeAssets;
   readonly support: RuntimeSupport;
   convert(

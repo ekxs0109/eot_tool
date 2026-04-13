@@ -6,7 +6,8 @@ import type {
   FonttoolBinaryInput,
   LoadedFonttoolRuntime,
   LoadRuntimeOptions,
-  ResolvedMode,
+  RuntimeDecision,
+  RuntimeDiagnostics,
   RuntimeStrategy,
   RuntimeSupport
 } from "./types.js";
@@ -17,13 +18,34 @@ const NOT_IMPLEMENTED_MESSAGE =
 export function resolveRuntimeMode(
   strategy: RuntimeStrategy = "single",
   support: RuntimeSupport = detectRuntimeSupport()
-): ResolvedMode {
+): RuntimeDecision {
   if (strategy === "single") {
-    return "single-thread";
+    return {
+      fallbackReason: "requested-single",
+      requestedStrategy: strategy,
+      resolvedMode: "single-thread",
+      runtimeKind: support.runtimeKind,
+      variant: "single"
+    };
   }
 
   if (strategy === "auto") {
-    return support.pthreadsPossible ? "pthreads" : "single-thread";
+    if (support.pthreadsPossible) {
+      return {
+        requestedStrategy: strategy,
+        resolvedMode: "pthreads",
+        runtimeKind: support.runtimeKind,
+        variant: "pthread"
+      };
+    }
+
+    return {
+      fallbackReason: "pthreads-unavailable",
+      requestedStrategy: strategy,
+      resolvedMode: "single-thread",
+      runtimeKind: support.runtimeKind,
+      variant: "single"
+    };
   }
 
   if (!support.pthreadsPossible) {
@@ -32,20 +54,28 @@ export function resolveRuntimeMode(
     );
   }
 
-  return "pthreads";
+  return {
+    requestedStrategy: strategy,
+    resolvedMode: "pthreads",
+    runtimeKind: support.runtimeKind,
+    variant: "pthread"
+  };
 }
 
 function createPlaceholderRuntime(
-  requestedStrategy: RuntimeStrategy,
-  resolvedMode: ResolvedMode,
+  decision: RuntimeDecision,
   options: LoadRuntimeOptions
 ): LoadedFonttoolRuntime {
   const assets = resolveRuntimeAssets(options.assets);
   const support = options.support ?? detectRuntimeSupport();
+  const diagnostics: RuntimeDiagnostics = {
+    ...decision,
+    effectiveThreads: decision.variant === "pthread" ? 2 : 1,
+    requestedThreads: decision.requestedStrategy === "single" ? 1 : 0
+  };
 
   return {
-    requestedStrategy,
-    resolvedMode,
+    diagnostics,
     assets,
     support,
     async convert(
@@ -65,7 +95,10 @@ function createPlaceholderRuntime(
 export async function loadSingleThreadRuntime(
   options: LoadRuntimeOptions = {}
 ): Promise<LoadedFonttoolRuntime> {
-  return createPlaceholderRuntime("single", "single-thread", options);
+  return createPlaceholderRuntime(
+    resolveRuntimeMode("single", options.support ?? detectRuntimeSupport()),
+    options
+  );
 }
 
 export async function loadPthreadsRuntime(
@@ -79,7 +112,7 @@ export async function loadPthreadsRuntime(
     );
   }
 
-  return createPlaceholderRuntime("pthreads", "pthreads", {
+  return createPlaceholderRuntime(resolveRuntimeMode("pthreads", support), {
     ...options,
     support
   });
@@ -90,16 +123,16 @@ export async function loadRuntime(
 ): Promise<LoadedFonttoolRuntime> {
   const requestedStrategy = options.strategy ?? "single";
   const support = options.support ?? detectRuntimeSupport();
-  const resolvedMode = resolveRuntimeMode(requestedStrategy, support);
+  const decision = resolveRuntimeMode(requestedStrategy, support);
 
-  if (resolvedMode === "pthreads") {
+  if (decision.resolvedMode === "pthreads") {
     return loadPthreadsRuntime({
       ...options,
       support
     });
   }
 
-  return createPlaceholderRuntime(requestedStrategy, resolvedMode, {
+  return createPlaceholderRuntime(decision, {
     ...options,
     support
   });
