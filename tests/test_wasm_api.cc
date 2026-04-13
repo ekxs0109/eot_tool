@@ -49,9 +49,18 @@ static void test_wasm_runtime_mode_constant_is_exposed(void) {
               strcmp(mode, "pthreads") == 0);
 }
 
+static void test_wasm_api_exposes_runtime_diagnostics_struct(void) {
+  wasm_runtime_diagnostics_t diagnostics = {};
+
+  ASSERT_OK(wasm_runtime_get_diagnostics(&diagnostics));
+  ASSERT_TRUE(diagnostics.effective_threads >= 1u);
+}
+
 extern "C" void register_wasm_api_tests(void) {
   test_register("test_browser_wasm_api_converts_cff2_instance",
                 test_browser_wasm_api_converts_cff2_instance);
   test_register("test_wasm_runtime_mode_constant_is_exposed",
                 test_wasm_runtime_mode_constant_is_exposed);
+  test_register("test_wasm_api_exposes_runtime_diagnostics_struct",
+                test_wasm_api_exposes_runtime_diagnostics_struct);
 }

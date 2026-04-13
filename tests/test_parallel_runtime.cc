@@ -142,6 +142,14 @@ static void test_parallel_runtime_uses_requested_parallelism_when_available(void
   parallel_runtime_clear_test_env();
 }
 
+static void test_parallel_runtime_reports_requested_and_effective_threads(void) {
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK(parallel_runtime_run_indexed_tasks(3u, ok_task, NULL));
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 8u);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 3u);
+}
+
 static void test_parallel_runtime_clamps_effective_threads_to_task_count(void) {
   parallel_runtime_clear_test_env();
   ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "64"));
@@ -213,6 +221,8 @@ extern "C" void register_parallel_runtime_tests(void) {
                 test_parallel_runtime_invalid_override_falls_back_to_at_least_one_thread);
   test_register("test_parallel_runtime_uses_requested_parallelism_when_available",
                 test_parallel_runtime_uses_requested_parallelism_when_available);
+  test_register("test_parallel_runtime_reports_requested_and_effective_threads",
+                test_parallel_runtime_reports_requested_and_effective_threads);
   test_register("test_parallel_runtime_clamps_effective_threads_to_task_count",
                 test_parallel_runtime_clamps_effective_threads_to_task_count);
   test_register("test_parallel_runtime_waits_for_all_started_tasks_before_reporting_error",

@@ -23,6 +23,7 @@ eot_status_t parallel_runtime_run_task_list(void *tasks,
 eot_status_t parallel_runtime_set_test_env(const char *name, const char *value);
 void parallel_runtime_clear_test_env(void);
 size_t parallel_runtime_last_run_task_count(void);
+size_t parallel_runtime_last_run_requested_threads(void);
 size_t parallel_runtime_last_run_effective_threads(void);
 
 #ifdef __cplusplus
