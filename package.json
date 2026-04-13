@@ -1,6 +1,7 @@
 {
   "name": "eot_tool",
   "private": true,
+  "packageManager": "npm@10.0.0",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -9,7 +10,10 @@
     "node": ">=20"
   },
   "scripts": {
+    "build": "turbo run build",
     "build:wasm": "make wasm",
+    "pack-check": "turbo run pack-check",
+    "test": "turbo run test",
     "verify:wasm": "make verify-wasm-artifacts"
   }
 }

@@ -19,11 +19,13 @@
   },
   "files": [
     "dist",
-    "vendor/wasm"
+    "vendor/wasm/*.js",
+    "vendor/wasm/*.wasm"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf ./dist && tsc -p tsconfig.build.json",
     "check:artifacts": "node ./scripts/check-artifacts.mjs",
+    "pack-check": "node ./scripts/pack-check.mjs",
     "stage:wasm": "node ./scripts/stage-wasm.mjs",
     "test": "vitest run",
     "test:node-smoke": "npm run build && node ./test/node-smoke.mjs"
