@@ -6,6 +6,8 @@ import { describe, expect, it } from "vitest";
 
 import { loadRuntime } from "../src/core/load-runtime.js";
 import type { RuntimeSupport } from "../src/core/types.js";
+import createSingleModule from "../vendor/wasm/fonttool-wasm.js";
+import createPthreadModule from "../vendor/wasm/fonttool-wasm-pthreads.js";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const sampleFontPath = resolve(thisDir, "../../../testdata/cff-static.otf");
@@ -21,7 +23,39 @@ async function loadSampleFont(): Promise<Uint8Array> {
   return new Uint8Array(await readFile(sampleFontPath));
 }
 
+async function loadVendorModule(
+  createModule: (options?: { locateFile?: (path: string) => string }) => Promise<Record<string, unknown>>,
+  jsFileName: string
+): Promise<Record<string, unknown>> {
+  return createModule({
+    locateFile(path) {
+      return resolve(thisDir, "../vendor/wasm", path);
+    }
+  });
+}
+
 describe.sequential("loadRuntime", () => {
+  it("exposes stable allocator exports on staged modules", async () => {
+    const single = await loadVendorModule(createSingleModule, "fonttool-wasm.js");
+    const pthread = await loadVendorModule(
+      createPthreadModule,
+      "fonttool-wasm-pthreads.js"
+    );
+
+    for (const runtimeModule of [single, pthread]) {
+      expect(runtimeModule).toMatchObject({
+        HEAPU8: expect.any(Uint8Array),
+        _free: expect.any(Function),
+        _malloc: expect.any(Function),
+        _wasm_buffer_destroy: expect.any(Function),
+        _wasm_convert_otf_to_embedded_font: expect.any(Function),
+        _wasm_runtime_get_diagnostics: expect.any(Function),
+        _wasm_runtime_thread_mode: expect.any(Function),
+        cwrap: expect.any(Function)
+      });
+    }
+  });
+
   it("loads the staged single-thread runtime and converts a font", async () => {
     const runtime = await loadRuntime({
       strategy: "single",
@@ -29,6 +63,16 @@ describe.sequential("loadRuntime", () => {
     });
 
     try {
+      expect(runtime.diagnostics).toMatchObject({
+        effectiveThreads: 0,
+        fallbackReason: "requested-single",
+        requestedStrategy: "single",
+        requestedThreads: 0,
+        resolvedMode: "single",
+        runtimeKind: "node",
+        variant: "single"
+      });
+
       const result = await runtime.convert(await loadSampleFont(), {
         outputKind: "eot",
         strategy: "single",
@@ -58,6 +102,16 @@ describe.sequential("loadRuntime", () => {
     });
 
     try {
+      expect(runtime.diagnostics).toMatchObject({
+        effectiveThreads: 0,
+        requestedStrategy: "auto",
+        requestedThreads: 0,
+        resolvedMode: "threaded",
+        runtimeKind: "node",
+        variant: "pthread"
+      });
+      expect(runtime.diagnostics.fallbackReason).toBeUndefined();
+
       const result = await runtime.convert(await loadSampleFont(), {
         outputKind: "eot",
         strategy: "auto",
@@ -92,6 +146,16 @@ describe.sequential("loadRuntime", () => {
     });
 
     try {
+      expect(runtime.diagnostics).toMatchObject({
+        effectiveThreads: 0,
+        fallbackReason: "pthreads-load-failed",
+        requestedStrategy: "auto",
+        requestedThreads: 0,
+        resolvedMode: "single",
+        runtimeKind: "node",
+        variant: "single"
+      });
+
       const result = await runtime.convert(await loadSampleFont(), {
         outputKind: "eot",
         strategy: "auto",

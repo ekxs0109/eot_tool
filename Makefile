@@ -344,7 +344,7 @@ WASM_SHA256_CHECK_CMD := $(shell if command -v shasum >/dev/null 2>&1; then prin
 WASM_COMMON_FLAGS := -I$(ROOT_DIR)/src -I$(WASM_HARFBUZZ_SRC_DIR)/src -DHB_EXPERIMENTAL_API -DEOT_WASM_CUSTOM_HARFBUZZ=1
 WASM_BASE_FLAGS := $(WASM_COMMON_FLAGS) \
 	-s MODULARIZE=1 -s EXPORT_ES6=1 -s ALLOW_MEMORY_GROWTH=1 \
-	-s EXPORTED_FUNCTIONS='["_wasm_convert_otf_to_embedded_font","_wasm_buffer_destroy","_wasm_runtime_thread_mode","_wasm_runtime_get_diagnostics"]' \
+	-s EXPORTED_FUNCTIONS='["_malloc","_free","_wasm_convert_otf_to_embedded_font","_wasm_buffer_destroy","_wasm_runtime_thread_mode","_wasm_runtime_get_diagnostics"]' \
 	-s EXPORTED_RUNTIME_METHODS='["cwrap","HEAPU8"]'
 WASM_CXX_SOURCES := $(ROOT_DIR)/src/wasm_api.cc $(ROOT_DIR)/src/otf_convert.cc $(ROOT_DIR)/src/cff_reader.cc \
 	$(ROOT_DIR)/src/cff_variation.cc $(ROOT_DIR)/src/cu2qu.cc $(ROOT_DIR)/src/tt_rebuilder.cc \
