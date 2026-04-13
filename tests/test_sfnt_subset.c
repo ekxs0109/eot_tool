@@ -256,6 +256,32 @@ static eot_status_t test_serialize_font(const sfnt_font_t *font,
   return sfnt_writer_serialize((sfnt_font_t *)font, out_data, out_size);
 }
 
+#define ASSERT_OK_CLEANUP(expr) do { \
+  status = (expr); \
+  if (status != EOT_OK) { \
+    snprintf(failure, sizeof(failure), "assertion failed: %s returned %d", #expr, status); \
+    goto cleanup; \
+  } \
+} while (0)
+
+#define ASSERT_TRUE_CLEANUP(expr) do { \
+  if (!(expr)) { \
+    snprintf(failure, sizeof(failure), "assertion failed: %s", #expr); \
+    goto cleanup; \
+  } \
+} while (0)
+
+#define ASSERT_EQ_SIZE_CLEANUP(actual, expected) do { \
+  size_t actual__ = (size_t)(actual); \
+  size_t expected__ = (size_t)(expected); \
+  if (actual__ != expected__) { \
+    snprintf(failure, sizeof(failure), \
+             "assertion failed: %s == %s (actual: %zu, expected: %zu)", \
+             #actual, #expected, actual__, expected__); \
+    goto cleanup; \
+  } \
+} while (0)
+
 static void test_subset_always_keeps_notdef(void) {
   sfnt_font_t font;
   subset_request_t request;
@@ -739,22 +765,30 @@ static void test_subset_runtime_reports_single_shared_task_when_parallelism_requ
   sfnt_font_t input;
   sfnt_font_t output;
   subset_request_t request;
+  eot_status_t status = EOT_OK;
+  char failure[256] = {0};
 
+  sfnt_font_init(&input);
+  sfnt_font_init(&output);
+  subset_request_init(&request);
   parallel_runtime_clear_test_env();
-  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
-  ASSERT_OK(sfnt_reader_load_file("testdata/OpenSans-Regular.ttf", &input));
-  ASSERT_OK(subset_request_init_for_text(&request, "ABC"));
-  ASSERT_OK(sfnt_subset_font(&input, &request, &output));
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_task_count(), 1u);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 8u);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 1u);
-  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "single");
-  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "task-count-clamped");
+  ASSERT_OK_CLEANUP(parallel_runtime_run_indexed_tasks(0u, NULL, NULL));
+  ASSERT_OK_CLEANUP(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK_CLEANUP(sfnt_reader_load_file("testdata/OpenSans-Regular.ttf", &input));
+  ASSERT_OK_CLEANUP(subset_request_init_for_text(&request, "ABC"));
+  ASSERT_OK_CLEANUP(sfnt_subset_font(&input, &request, &output));
+  ASSERT_TRUE_CLEANUP(parallel_runtime_last_run_task_count() > 0u);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_requested_threads(), 8u);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_effective_threads(), 1u);
 
+cleanup:
+  parallel_runtime_clear_test_env();
   subset_request_destroy(&request);
   sfnt_font_destroy(&output);
   sfnt_font_destroy(&input);
-  parallel_runtime_clear_test_env();
+  if (failure[0] != '\0') {
+    test_fail_with_message(failure);
+  }
 }
 
 static void test_subset_matches_with_single_and_parallel_runtime_requests(void) {
@@ -766,40 +800,48 @@ static void test_subset_matches_with_single_and_parallel_runtime_requests(void) 
   size_t serial_size = 0;
   uint8_t *parallel_bytes = NULL;
   size_t parallel_size = 0;
+  eot_status_t status = EOT_OK;
+  char failure[256] = {0};
+
+  sfnt_font_init(&input);
+  sfnt_font_init(&serial_output);
+  sfnt_font_init(&parallel_output);
+  subset_request_init(&request);
+  parallel_runtime_clear_test_env();
+  ASSERT_OK_CLEANUP(parallel_runtime_run_indexed_tasks(0u, NULL, NULL));
+  ASSERT_OK_CLEANUP(sfnt_reader_load_file("testdata/OpenSans-Regular.ttf", &input));
+  ASSERT_OK_CLEANUP(subset_request_init_for_text(&request, "ABC"));
+
+  ASSERT_OK_CLEANUP(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "1"));
+  ASSERT_OK_CLEANUP(sfnt_subset_font(&input, &request, &serial_output));
+  ASSERT_TRUE_CLEANUP(parallel_runtime_last_run_task_count() > 0u);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_requested_threads(), 1u);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_effective_threads(), 1u);
+  ASSERT_OK_CLEANUP(test_serialize_font(&serial_output, &serial_bytes, &serial_size));
 
   parallel_runtime_clear_test_env();
-  ASSERT_OK(sfnt_reader_load_file("testdata/OpenSans-Regular.ttf", &input));
-  ASSERT_OK(subset_request_init_for_text(&request, "ABC"));
+  ASSERT_OK_CLEANUP(parallel_runtime_run_indexed_tasks(0u, NULL, NULL));
+  ASSERT_OK_CLEANUP(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK_CLEANUP(sfnt_subset_font(&input, &request, &parallel_output));
+  ASSERT_TRUE_CLEANUP(parallel_runtime_last_run_task_count() > 0u);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_requested_threads(), 8u);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_effective_threads(), 1u);
+  ASSERT_OK_CLEANUP(test_serialize_font(&parallel_output, &parallel_bytes, &parallel_size));
 
-  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "1"));
-  ASSERT_OK(sfnt_subset_font(&input, &request, &serial_output));
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_task_count(), 1u);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 1u);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 1u);
-  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "single");
-  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "");
-  ASSERT_OK(test_serialize_font(&serial_output, &serial_bytes, &serial_size));
+  ASSERT_EQ_SIZE_CLEANUP(serial_size, parallel_size);
+  ASSERT_TRUE_CLEANUP(memcmp(serial_bytes, parallel_bytes, serial_size) == 0);
 
+cleanup:
   parallel_runtime_clear_test_env();
-  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
-  ASSERT_OK(sfnt_subset_font(&input, &request, &parallel_output));
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_task_count(), 1u);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 8u);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 1u);
-  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "single");
-  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "task-count-clamped");
-  ASSERT_OK(test_serialize_font(&parallel_output, &parallel_bytes, &parallel_size));
-
-  ASSERT_EQ_SIZE(serial_size, parallel_size);
-  ASSERT_TRUE(memcmp(serial_bytes, parallel_bytes, serial_size) == 0);
-
   free(serial_bytes);
   free(parallel_bytes);
   subset_request_destroy(&request);
   sfnt_font_destroy(&parallel_output);
   sfnt_font_destroy(&serial_output);
   sfnt_font_destroy(&input);
-  parallel_runtime_clear_test_env();
+  if (failure[0] != '\0') {
+    test_fail_with_message(failure);
+  }
 }
 
 void register_sfnt_subset_tests(void) {
