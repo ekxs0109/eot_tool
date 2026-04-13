@@ -68,6 +68,51 @@ eot_status_t otf_convert_find_first_failed_status_for_testing(
   } \
 } while (0)
 
+#define ASSERT_OK_CLEANUP(expr) do { \
+  eot_status_t status__ = (expr); \
+  if (status__ != EOT_OK) { \
+    char msg__[256]; \
+    snprintf(msg__, sizeof(msg__), "assertion failed: %s returned %d", #expr, status__); \
+    test_fail_with_message(msg__); \
+    goto cleanup; \
+  } \
+} while (0)
+
+#define ASSERT_TRUE_CLEANUP(expr) do { \
+  if (!(expr)) { \
+    char msg__[256]; \
+    snprintf(msg__, sizeof(msg__), "assertion failed: %s", #expr); \
+    test_fail_with_message(msg__); \
+    goto cleanup; \
+  } \
+} while (0)
+
+#define ASSERT_EQ_SIZE_CLEANUP(actual, expected) do { \
+  size_t actual__ = (size_t)(actual); \
+  size_t expected__ = (size_t)(expected); \
+  if (actual__ != expected__) { \
+    char msg__[256]; \
+    snprintf(msg__, sizeof(msg__), "assertion failed: %s == %s (actual=%zu expected=%zu)", \
+             #actual, #expected, actual__, expected__); \
+    test_fail_with_message(msg__); \
+    goto cleanup; \
+  } \
+} while (0)
+
+#define ASSERT_STREQ_CLEANUP(actual, expected) do { \
+  const char *actual__ = (actual); \
+  const char *expected__ = (expected); \
+  if (((actual__ == NULL) != (expected__ == NULL)) || \
+      (actual__ != NULL && strcmp(actual__, expected__) != 0)) { \
+    char msg__[256]; \
+    snprintf(msg__, sizeof(msg__), "assertion failed: %s == %s (actual=%s expected=%s)", \
+             #actual, #expected, actual__ != NULL ? actual__ : "(null)", \
+             expected__ != NULL ? expected__ : "(null)"); \
+    test_fail_with_message(msg__); \
+    goto cleanup; \
+  } \
+} while (0)
+
 #define TAG_glyf 0x676c7966u
 #define TAG_avar 0x61766172u
 #define TAG_CFF  0x43464620u
@@ -152,24 +197,16 @@ static void test_otf_convert_static_cff_matches_across_single_and_threaded_runti
   sfnt_font_init(&threaded_font);
 
   parallel_runtime_clear_test_env();
-  ASSERT_OK(file_io_read_all("testdata/cff-static.otf", &otf));
-  ASSERT_OK(sfnt_reader_parse(otf.data, otf.length, &source_font));
+  ASSERT_OK_CLEANUP(file_io_read_all("testdata/cff-static.otf", &otf));
+  ASSERT_OK_CLEANUP(sfnt_reader_parse(otf.data, otf.length, &source_font));
   maxp = sfnt_font_get_table(&source_font, TAG_maxp);
-  ASSERT_TRUE(maxp != NULL);
-  ASSERT_TRUE(maxp->length >= 6u);
+  ASSERT_TRUE_CLEANUP(maxp != NULL);
+  ASSERT_TRUE_CLEANUP(maxp->length >= 6u);
   glyph_count = (size_t)read_u16be(maxp->data + 4u);
-  ASSERT_TRUE(glyph_count > 1u);
+  ASSERT_TRUE_CLEANUP(glyph_count > 1u);
 
-  status = parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8");
-  if (status != EOT_OK) {
-    char msg[256];
-    snprintf(msg, sizeof(msg),
-             "assertion failed: parallel_runtime_set_test_env(\"EOT_TOOL_THREADS\", \"8\") returned %d",
-             status);
-    test_fail_with_message(msg);
-    goto cleanup;
-  }
-  ASSERT_OK(parallel_runtime_set_requested_mode("single"));
+  ASSERT_OK_CLEANUP(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK_CLEANUP(parallel_runtime_set_requested_mode("single"));
 
   status = otf_convert_to_truetype_sfnt(otf.data, otf.length, NULL, &single_thread_font);
   parallel_runtime_clear_test_env();
@@ -182,27 +219,27 @@ static void test_otf_convert_static_cff_matches_across_single_and_threaded_runti
     goto cleanup;
   }
 
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_task_count(), glyph_count);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 1u);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 1u);
-  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "single");
-  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "requested-single");
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_task_count(), glyph_count);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_requested_threads(), 1u);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_effective_threads(), 1u);
+  ASSERT_STREQ_CLEANUP(parallel_runtime_last_run_resolved_mode(), "single");
+  ASSERT_STREQ_CLEANUP(parallel_runtime_last_run_fallback_reason(), "requested-single");
 
   parallel_runtime_clear_test_env();
-  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "4"));
-  ASSERT_OK(otf_convert_to_truetype_sfnt(otf.data, otf.length, NULL, &threaded_font));
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_task_count(), glyph_count);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), threaded_request);
-  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(),
-                 glyph_count < threaded_request ? glyph_count : threaded_request);
-  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "threaded");
-  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(),
-               glyph_count < threaded_request ? "task-count-clamped" : "");
-  ASSERT_OK(sfnt_writer_serialize(&single_thread_font, &single_thread_bytes,
-                                  &single_thread_size));
-  ASSERT_OK(sfnt_writer_serialize(&threaded_font, &threaded_bytes, &threaded_size));
-  ASSERT_EQ_SIZE(single_thread_size, threaded_size);
-  ASSERT_TRUE(memcmp(single_thread_bytes, threaded_bytes, single_thread_size) == 0);
+  ASSERT_OK_CLEANUP(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "4"));
+  ASSERT_OK_CLEANUP(otf_convert_to_truetype_sfnt(otf.data, otf.length, NULL, &threaded_font));
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_task_count(), glyph_count);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_requested_threads(), threaded_request);
+  ASSERT_EQ_SIZE_CLEANUP(parallel_runtime_last_run_effective_threads(),
+                         glyph_count < threaded_request ? glyph_count : threaded_request);
+  ASSERT_STREQ_CLEANUP(parallel_runtime_last_run_resolved_mode(), "threaded");
+  ASSERT_STREQ_CLEANUP(parallel_runtime_last_run_fallback_reason(),
+                       glyph_count < threaded_request ? "task-count-clamped" : "");
+  ASSERT_OK_CLEANUP(sfnt_writer_serialize(&single_thread_font, &single_thread_bytes,
+                                          &single_thread_size));
+  ASSERT_OK_CLEANUP(sfnt_writer_serialize(&threaded_font, &threaded_bytes, &threaded_size));
+  ASSERT_EQ_SIZE_CLEANUP(single_thread_size, threaded_size);
+  ASSERT_TRUE_CLEANUP(memcmp(single_thread_bytes, threaded_bytes, single_thread_size) == 0);
 
 cleanup:
   parallel_runtime_clear_test_env();
