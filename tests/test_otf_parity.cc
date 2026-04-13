@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 
@@ -10,7 +11,10 @@ extern "C" {
 #include "../src/file_io.h"
 #include "../src/mtx_decode.h"
 #include "../src/mtx_encode.h"
+#include "../src/otf_convert.h"
+#include "../src/parallel_runtime.h"
 #include "../src/sfnt_font.h"
+#include "../src/sfnt_reader.h"
 #include "../src/sfnt_writer.h"
 void test_register(const char *name, void (*fn)(void));
 void test_fail_with_message(const char *message);
@@ -35,8 +39,35 @@ void test_fail_with_message(const char *message);
   } \
 } while (0)
 
+#define ASSERT_EQ_SIZE(actual, expected) do { \
+  size_t actual__ = (size_t)(actual); \
+  size_t expected__ = (size_t)(expected); \
+  if (actual__ != expected__) { \
+    char msg__[256]; \
+    snprintf(msg__, sizeof(msg__), "assertion failed: %s == %s (actual=%zu expected=%zu)", \
+             #actual, #expected, actual__, expected__); \
+    test_fail_with_message(msg__); \
+    return; \
+  } \
+} while (0)
+
+#define ASSERT_STREQ(actual, expected) do { \
+  const char *actual__ = (actual); \
+  const char *expected__ = (expected); \
+  if (((actual__ == NULL) != (expected__ == NULL)) || \
+      (actual__ != NULL && strcmp(actual__, expected__) != 0)) { \
+    char msg__[256]; \
+    snprintf(msg__, sizeof(msg__), "assertion failed: %s == %s (actual=%s expected=%s)", \
+             #actual, #expected, actual__ != NULL ? actual__ : "(null)", \
+             expected__ != NULL ? expected__ : "(null)"); \
+    test_fail_with_message(msg__); \
+    return; \
+  } \
+} while (0)
+
 #define TAG_hhea 0x68686561u
 #define TAG_head 0x68656164u
+#define TAG_maxp 0x6d617870u
 #define TAG_post 0x706f7374u
 #define MAC_EPOCH_OFFSET 2082844800u
 #define MAC_EPOCH_OFFSET_LOW32 0x7C25B080u
@@ -166,9 +197,72 @@ static void test_otf_cff_roundtrip_head_fields_look_serialized(void) {
   byte_buffer_destroy(&eot);
 }
 
+static void test_otf_convert_variable_instance_is_deterministic_across_runtime_modes(void) {
+  file_buffer_t otf = {};
+  sfnt_font_t source_font = {};
+  sfnt_font_t single_font = {};
+  sfnt_font_t threaded_font = {};
+  sfnt_table_t *maxp = NULL;
+  variation_axis_value_t axis = {"wght", 700.0f, 700.0f, 0.5f};
+  variation_location_t location = {&axis, 1u};
+  uint8_t *single_bytes = NULL;
+  uint8_t *threaded_bytes = NULL;
+  size_t single_size = 0u;
+  size_t threaded_size = 0u;
+  size_t glyph_count = 0u;
+
+  sfnt_font_init(&source_font);
+  sfnt_font_init(&single_font);
+  sfnt_font_init(&threaded_font);
+
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(file_io_read_all("testdata/cff2-variable.otf", &otf));
+  ASSERT_OK(sfnt_reader_parse(otf.data, otf.length, &source_font));
+  maxp = sfnt_font_get_table(&source_font, TAG_maxp);
+  ASSERT_TRUE(maxp != NULL);
+  ASSERT_TRUE(maxp->length >= 6u);
+  glyph_count = (size_t)read_u16be(maxp->data + 4u);
+  ASSERT_TRUE(glyph_count > 1u);
+
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK(parallel_runtime_set_requested_mode("single"));
+  ASSERT_OK(otf_convert_to_truetype_sfnt(otf.data, otf.length, &location, &single_font));
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_task_count(), glyph_count);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 1u);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 1u);
+  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "single");
+  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "requested-single");
+
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "4"));
+  ASSERT_OK(otf_convert_to_truetype_sfnt(otf.data, otf.length, &location, &threaded_font));
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_task_count(), glyph_count);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 4u);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(),
+                 glyph_count < 4u ? glyph_count : 4u);
+  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "threaded");
+  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(),
+               glyph_count < 4u ? "task-count-clamped" : "");
+
+  ASSERT_OK(sfnt_writer_serialize(&single_font, &single_bytes, &single_size));
+  ASSERT_OK(sfnt_writer_serialize(&threaded_font, &threaded_bytes, &threaded_size));
+  ASSERT_EQ_SIZE(single_size, threaded_size);
+  ASSERT_TRUE(memcmp(single_bytes, threaded_bytes, single_size) == 0);
+
+  free(threaded_bytes);
+  free(single_bytes);
+  sfnt_font_destroy(&threaded_font);
+  sfnt_font_destroy(&single_font);
+  sfnt_font_destroy(&source_font);
+  file_io_free(&otf);
+  parallel_runtime_clear_test_env();
+}
+
 extern "C" void register_otf_parity_tests(void) {
   test_register("test_otf_cff_roundtrip_preserves_expected_post_and_hhea_fields",
                 test_otf_cff_roundtrip_preserves_expected_post_and_hhea_fields);
   test_register("test_otf_cff_roundtrip_head_fields_look_serialized",
                 test_otf_cff_roundtrip_head_fields_look_serialized);
+  test_register("test_otf_convert_variable_instance_is_deterministic_across_runtime_modes",
+                test_otf_convert_variable_instance_is_deterministic_across_runtime_modes);
 }
