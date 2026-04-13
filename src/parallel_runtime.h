@@ -20,11 +20,17 @@ eot_status_t parallel_runtime_run_task_list(void *tasks,
                                             size_t task_count,
                                             size_t task_size,
                                             parallel_task_fn fn);
+/* Passing NULL or "auto" clears the requested mode override. */
+eot_status_t parallel_runtime_set_requested_mode(const char *mode);
 eot_status_t parallel_runtime_set_test_env(const char *name, const char *value);
+/* Clears test-only overrides, including the requested mode override. */
 void parallel_runtime_clear_test_env(void);
 size_t parallel_runtime_last_run_task_count(void);
 size_t parallel_runtime_last_run_requested_threads(void);
 size_t parallel_runtime_last_run_effective_threads(void);
+/* Returned strings point to static storage and stay valid for the process lifetime. */
+const char *parallel_runtime_last_run_resolved_mode(void);
+const char *parallel_runtime_last_run_fallback_reason(void);
 
 #ifdef __cplusplus
 }

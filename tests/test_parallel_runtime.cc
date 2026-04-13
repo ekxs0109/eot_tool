@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <atomic>
+#include <cstring>
 #include <limits>
 
 extern "C" {
@@ -34,6 +35,20 @@ void test_register(const char *name, void (*fn)(void));
     char msg__[256]; \
     snprintf(msg__, sizeof(msg__), "assertion failed: %s == %s (actual=%zu expected=%zu)", \
              #actual, #expected, actual__, expected__); \
+    test_fail_with_message(msg__); \
+    return; \
+  } \
+} while (0)
+
+#define ASSERT_STREQ(actual, expected) do { \
+  const char *actual__ = (actual); \
+  const char *expected__ = (expected); \
+  if (((actual__ == NULL) != (expected__ == NULL)) || \
+      (actual__ != NULL && std::strcmp(actual__, expected__) != 0)) { \
+    char msg__[256]; \
+    snprintf(msg__, sizeof(msg__), "assertion failed: %s == %s (actual=%s expected=%s)", \
+             #actual, #expected, actual__ != NULL ? actual__ : "(null)", \
+             expected__ != NULL ? expected__ : "(null)"); \
     test_fail_with_message(msg__); \
     return; \
   } \
@@ -138,7 +153,10 @@ static void test_parallel_runtime_uses_requested_parallelism_when_available(void
   ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "4"));
   ASSERT_OK(parallel_runtime_run_indexed_tasks(4u, ok_task, NULL));
   ASSERT_EQ_SIZE(parallel_runtime_last_run_task_count(), 4u);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 4u);
   ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 4u);
+  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "threaded");
+  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "");
   parallel_runtime_clear_test_env();
 }
 
@@ -148,6 +166,19 @@ static void test_parallel_runtime_reports_requested_and_effective_threads(void) 
   ASSERT_OK(parallel_runtime_run_indexed_tasks(3u, ok_task, NULL));
   ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 8u);
   ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 3u);
+  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "threaded");
+  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "task-count-clamped");
+}
+
+static void test_parallel_runtime_forces_single_thread_mode(void) {
+  parallel_runtime_clear_test_env();
+  ASSERT_OK(parallel_runtime_set_test_env("EOT_TOOL_THREADS", "8"));
+  ASSERT_OK(parallel_runtime_set_requested_mode("single"));
+  ASSERT_OK(parallel_runtime_run_indexed_tasks(4u, ok_task, NULL));
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_requested_threads(), 1u);
+  ASSERT_EQ_SIZE(parallel_runtime_last_run_effective_threads(), 1u);
+  ASSERT_STREQ(parallel_runtime_last_run_resolved_mode(), "single");
+  ASSERT_STREQ(parallel_runtime_last_run_fallback_reason(), "requested-single");
 }
 
 static void test_parallel_runtime_clamps_effective_threads_to_task_count(void) {
@@ -223,6 +254,8 @@ extern "C" void register_parallel_runtime_tests(void) {
                 test_parallel_runtime_uses_requested_parallelism_when_available);
   test_register("test_parallel_runtime_reports_requested_and_effective_threads",
                 test_parallel_runtime_reports_requested_and_effective_threads);
+  test_register("test_parallel_runtime_forces_single_thread_mode",
+                test_parallel_runtime_forces_single_thread_mode);
   test_register("test_parallel_runtime_clamps_effective_threads_to_task_count",
                 test_parallel_runtime_clamps_effective_threads_to_task_count);
   test_register("test_parallel_runtime_waits_for_all_started_tasks_before_reporting_error",
