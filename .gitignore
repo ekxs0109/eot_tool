@@ -1,0 +1,12 @@
+node_modules/
+.npm/
+*.tgz
+docs/
+coverage/
+.idea/
+.DS_Store
+*.log
+*.env
+*.local
+*.cache
+testdata/
