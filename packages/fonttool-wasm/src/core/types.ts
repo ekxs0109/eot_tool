@@ -1,6 +1,7 @@
 export type RuntimeStrategy = "single" | "pthreads" | "auto";
 
-export type ResolvedMode = "single-thread" | "pthreads";
+export type ResolvedMode = "single" | "threaded";
+export type RuntimeDecisionMode = "single-thread" | "pthreads";
 export type RuntimeKind = "node" | "browser";
 export type RuntimeVariant = "single" | "pthread";
 
@@ -34,13 +35,18 @@ export interface LoadRuntimeOptions {
 
 export interface RuntimeDecision {
   requestedStrategy: RuntimeStrategy;
-  resolvedMode: ResolvedMode;
+  resolvedMode: RuntimeDecisionMode;
   runtimeKind: RuntimeKind;
   variant: RuntimeVariant;
   fallbackReason?: string;
 }
 
-export interface RuntimeDiagnostics extends RuntimeDecision {
+export interface RuntimeDiagnostics {
+  requestedStrategy: RuntimeStrategy;
+  resolvedMode: ResolvedMode;
+  runtimeKind: RuntimeKind;
+  variant: RuntimeVariant;
+  fallbackReason?: string;
   requestedThreads: number;
   effectiveThreads: number;
 }

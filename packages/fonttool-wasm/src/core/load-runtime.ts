@@ -6,6 +6,7 @@ import type {
   FonttoolBinaryInput,
   LoadedFonttoolRuntime,
   LoadRuntimeOptions,
+  RuntimeAssets,
   RuntimeDecision,
   RuntimeDiagnostics,
   RuntimeStrategy,
@@ -17,10 +18,14 @@ import type {
 const PACKAGE_ROOT_URL = new URL("../../", import.meta.url);
 const TEXT_DECODER = new TextDecoder();
 const TEXT_ENCODER = new TextEncoder();
-const INPUT_SCRATCH_PADDING = 64;
-const INPUT_STACK_GUARD_BYTES = 4096;
 const WASM_BUFFER_STRUCT_SIZE = 8;
 const WASM_RUNTIME_DIAGNOSTICS_STRUCT_SIZE = 16;
+const STABLE_EXPORT_NAMES = {
+  bufferDestroy: "_wasm_buffer_destroy",
+  convert: "_wasm_convert_otf_to_embedded_font",
+  runtimeDiagnostics: "_wasm_runtime_get_diagnostics",
+  threadMode: "_wasm_runtime_thread_mode"
+} as const;
 
 const EOT_STATUS_LABELS = new Map<number, string>([
   [0, "EOT_OK"],
@@ -36,63 +41,28 @@ const EOT_STATUS_LABELS = new Map<number, string>([
   [10, "EOT_ERR_DECOMPRESS_FAILED"]
 ]);
 
-const SINGLE_EXPORTS = {
-  bufferDestroy: "m",
-  convert: "n",
-  stackAlloc: "p",
-  stackRestore: "o",
-  stackSave: "q",
-  threadMode: "k",
-  runtimeDiagnostics: "l"
-} as const satisfies ExportMap;
-
-const PTHREAD_EXPORTS = {
-  bufferDestroy: "B",
-  convert: "C",
-  stackAlloc: "P",
-  stackRestore: "O",
-  stackSave: "Q",
-  threadMode: "z",
-  runtimeDiagnostics: "A"
-} as const satisfies ExportMap;
-
-type ExportMap = {
-  readonly bufferDestroy: string;
-  readonly convert: string;
-  readonly stackAlloc: string;
-  readonly stackRestore: string;
-  readonly stackSave: string;
-  readonly threadMode: string;
-  readonly runtimeDiagnostics: string;
-};
+type StableExportName =
+  (typeof STABLE_EXPORT_NAMES)[keyof typeof STABLE_EXPORT_NAMES];
 
 type NativeFunction = (...args: number[]) => number;
 
-type NativeRuntimeExports = Record<string, unknown>;
+type Cwrap = (
+  ident: string,
+  returnType: "number" | "string" | "boolean" | null,
+  argTypes: Array<"number" | "string" | "array" | "boolean">
+) => (...args: unknown[]) => unknown;
 
 type NativeRuntimeModule = {
   HEAPU8: Uint8Array;
-};
+  cwrap: Cwrap;
+} & Record<StableExportName, NativeFunction>;
 
-type NativeRuntimeDiagnostics = {
-  effectiveThreads: number;
-  fallbackReason?: string;
-  requestedThreads: number;
-  threadMode: string;
-};
-
-type InstantiatedRuntime = {
-  exports: NativeRuntimeExports;
-  module: NativeRuntimeModule;
-};
+type NativeRuntimeExports = Record<string, unknown>;
 
 type RuntimeModuleFactory = (options?: {
   instantiateWasm?: (
     imports: object,
-    successCallback: (
-      instance: object,
-      module: object
-    ) => void
+    successCallback: (instance: object, module: object) => void
   ) => object;
   locateFile?: (path: string) => string;
 }) => Promise<NativeRuntimeModule>;
@@ -105,38 +75,23 @@ type RuntimeLoadFailure = Error & {
   cause?: unknown;
 };
 
-type WasmApi = {
-  Instance: new (
-    module: object,
-    imports?: object
-  ) => {
-    exports: object;
-  };
-  compile(source: Uint8Array): Promise<object>;
+type InstantiatedRuntime = {
+  exports: NativeRuntimeExports;
+  module: NativeRuntimeModule;
 };
 
-function getWasmApi(): WasmApi {
-  const api = (globalThis as typeof globalThis & {
-    WebAssembly?: WasmApi;
-  }).WebAssembly;
+type StackExports = {
+  stackAlloc: NativeFunction;
+  stackRestore: NativeFunction;
+  stackSave: NativeFunction;
+};
 
-  if (api === undefined) {
-    throw new Error("fonttool-wasm requires WebAssembly support.");
-  }
-
-  return api;
-}
-
-function resolveSupport(support: RuntimeSupport = detectRuntimeSupport()): RuntimeSupport {
-  if (support.runtimeKind !== "node") {
-    return support;
-  }
-
-  return {
-    ...support,
-    pthreadsPossible: support.sharedArrayBuffer
-  };
-}
+type NativeRuntimeDiagnostics = {
+  effectiveThreads: number;
+  fallbackReason?: string;
+  requestedThreads: number;
+  resolvedMode: "single" | "threaded";
+};
 
 function buildDecision(
   strategy: RuntimeStrategy,
@@ -160,38 +115,36 @@ function buildDecision(
 
 export function resolveRuntimeMode(
   strategy: RuntimeStrategy = "single",
-  support: RuntimeSupport = resolveSupport()
+  support: RuntimeSupport = detectRuntimeSupport()
 ): RuntimeDecision {
-  const normalizedSupport = resolveSupport(support);
-
   if (strategy === "single") {
-    return buildDecision(strategy, normalizedSupport, "single", "requested-single");
+    return buildDecision(strategy, support, "single", "requested-single");
   }
 
   if (strategy === "auto") {
-    if (normalizedSupport.pthreadsPossible) {
-      return buildDecision(strategy, normalizedSupport, "pthread");
+    if (support.pthreadsPossible) {
+      return buildDecision(strategy, support, "pthread");
     }
 
-    return buildDecision(
-      strategy,
-      normalizedSupport,
-      "single",
-      "pthreads-unavailable"
-    );
+    return buildDecision(strategy, support, "single", "pthreads-unavailable");
   }
 
-  if (!normalizedSupport.pthreadsPossible) {
-    throw new Error(
-      "fonttool-wasm pthreads mode is unavailable in this runtime."
-    );
+  if (!support.pthreadsPossible) {
+    throw new Error("fonttool-wasm pthreads mode is unavailable in this runtime.");
   }
 
-  return buildDecision(strategy, normalizedSupport, "pthread");
+  return buildDecision(strategy, support, "pthread");
 }
 
 function resolveAssetUrl(path: string): URL {
   return new URL(path, PACKAGE_ROOT_URL);
+}
+
+function resolveVariantAssets(
+  assets: RuntimeAssets,
+  variant: RuntimeVariant
+): RuntimeVariantAssets {
+  return variant === "pthread" ? assets.pthreads : assets.single;
 }
 
 async function loadBinary(url: URL): Promise<Uint8Array> {
@@ -210,140 +163,37 @@ async function loadBinary(url: URL): Promise<Uint8Array> {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-function getExportMap(variant: RuntimeVariant): ExportMap {
-  return variant === "pthread" ? PTHREAD_EXPORTS : SINGLE_EXPORTS;
-}
+type WasmApi = {
+  Instance: new (
+    module: object,
+    imports?: object
+  ) => {
+    exports: object;
+  };
+  compile(source: Uint8Array): Promise<object>;
+};
 
-function getNativeFunction(
-  exports: NativeRuntimeExports,
-  name: string
-): NativeFunction {
-  const value = exports[name];
+function getWasmApi(): WasmApi {
+  const api = (globalThis as typeof globalThis & {
+    WebAssembly?: WasmApi;
+  }).WebAssembly;
 
-  if (typeof value !== "function") {
-    throw new Error(
-      `fonttool-wasm runtime is missing required export ${name}.`
-    );
+  if (api === undefined) {
+    throw new Error("fonttool-wasm requires WebAssembly support.");
   }
 
-  return value as unknown as NativeFunction;
+  return api;
 }
 
-function getHeap(module: NativeRuntimeModule): Uint8Array {
-  if (!(module.HEAPU8 instanceof Uint8Array)) {
-    throw new Error("fonttool-wasm runtime did not expose HEAPU8.");
-  }
-
-  return module.HEAPU8;
-}
-
-function getDataView(module: NativeRuntimeModule): DataView {
-  const heap = getHeap(module);
-  return new DataView(heap.buffer, heap.byteOffset, heap.byteLength);
-}
-
-function readUint32(module: NativeRuntimeModule, pointer: number): number {
-  return getDataView(module).getUint32(pointer, true);
-}
-
-function readCString(module: NativeRuntimeModule, pointer: number): string {
-  if (pointer === 0) {
-    return "";
-  }
-
-  const heap = getHeap(module);
-  let end = pointer;
-  while (end < heap.length && heap[end] !== 0) {
-    end += 1;
-  }
-
-  return TEXT_DECODER.decode(heap.subarray(pointer, end));
-}
-
-function asUint8Array(input: FonttoolBinaryInput): Uint8Array {
-  if (input instanceof Uint8Array) {
-    return input;
-  }
-
-  if (ArrayBuffer.isView(input)) {
-    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
-  }
-
-  return new Uint8Array(input);
-}
-
-function writeCString(
-  module: NativeRuntimeModule,
-  stackAlloc: NativeFunction,
-  value: string
-): number {
-  const encoded = TEXT_ENCODER.encode(value);
-  const pointer = stackAlloc(encoded.byteLength + 1);
-  const heap = getHeap(module);
-
-  heap.set(encoded, pointer);
-  heap[pointer + encoded.byteLength] = 0;
-
-  return pointer;
-}
-
-function alignDown(value: number, alignment: number): number {
-  return value - (value % alignment);
-}
-
-function reserveInputPointer(
-  module: NativeRuntimeModule,
-  stackPointer: number,
-  inputLength: number
-): number {
-  const heap = getHeap(module);
-  const alignedLength = alignDown(inputLength + 15, 16);
-  const pointer = alignDown(
-    heap.byteLength - alignedLength - INPUT_SCRATCH_PADDING,
-    16
-  );
-
-  if (pointer <= stackPointer + INPUT_STACK_GUARD_BYTES) {
-    throw new Error(
-      "fonttool-wasm input is too large for the current runtime memory layout."
-    );
-  }
-
-  return pointer;
-}
-
-function throwForStatus(status: number, operation: string): never {
-  const label = EOT_STATUS_LABELS.get(status) ?? "EOT_ERR_UNKNOWN";
-  throw new Error(
-    `fonttool-wasm ${operation} failed with ${label} (${status}).`
-  );
-}
-
-function withStack<T>(
-  module: NativeRuntimeModule,
-  stackSave: NativeFunction,
-  stackRestore: NativeFunction,
-  fn: () => T
-): T {
-  const stackPointer = stackSave();
-
-  try {
-    return fn();
-  } finally {
-    stackRestore(stackPointer);
-  }
-}
-
-async function instantiateRuntimeVariant(
-  variant: RuntimeVariant,
+async function loadRuntimeArtifactModule(
   assets: RuntimeVariantAssets
 ): Promise<InstantiatedRuntime> {
   const jsUrl = resolveAssetUrl(assets.jsUrl);
   const wasmUrl = resolveAssetUrl(assets.wasmUrl);
   const workerUrl =
     assets.workerUrl !== undefined ? resolveAssetUrl(assets.workerUrl) : undefined;
-  const wasmBinary = await loadBinary(wasmUrl);
   const wasmApi = getWasmApi();
+  const wasmBinary = await loadBinary(wasmUrl);
   const compiledWasm = await wasmApi.compile(wasmBinary);
   const importedModule = (await import(jsUrl.href)) as RuntimeArtifactModule;
   const factory = importedModule.default;
@@ -400,21 +250,147 @@ function createRuntimeLoadError(
   return failure;
 }
 
+function getNativeFunction(
+  module: NativeRuntimeModule,
+  exportName: StableExportName
+): NativeFunction {
+  const fn = module[exportName];
+
+  if (typeof fn !== "function") {
+    throw new Error(
+      `fonttool-wasm runtime is missing required export ${exportName}.`
+    );
+  }
+
+  return fn;
+}
+
+function getHeap(module: NativeRuntimeModule): Uint8Array {
+  if (!(module.HEAPU8 instanceof Uint8Array)) {
+    throw new Error("fonttool-wasm runtime did not expose HEAPU8.");
+  }
+
+  return module.HEAPU8;
+}
+
+function getDataView(module: NativeRuntimeModule): DataView {
+  const heap = getHeap(module);
+  return new DataView(heap.buffer, heap.byteOffset, heap.byteLength);
+}
+
+function readUint32(module: NativeRuntimeModule, pointer: number): number {
+  return getDataView(module).getUint32(pointer, true);
+}
+
+function readCString(module: NativeRuntimeModule, pointer: number): string {
+  if (pointer === 0) {
+    return "";
+  }
+
+  const heap = getHeap(module);
+  let end = pointer;
+  while (end < heap.length && heap[end] !== 0) {
+    end += 1;
+  }
+  return TEXT_DECODER.decode(heap.subarray(pointer, end));
+}
+
+function asUint8Array(input: FonttoolBinaryInput): Uint8Array {
+  if (input instanceof Uint8Array) {
+    return input;
+  }
+  if (ArrayBuffer.isView(input)) {
+    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  }
+  return new Uint8Array(input);
+}
+
+function withStack<T>(
+  stack: StackExports,
+  fn: () => T
+): T {
+  const pointer = stack.stackSave();
+
+  try {
+    return fn();
+  } finally {
+    stack.stackRestore(pointer);
+  }
+}
+
+function withStackBuffer<T>(
+  module: NativeRuntimeModule,
+  stack: StackExports,
+  bytes: Uint8Array,
+  fn: (pointer: number) => T
+): T {
+  return withStack(stack, () => {
+    const pointer = stack.stackAlloc(bytes.byteLength);
+    getHeap(module).set(bytes, pointer);
+    return fn(pointer);
+  });
+}
+
+function writeCString(
+  module: NativeRuntimeModule,
+  stack: StackExports,
+  value: string
+): number {
+  const encoded = TEXT_ENCODER.encode(value);
+  const pointer = stack.stackAlloc(encoded.byteLength + 1);
+  const heap = getHeap(module);
+
+  heap.set(encoded, pointer);
+  heap[pointer + encoded.byteLength] = 0;
+  return pointer;
+}
+
+function throwForStatus(status: number, operation: string): never {
+  const label = EOT_STATUS_LABELS.get(status) ?? "EOT_ERR_UNKNOWN";
+  throw new Error(
+    `fonttool-wasm ${operation} failed with ${label} (${status}).`
+  );
+}
+
+function getStackExports(
+  exports: NativeRuntimeExports,
+  variant: RuntimeVariant
+): StackExports {
+  const exportNames = variant === "pthread"
+    ? { stackAlloc: "P", stackRestore: "O", stackSave: "Q" }
+    : { stackAlloc: "p", stackRestore: "o", stackSave: "q" };
+
+  const stackAlloc = exports[exportNames.stackAlloc];
+  const stackRestore = exports[exportNames.stackRestore];
+  const stackSave = exports[exportNames.stackSave];
+
+  if (
+    typeof stackAlloc !== "function" ||
+    typeof stackRestore !== "function" ||
+    typeof stackSave !== "function"
+  ) {
+    throw new Error("fonttool-wasm runtime is missing stack helper exports.");
+  }
+
+  return {
+    stackAlloc: stackAlloc as NativeFunction,
+    stackRestore: stackRestore as NativeFunction,
+    stackSave: stackSave as NativeFunction
+  };
+}
+
 function readNativeDiagnostics(
   module: NativeRuntimeModule,
-  exports: NativeRuntimeExports,
-  exportMap: ExportMap
+  stack: StackExports
 ): NativeRuntimeDiagnostics {
-  const stackAlloc = getNativeFunction(exports, exportMap.stackAlloc);
-  const stackRestore = getNativeFunction(exports, exportMap.stackRestore);
-  const stackSave = getNativeFunction(exports, exportMap.stackSave);
-  const runtimeDiagnostics = getNativeFunction(exports, exportMap.runtimeDiagnostics);
-  const threadMode = getNativeFunction(exports, exportMap.threadMode);
+  const runtimeDiagnostics = getNativeFunction(
+    module,
+    STABLE_EXPORT_NAMES.runtimeDiagnostics
+  );
 
-  return withStack(module, stackSave, stackRestore, () => {
-    const diagnosticsPointer = stackAlloc(WASM_RUNTIME_DIAGNOSTICS_STRUCT_SIZE);
+  return withStack(stack, () => {
+    const diagnosticsPointer = stack.stackAlloc(WASM_RUNTIME_DIAGNOSTICS_STRUCT_SIZE);
     const heap = getHeap(module);
-
     heap.fill(
       0,
       diagnosticsPointer,
@@ -426,14 +402,18 @@ function readNativeDiagnostics(
       throwForStatus(status, "runtime diagnostics");
     }
 
-    const fallbackReason = readCString(module, readUint32(module, diagnosticsPointer + 12));
-    const nativeThreadMode = readCString(module, threadMode());
-
     const diagnostics: NativeRuntimeDiagnostics = {
-      effectiveThreads: readUint32(module, diagnosticsPointer + 4),
       requestedThreads: readUint32(module, diagnosticsPointer),
-      threadMode: nativeThreadMode
+      effectiveThreads: readUint32(module, diagnosticsPointer + 4),
+      resolvedMode: readCString(
+        module,
+        readUint32(module, diagnosticsPointer + 8)
+      ) as "single" | "threaded"
     };
+    const fallbackReason = readCString(
+      module,
+      readUint32(module, diagnosticsPointer + 12)
+    );
 
     if (fallbackReason !== "") {
       diagnostics.fallbackReason = fallbackReason;
@@ -443,21 +423,22 @@ function readNativeDiagnostics(
   });
 }
 
-function applyDiagnostics(
+function applyNativeDiagnostics(
   diagnostics: RuntimeDiagnostics,
   decision: RuntimeDecision,
   nativeDiagnostics: NativeRuntimeDiagnostics
 ): void {
-  diagnostics.requestedThreads = nativeDiagnostics.requestedThreads;
-  diagnostics.effectiveThreads = nativeDiagnostics.effectiveThreads;
-  diagnostics.resolvedMode = decision.resolvedMode;
+  diagnostics.requestedStrategy = decision.requestedStrategy;
   diagnostics.runtimeKind = decision.runtimeKind;
   diagnostics.variant = decision.variant;
-  diagnostics.requestedStrategy = decision.requestedStrategy;
+  diagnostics.requestedThreads = nativeDiagnostics.requestedThreads;
+  diagnostics.effectiveThreads = nativeDiagnostics.effectiveThreads;
+  diagnostics.resolvedMode = nativeDiagnostics.resolvedMode;
 
-  const fallbackReason = decision.fallbackReason ?? nativeDiagnostics.fallbackReason;
-  if (fallbackReason !== undefined) {
-    diagnostics.fallbackReason = fallbackReason;
+  if (decision.fallbackReason !== undefined) {
+    diagnostics.fallbackReason = decision.fallbackReason;
+  } else if (nativeDiagnostics.fallbackReason !== undefined) {
+    diagnostics.fallbackReason = nativeDiagnostics.fallbackReason;
   } else {
     delete diagnostics.fallbackReason;
   }
@@ -465,21 +446,28 @@ function applyDiagnostics(
 
 function createLoadedRuntime(
   decision: RuntimeDecision,
-  assets: ReturnType<typeof resolveRuntimeAssets>,
+  assets: RuntimeAssets,
   support: RuntimeSupport,
-  instantiated: InstantiatedRuntime
+  instantiatedRuntime: InstantiatedRuntime
 ): LoadedFonttoolRuntime {
-  const exportMap = getExportMap(decision.variant);
+  let module: NativeRuntimeModule | null = instantiatedRuntime.module;
+  let stack: StackExports | null = getStackExports(
+    instantiatedRuntime.exports,
+    decision.variant
+  );
   const diagnostics: RuntimeDiagnostics = {
-    ...decision,
-    effectiveThreads: 0,
-    requestedThreads: 0
+    requestedStrategy: decision.requestedStrategy,
+    resolvedMode: "single",
+    runtimeKind: decision.runtimeKind,
+    variant: decision.variant,
+    requestedThreads: 0,
+    effectiveThreads: 0
   };
 
-  applyDiagnostics(
+  applyNativeDiagnostics(
     diagnostics,
     decision,
-    readNativeDiagnostics(instantiated.module, instantiated.exports, exportMap)
+    readNativeDiagnostics(module, stack)
   );
 
   let disposed = false;
@@ -495,48 +483,37 @@ function createLoadedRuntime(
       if (disposed) {
         throw new Error("fonttool-wasm runtime has already been disposed.");
       }
+      if (module === null || stack === null) {
+        throw new Error("fonttool-wasm runtime resources are unavailable.");
+      }
+      const activeModule = module;
+      const activeStack = stack;
 
-      const stackAlloc = getNativeFunction(instantiated.exports, exportMap.stackAlloc);
-      const stackRestore = getNativeFunction(
-        instantiated.exports,
-        exportMap.stackRestore
-      );
-      const stackSave = getNativeFunction(instantiated.exports, exportMap.stackSave);
-      const convert = getNativeFunction(instantiated.exports, exportMap.convert);
-      const bufferDestroy = getNativeFunction(
-        instantiated.exports,
-        exportMap.bufferDestroy
-      );
       const binaryInput = asUint8Array(input);
+      const convert = getNativeFunction(activeModule, STABLE_EXPORT_NAMES.convert);
+      const bufferDestroy = getNativeFunction(
+        activeModule,
+        STABLE_EXPORT_NAMES.bufferDestroy
+      );
 
-      const result = withStack(
-        instantiated.module,
-        stackSave,
-        stackRestore,
-        (): ConvertResult => {
-          const stackPointer = stackSave();
-          const inputPointer = reserveInputPointer(
-            instantiated.module,
-            stackPointer,
-            binaryInput.byteLength
-          );
-          const heap = getHeap(instantiated.module);
-
-          heap.set(binaryInput, inputPointer);
-
+      return withStackBuffer(activeModule, activeStack, binaryInput, (inputPointer) =>
+        withStack(activeStack, () => {
           const outputKindPointer = writeCString(
-            instantiated.module,
-            stackAlloc,
+            activeModule,
+            activeStack,
             options.outputKind
           );
           const variationAxesPointer = writeCString(
-            instantiated.module,
-            stackAlloc,
+            activeModule,
+            activeStack,
             options.variationAxes ?? ""
           );
-          const outputPointer = stackAlloc(WASM_BUFFER_STRUCT_SIZE);
-
-          heap.fill(0, outputPointer, outputPointer + WASM_BUFFER_STRUCT_SIZE);
+          const outputPointer = activeStack.stackAlloc(WASM_BUFFER_STRUCT_SIZE);
+          getHeap(activeModule).fill(
+            0,
+            outputPointer,
+            outputPointer + WASM_BUFFER_STRUCT_SIZE
+          );
 
           const status = convert(
             inputPointer,
@@ -550,58 +527,48 @@ function createLoadedRuntime(
           }
 
           try {
-            const dataPointer = readUint32(instantiated.module, outputPointer);
-            const dataLength = readUint32(instantiated.module, outputPointer + 4);
+            const dataPointer = readUint32(activeModule, outputPointer);
+            const dataLength = readUint32(activeModule, outputPointer + 4);
             const output = new Uint8Array(dataLength);
-
             output.set(
-              getHeap(instantiated.module).subarray(
-                dataPointer,
-                dataPointer + dataLength
-              )
+              getHeap(activeModule).subarray(dataPointer, dataPointer + dataLength)
             );
 
-            const nativeDiagnostics = readNativeDiagnostics(
-              instantiated.module,
-              instantiated.exports,
-              exportMap
+            applyNativeDiagnostics(
+              diagnostics,
+              decision,
+              readNativeDiagnostics(activeModule, activeStack)
             );
-
-            applyDiagnostics(diagnostics, decision, nativeDiagnostics);
 
             return {
-              data: output,
-              diagnostics: {
-                ...diagnostics
-              },
-              outputKind: options.outputKind
+              diagnostics: { ...diagnostics },
+              outputKind: options.outputKind,
+              data: output
             };
           } finally {
             bufferDestroy(outputPointer);
           }
-        }
+        })
       );
-
-      return result;
     },
     dispose(): void {
       disposed = true;
+      stack = null;
+      module = null;
     }
   };
 }
 
 async function loadResolvedRuntime(
   decision: RuntimeDecision,
-  assets: ReturnType<typeof resolveRuntimeAssets>,
+  assets: RuntimeAssets,
   support: RuntimeSupport
 ): Promise<LoadedFonttoolRuntime> {
   try {
-    const instantiated = await instantiateRuntimeVariant(
-      decision.variant,
-      assets[decision.variant === "pthread" ? "pthreads" : "single"]
+    const runtime = await loadRuntimeArtifactModule(
+      resolveVariantAssets(assets, decision.variant)
     );
-
-    return createLoadedRuntime(decision, assets, support, instantiated);
+    return createLoadedRuntime(decision, assets, support, runtime);
   } catch (error) {
     throw createRuntimeLoadError(decision.variant, error);
   }
@@ -610,30 +577,26 @@ async function loadResolvedRuntime(
 export async function loadSingleThreadRuntime(
   options: LoadRuntimeOptions = {}
 ): Promise<LoadedFonttoolRuntime> {
-  const support = resolveSupport(options.support);
+  const support = options.support ?? detectRuntimeSupport();
   const assets = resolveRuntimeAssets(options.assets);
-  const decision = resolveRuntimeMode("single", support);
-
-  return loadResolvedRuntime(decision, assets, support);
+  return loadResolvedRuntime(resolveRuntimeMode("single", support), assets, support);
 }
 
 export async function loadPthreadsRuntime(
   options: LoadRuntimeOptions = {}
 ): Promise<LoadedFonttoolRuntime> {
-  const support = resolveSupport(options.support);
+  const support = options.support ?? detectRuntimeSupport();
   const assets = resolveRuntimeAssets(options.assets);
-  const decision = resolveRuntimeMode("pthreads", support);
-
-  return loadResolvedRuntime(decision, assets, support);
+  return loadResolvedRuntime(resolveRuntimeMode("pthreads", support), assets, support);
 }
 
 export async function loadRuntime(
   options: LoadRuntimeOptions = {}
 ): Promise<LoadedFonttoolRuntime> {
-  const support = resolveSupport(options.support);
+  const support = options.support ?? detectRuntimeSupport();
   const assets = resolveRuntimeAssets(options.assets);
-  const requestedStrategy = options.strategy ?? "single";
-  const decision = resolveRuntimeMode(requestedStrategy, support);
+  const strategy = options.strategy ?? "single";
+  const decision = resolveRuntimeMode(strategy, support);
 
   if (decision.variant !== "pthread") {
     return loadResolvedRuntime(decision, assets, support);
@@ -642,7 +605,7 @@ export async function loadRuntime(
   try {
     return await loadResolvedRuntime(decision, assets, support);
   } catch (error) {
-    if (requestedStrategy !== "auto") {
+    if (strategy !== "auto") {
       throw error;
     }
 

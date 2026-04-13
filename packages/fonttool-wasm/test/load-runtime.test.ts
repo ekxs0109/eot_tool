@@ -8,7 +8,7 @@ import { loadRuntime } from "../src/core/load-runtime.js";
 import type { RuntimeSupport } from "../src/core/types.js";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
-const sampleFontPath = resolve(thisDir, "../../../testdata/OpenSans-Regular.ttf");
+const sampleFontPath = resolve(thisDir, "../../../testdata/cff-static.otf");
 
 const nodeThreadSupport: RuntimeSupport = {
   runtimeKind: "node",
@@ -39,10 +39,11 @@ describe.sequential("loadRuntime", () => {
       expect(result.data.byteLength).toBeGreaterThan(0);
       expect(result.diagnostics).toMatchObject({
         requestedStrategy: "single",
-        resolvedMode: "single-thread",
+        resolvedMode: "single",
         runtimeKind: "node",
         variant: "single"
       });
+      expect(result.diagnostics.fallbackReason).toBe("requested-single");
       expect(runtime.diagnostics).toMatchObject(result.diagnostics);
       expect(runtime.support).toEqual(nodeThreadSupport);
     } finally {
@@ -66,8 +67,9 @@ describe.sequential("loadRuntime", () => {
       expect(result.outputKind).toBe("eot");
       expect(result.data.byteLength).toBeGreaterThan(0);
       expect(result.diagnostics).toMatchObject({
+        fallbackReason: "task-count-clamped",
         requestedStrategy: "auto",
-        resolvedMode: "pthreads",
+        resolvedMode: "single",
         runtimeKind: "node",
         variant: "pthread"
       });
@@ -101,7 +103,7 @@ describe.sequential("loadRuntime", () => {
       expect(result.diagnostics).toMatchObject({
         fallbackReason: "pthreads-load-failed",
         requestedStrategy: "auto",
-        resolvedMode: "single-thread",
+        resolvedMode: "single",
         runtimeKind: "node",
         variant: "single"
       });

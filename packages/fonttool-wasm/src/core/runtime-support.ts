@@ -22,7 +22,9 @@ export function detectRuntimeSupport(): RuntimeSupport {
     typeof runtime.SharedArrayBuffer === "function";
   const crossOriginIsolated = runtime.crossOriginIsolated === true;
   const pthreadsPossible =
-    isBrowser && !isNode && sharedArrayBuffer && crossOriginIsolated;
+    isNode
+      ? sharedArrayBuffer
+      : isBrowser && sharedArrayBuffer && crossOriginIsolated;
 
   return {
     runtimeKind: isNode ? "node" : "browser",

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveRuntimeMode } from "../src/core/load-runtime.js";
+import { detectRuntimeSupport as detectCoreRuntimeSupport } from "../src/core/runtime-support.js";
+import { detectRuntimeSupport as detectHighLevelRuntimeSupport } from "../src/high-level/detect-runtime-support.js";
 import type { RuntimeSupport } from "../src/core/types.js";
 
 const noThreads: RuntimeSupport = {
@@ -46,5 +48,11 @@ describe("resolveRuntimeMode", () => {
       runtimeKind: "browser",
       variant: "pthread"
     });
+  });
+});
+
+describe("detectRuntimeSupport", () => {
+  it("returns the same answer from core and high-level entry points", () => {
+    expect(detectHighLevelRuntimeSupport()).toEqual(detectCoreRuntimeSupport());
   });
 });
