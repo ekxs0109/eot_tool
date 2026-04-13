@@ -26,7 +26,7 @@
     "check:artifacts": "node ./scripts/check-artifacts.mjs",
     "stage:wasm": "node ./scripts/stage-wasm.mjs",
     "test": "vitest run",
-    "test:node-smoke": "node ./test/node-smoke.mjs"
+    "test:node-smoke": "npm run build && node ./test/node-smoke.mjs"
   },
   "engines": {
     "node": ">=20"

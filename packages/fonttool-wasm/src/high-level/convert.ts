@@ -1,4 +1,5 @@
 import { loadFonttool } from "./load-fonttool.js";
+import { detectRuntimeSupport } from "./detect-runtime-support.js";
 import type {
   ConvertOptions,
   ConvertResult,
@@ -9,7 +10,10 @@ export async function convert(
   input: FonttoolBinaryInput,
   options: ConvertOptions
 ): Promise<ConvertResult> {
-  const runtime = await loadFonttool(options);
+  const runtime = await loadFonttool({
+    ...options,
+    support: options.support ?? detectRuntimeSupport()
+  });
 
   try {
     return await runtime.convert(input, options);
