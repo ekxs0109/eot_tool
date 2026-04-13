@@ -22,6 +22,33 @@ extern "C" {
 
 namespace {
 
+#if defined(__EMSCRIPTEN__) && !defined(EOT_WASM_CUSTOM_HARFBUZZ)
+#define HB_DRAW_SET_MOVE_TO(dfuncs, func) hb_draw_funcs_set_move_to_func((dfuncs), (func))
+#define HB_DRAW_SET_LINE_TO(dfuncs, func) hb_draw_funcs_set_line_to_func((dfuncs), (func))
+#define HB_DRAW_SET_QUADRATIC_TO(dfuncs, func) \
+  hb_draw_funcs_set_quadratic_to_func((dfuncs), (func))
+#define HB_DRAW_SET_CUBIC_TO(dfuncs, func) hb_draw_funcs_set_cubic_to_func((dfuncs), (func))
+#define HB_DRAW_SET_CLOSE_PATH(dfuncs, func) \
+  hb_draw_funcs_set_close_path_func((dfuncs), (func))
+#define HB_FONT_DRAW_GLYPH_OR_FAIL(font, glyph_id, draw_funcs, draw_data) \
+  hb_font_draw_glyph((font), (glyph_id), (draw_funcs), (draw_data))
+#define HB_FACE_CREATE_OR_FAIL(blob, index) hb_face_create((blob), (index))
+#else
+#define HB_DRAW_SET_MOVE_TO(dfuncs, func) \
+  hb_draw_funcs_set_move_to_func((dfuncs), (func), nullptr, nullptr)
+#define HB_DRAW_SET_LINE_TO(dfuncs, func) \
+  hb_draw_funcs_set_line_to_func((dfuncs), (func), nullptr, nullptr)
+#define HB_DRAW_SET_QUADRATIC_TO(dfuncs, func) \
+  hb_draw_funcs_set_quadratic_to_func((dfuncs), (func), nullptr, nullptr)
+#define HB_DRAW_SET_CUBIC_TO(dfuncs, func) \
+  hb_draw_funcs_set_cubic_to_func((dfuncs), (func), nullptr, nullptr)
+#define HB_DRAW_SET_CLOSE_PATH(dfuncs, func) \
+  hb_draw_funcs_set_close_path_func((dfuncs), (func), nullptr, nullptr)
+#define HB_FONT_DRAW_GLYPH_OR_FAIL(font, glyph_id, draw_funcs, draw_data) \
+  hb_font_draw_glyph_or_fail((font), (glyph_id), (draw_funcs), (draw_data))
+#define HB_FACE_CREATE_OR_FAIL(blob, index) hb_face_create_or_fail((blob), (index))
+#endif
+
 constexpr uint32_t TAG_CFF = 0x43464620u;
 constexpr uint32_t TAG_CFF2 = 0x43464632u;
 constexpr uint32_t TAG_DSIG = 0x44534947u;
@@ -153,8 +180,7 @@ void FinishCurrentContour(OutlineCapture *capture) {
   capture->current_contour.clear();
 }
 
-void MoveToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
-                    float to_x, float to_y, void *) {
+static void MoveToImpl(void *draw_data, float to_x, float to_y) {
   OutlineCapture *capture = static_cast<OutlineCapture *>(draw_data);
   if (capture == nullptr || capture->status != EOT_OK) {
     return;
@@ -172,8 +198,7 @@ void MoveToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
   }
 }
 
-void LineToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
-                    float to_x, float to_y, void *) {
+static void LineToImpl(void *draw_data, float to_x, float to_y) {
   OutlineCapture *capture = static_cast<OutlineCapture *>(draw_data);
   if (capture == nullptr || capture->status != EOT_OK || !capture->contour_open) {
     return;
@@ -186,9 +211,8 @@ void LineToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
   }
 }
 
-void QuadraticToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
-                         float control_x, float control_y,
-                         float to_x, float to_y, void *) {
+static void QuadraticToImpl(void *draw_data, float control_x, float control_y,
+                            float to_x, float to_y) {
   OutlineCapture *capture = static_cast<OutlineCapture *>(draw_data);
   if (capture == nullptr || capture->status != EOT_OK || !capture->contour_open) {
     return;
@@ -204,10 +228,9 @@ void QuadraticToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
   }
 }
 
-void CubicToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
-                     float control1_x, float control1_y,
-                     float control2_x, float control2_y,
-                     float to_x, float to_y, void *) {
+static void CubicToImpl(void *draw_data, float control1_x, float control1_y,
+                        float control2_x, float control2_y,
+                        float to_x, float to_y) {
   OutlineCapture *capture = static_cast<OutlineCapture *>(draw_data);
   cubic_curve_t cubic = {};
   quadratic_spline_t spline = {};
@@ -247,9 +270,67 @@ void CubicToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
   }
 }
 
-void ClosePathCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *, void *) {
+static void ClosePathImpl(void *draw_data) {
   FinishCurrentContour(static_cast<OutlineCapture *>(draw_data));
 }
+
+#if defined(__EMSCRIPTEN__) && !defined(EOT_WASM_CUSTOM_HARFBUZZ)
+void MoveToCallback(hb_position_t to_x, hb_position_t to_y, void *user_data) {
+  MoveToImpl(user_data, static_cast<float>(to_x), static_cast<float>(to_y));
+}
+
+void LineToCallback(hb_position_t to_x, hb_position_t to_y, void *user_data) {
+  LineToImpl(user_data, static_cast<float>(to_x), static_cast<float>(to_y));
+}
+
+void QuadraticToCallback(hb_position_t control_x, hb_position_t control_y,
+                         hb_position_t to_x, hb_position_t to_y, void *user_data) {
+  QuadraticToImpl(user_data, static_cast<float>(control_x),
+                  static_cast<float>(control_y), static_cast<float>(to_x),
+                  static_cast<float>(to_y));
+}
+
+void CubicToCallback(hb_position_t control1_x, hb_position_t control1_y,
+                     hb_position_t control2_x, hb_position_t control2_y,
+                     hb_position_t to_x, hb_position_t to_y, void *user_data) {
+  CubicToImpl(user_data, static_cast<float>(control1_x),
+              static_cast<float>(control1_y), static_cast<float>(control2_x),
+              static_cast<float>(control2_y), static_cast<float>(to_x),
+              static_cast<float>(to_y));
+}
+
+void ClosePathCallback(void *user_data) {
+  ClosePathImpl(user_data);
+}
+#else
+void MoveToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
+                    float to_x, float to_y, void *) {
+  MoveToImpl(draw_data, to_x, to_y);
+}
+
+void LineToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
+                    float to_x, float to_y, void *) {
+  LineToImpl(draw_data, to_x, to_y);
+}
+
+void QuadraticToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
+                         float control_x, float control_y,
+                         float to_x, float to_y, void *) {
+  QuadraticToImpl(draw_data, control_x, control_y, to_x, to_y);
+}
+
+void CubicToCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *,
+                     float control1_x, float control1_y,
+                     float control2_x, float control2_y,
+                     float to_x, float to_y, void *) {
+  CubicToImpl(draw_data, control1_x, control1_y, control2_x, control2_y,
+              to_x, to_y);
+}
+
+void ClosePathCallback(hb_draw_funcs_t *, void *draw_data, hb_draw_state_t *, void *) {
+  ClosePathImpl(draw_data);
+}
+#endif
 
 hb_draw_funcs_t *CreateDrawFuncs(void) {
   hb_draw_funcs_t *draw_funcs = hb_draw_funcs_create();
@@ -257,12 +338,11 @@ hb_draw_funcs_t *CreateDrawFuncs(void) {
     return nullptr;
   }
 
-  hb_draw_funcs_set_move_to_func(draw_funcs, MoveToCallback, nullptr, nullptr);
-  hb_draw_funcs_set_line_to_func(draw_funcs, LineToCallback, nullptr, nullptr);
-  hb_draw_funcs_set_quadratic_to_func(draw_funcs, QuadraticToCallback, nullptr,
-                                      nullptr);
-  hb_draw_funcs_set_cubic_to_func(draw_funcs, CubicToCallback, nullptr, nullptr);
-  hb_draw_funcs_set_close_path_func(draw_funcs, ClosePathCallback, nullptr, nullptr);
+  HB_DRAW_SET_MOVE_TO(draw_funcs, MoveToCallback);
+  HB_DRAW_SET_LINE_TO(draw_funcs, LineToCallback);
+  HB_DRAW_SET_QUADRATIC_TO(draw_funcs, QuadraticToCallback);
+  HB_DRAW_SET_CUBIC_TO(draw_funcs, CubicToCallback);
+  HB_DRAW_SET_CLOSE_PATH(draw_funcs, ClosePathCallback);
   hb_draw_funcs_make_immutable(draw_funcs);
   return draw_funcs;
 }
@@ -297,7 +377,7 @@ eot_status_t BuildGlyphOutline(hb_font_t *font, hb_draw_funcs_t *draw_funcs,
     return EOT_ERR_INVALID_ARGUMENT;
   }
 
-  if (!hb_font_draw_glyph_or_fail(font, glyph_id, draw_funcs, &capture)) {
+  if (!HB_FONT_DRAW_GLYPH_OR_FAIL(font, glyph_id, draw_funcs, &capture)) {
     return EOT_ERR_CORRUPT_DATA;
   }
   FinishCurrentContour(&capture);
@@ -603,7 +683,7 @@ extern "C" eot_status_t otf_convert_to_truetype_sfnt(
     goto cleanup;
   }
 
-  face = hb_face_create_or_fail(blob, 0u);
+  face = HB_FACE_CREATE_OR_FAIL(blob, 0u);
   if (face == nullptr) {
     status = EOT_ERR_ALLOCATION;
     goto cleanup;

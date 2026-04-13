@@ -328,29 +328,81 @@ $(TEST_BIN): $(TEST_MAIN_OBJ) $(TEST_CLI_OBJ) $(TEST_EOT_HEADER_OBJ) $(TEST_LZCO
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ $(HB_LIBS) $(TEST_CORETEXT_LIBS) -o $@
 
 WASM_CXX ?= em++
+WASM_CC ?= emcc
 WASM_CXXFLAGS ?= -O3 -std=c++17
-WASM_BASE_FLAGS := $(WASM_CXXFLAGS) $(HB_CFLAGS) -I$(ROOT_DIR)/src \
+WASM_CFLAGS ?= -O3 -std=c11
+WASM_THIRD_PARTY_DIR := $(BUILD_DIR)/third_party
+WASM_THIRD_PARTY_SRC_DIR := $(WASM_THIRD_PARTY_DIR)/src
+WASM_HARFBUZZ_VERSION := 14.0.0
+WASM_HARFBUZZ_URL := https://github.com/harfbuzz/harfbuzz/releases/download/$(WASM_HARFBUZZ_VERSION)/harfbuzz-$(WASM_HARFBUZZ_VERSION).tar.xz
+WASM_HARFBUZZ_ARCHIVE := $(WASM_THIRD_PARTY_DIR)/harfbuzz-$(WASM_HARFBUZZ_VERSION).tar.xz
+WASM_HARFBUZZ_SHA256 := d4aa312728136e3dc7c3cda47b871614ce0d12bbb19f9dcac2ea70de836dc307
+WASM_HARFBUZZ_SRC_DIR := $(WASM_THIRD_PARTY_SRC_DIR)/harfbuzz-$(WASM_HARFBUZZ_VERSION)
+WASM_HARFBUZZ_EXTRACT_STAMP := $(WASM_HARFBUZZ_SRC_DIR)/.extract-stamp
+WASM_COMMON_FLAGS := -I$(ROOT_DIR)/src -I$(WASM_HARFBUZZ_SRC_DIR)/src -DHB_EXPERIMENTAL_API -DEOT_WASM_CUSTOM_HARFBUZZ=1
+WASM_BASE_FLAGS := $(WASM_COMMON_FLAGS) \
 	-s MODULARIZE=1 -s EXPORT_ES6=1 -s ALLOW_MEMORY_GROWTH=1 \
-	-s EXPORTED_FUNCTIONS='["_wasm_convert_otf_to_embedded_font","_wasm_buffer_destroy","_wasm_runtime_thread_mode"]' \
+	-s EXPORTED_FUNCTIONS='["_wasm_convert_otf_to_embedded_font","_wasm_buffer_destroy","_wasm_runtime_thread_mode","_wasm_runtime_get_diagnostics"]' \
 	-s EXPORTED_RUNTIME_METHODS='["cwrap","HEAPU8"]'
-WASM_SOURCES := $(ROOT_DIR)/src/wasm_api.cc $(ROOT_DIR)/src/otf_convert.cc $(ROOT_DIR)/src/cff_reader.cc \
+WASM_CXX_SOURCES := $(ROOT_DIR)/src/wasm_api.cc $(ROOT_DIR)/src/otf_convert.cc $(ROOT_DIR)/src/cff_reader.cc \
 	$(ROOT_DIR)/src/cff_variation.cc $(ROOT_DIR)/src/cu2qu.cc $(ROOT_DIR)/src/tt_rebuilder.cc \
-	$(ROOT_DIR)/src/parallel_runtime.cc $(ROOT_DIR)/src/subset_backend_harfbuzz.cc \
-	$(ROOT_DIR)/src/byte_io.c $(ROOT_DIR)/src/file_io.c $(ROOT_DIR)/src/eot_header.c \
+	$(ROOT_DIR)/src/parallel_runtime.cc $(ROOT_DIR)/src/subset_backend_harfbuzz.cc
+WASM_C_SOURCES := $(ROOT_DIR)/src/byte_io.c $(ROOT_DIR)/src/file_io.c $(ROOT_DIR)/src/eot_header.c \
 	$(ROOT_DIR)/src/mtx_container.c $(ROOT_DIR)/src/lzcomp.c $(ROOT_DIR)/src/sfnt_font.c \
 	$(ROOT_DIR)/src/sfnt_writer.c $(ROOT_DIR)/src/cvt_codec.c $(ROOT_DIR)/src/hdmx_codec.c \
 	$(ROOT_DIR)/src/glyf_codec.c $(ROOT_DIR)/src/mtx_decode.c $(ROOT_DIR)/src/sfnt_reader.c \
 	$(ROOT_DIR)/src/mtx_encode.c $(ROOT_DIR)/src/table_policy.c $(ROOT_DIR)/src/subset_args.c \
 	$(ROOT_DIR)/src/sfnt_subset.c
+WASM_HARFBUZZ_SOURCE := $(WASM_HARFBUZZ_SRC_DIR)/src/harfbuzz-subset.cc
+WASM_SINGLE_OBJ_DIR := $(BUILD_DIR)/wasm-single-obj
+WASM_PTHREADS_OBJ_DIR := $(BUILD_DIR)/wasm-pthreads-obj
+WASM_SINGLE_CXX_OBJECTS := $(patsubst $(ROOT_DIR)/src/%.cc,$(WASM_SINGLE_OBJ_DIR)/%.o,$(WASM_CXX_SOURCES))
+WASM_SINGLE_C_OBJECTS := $(patsubst $(ROOT_DIR)/src/%.c,$(WASM_SINGLE_OBJ_DIR)/%.o,$(WASM_C_SOURCES))
+WASM_SINGLE_HARFBUZZ_OBJECTS := $(WASM_SINGLE_OBJ_DIR)/harfbuzz-subset.o
+WASM_SINGLE_OBJECTS := $(WASM_SINGLE_CXX_OBJECTS) $(WASM_SINGLE_C_OBJECTS) $(WASM_SINGLE_HARFBUZZ_OBJECTS)
+WASM_PTHREADS_CXX_OBJECTS := $(patsubst $(ROOT_DIR)/src/%.cc,$(WASM_PTHREADS_OBJ_DIR)/%.o,$(WASM_CXX_SOURCES))
+WASM_PTHREADS_C_OBJECTS := $(patsubst $(ROOT_DIR)/src/%.c,$(WASM_PTHREADS_OBJ_DIR)/%.o,$(WASM_C_SOURCES))
+WASM_PTHREADS_HARFBUZZ_OBJECTS := $(WASM_PTHREADS_OBJ_DIR)/harfbuzz-subset.o
+WASM_PTHREADS_OBJECTS := $(WASM_PTHREADS_CXX_OBJECTS) $(WASM_PTHREADS_C_OBJECTS) $(WASM_PTHREADS_HARFBUZZ_OBJECTS)
+
+$(WASM_THIRD_PARTY_DIR) $(WASM_THIRD_PARTY_SRC_DIR) $(WASM_SINGLE_OBJ_DIR) $(WASM_PTHREADS_OBJ_DIR):
+	mkdir -p $@
+
+$(WASM_HARFBUZZ_ARCHIVE): | $(WASM_THIRD_PARTY_DIR)
+	curl -L -o $@ $(WASM_HARFBUZZ_URL)
+
+$(WASM_HARFBUZZ_EXTRACT_STAMP): $(WASM_HARFBUZZ_ARCHIVE) | $(WASM_THIRD_PARTY_SRC_DIR)
+	printf '%s  %s\n' "$(WASM_HARFBUZZ_SHA256)" "$(WASM_HARFBUZZ_ARCHIVE)" | shasum -a 256 -c -
+	rm -rf $(WASM_HARFBUZZ_SRC_DIR)
+	tar -xf $(WASM_HARFBUZZ_ARCHIVE) -C $(WASM_THIRD_PARTY_SRC_DIR)
+	touch $@
+
+$(WASM_SINGLE_OBJ_DIR)/%.o: $(ROOT_DIR)/src/%.cc $(WASM_HARFBUZZ_EXTRACT_STAMP) | $(WASM_SINGLE_OBJ_DIR)
+	$(WASM_CXX) $(WASM_CXXFLAGS) $(WASM_COMMON_FLAGS) -c $< -o $@
+
+$(WASM_SINGLE_OBJ_DIR)/%.o: $(ROOT_DIR)/src/%.c | $(WASM_SINGLE_OBJ_DIR)
+	$(WASM_CC) $(WASM_CFLAGS) $(WASM_COMMON_FLAGS) -c $< -o $@
+
+$(WASM_SINGLE_OBJ_DIR)/harfbuzz-subset.o: $(WASM_HARFBUZZ_SOURCE) $(WASM_HARFBUZZ_EXTRACT_STAMP) | $(WASM_SINGLE_OBJ_DIR)
+	$(WASM_CXX) $(WASM_CXXFLAGS) $(WASM_COMMON_FLAGS) -c $< -o $@
+
+$(WASM_PTHREADS_OBJ_DIR)/%.o: $(ROOT_DIR)/src/%.cc $(WASM_HARFBUZZ_EXTRACT_STAMP) | $(WASM_PTHREADS_OBJ_DIR)
+	$(WASM_CXX) $(WASM_CXXFLAGS) $(WASM_COMMON_FLAGS) -pthread -s USE_PTHREADS=1 -c $< -o $@
+
+$(WASM_PTHREADS_OBJ_DIR)/%.o: $(ROOT_DIR)/src/%.c | $(WASM_PTHREADS_OBJ_DIR)
+	$(WASM_CC) $(WASM_CFLAGS) $(WASM_COMMON_FLAGS) -pthread -s USE_PTHREADS=1 -c $< -o $@
+
+$(WASM_PTHREADS_OBJ_DIR)/harfbuzz-subset.o: $(WASM_HARFBUZZ_SOURCE) $(WASM_HARFBUZZ_EXTRACT_STAMP) | $(WASM_PTHREADS_OBJ_DIR)
+	$(WASM_CXX) $(WASM_CXXFLAGS) $(WASM_COMMON_FLAGS) -pthread -s USE_PTHREADS=1 -c $< -o $@
 
 wasm: wasm-single wasm-pthreads
 
-wasm-single: check-harfbuzz | $(BUILD_DIR)
-	$(WASM_CXX) $(WASM_BASE_FLAGS) $(WASM_SOURCES) $(HB_LIBS) \
+wasm-single: $(WASM_SINGLE_OBJECTS) | $(BUILD_DIR)
+	$(WASM_CXX) $(WASM_CXXFLAGS) $(WASM_BASE_FLAGS) $(WASM_SINGLE_OBJECTS) \
 		-o $(BUILD_DIR)/fonttool-wasm.js
 
-wasm-pthreads: check-harfbuzz | $(BUILD_DIR)
-	$(WASM_CXX) $(WASM_BASE_FLAGS) -pthread -s USE_PTHREADS=1 $(WASM_SOURCES) $(HB_LIBS) \
+wasm-pthreads: $(WASM_PTHREADS_OBJECTS) | $(BUILD_DIR)
+	$(WASM_CXX) $(WASM_CXXFLAGS) $(WASM_BASE_FLAGS) -pthread -s USE_PTHREADS=1 $(WASM_PTHREADS_OBJECTS) \
 		-o $(BUILD_DIR)/fonttool-wasm-pthreads.js
 
 verify-wasm-artifacts: wasm

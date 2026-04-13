@@ -9,6 +9,20 @@ extern "C" {
 
 #include <hb-subset.h>
 
+#if !defined(HB_SUBSET_FLAGS_NO_LAYOUT_CLOSURE)
+#define HB_SUBSET_FLAGS_NO_LAYOUT_CLOSURE 0u
+#endif
+
+#if !defined(HB_SUBSET_FLAGS_NO_BIDI_CLOSURE)
+#define HB_SUBSET_FLAGS_NO_BIDI_CLOSURE 0u
+#endif
+
+#if defined(__EMSCRIPTEN__) && !defined(EOT_WASM_CUSTOM_HARFBUZZ)
+#define HB_FACE_CREATE_OR_FAIL(blob, index) hb_face_create((blob), (index))
+#else
+#define HB_FACE_CREATE_OR_FAIL(blob, index) hb_face_create_or_fail((blob), (index))
+#endif
+
 static eot_status_t copy_face_blob_to_font(hb_face_t *face, sfnt_font_t *output) {
   hb_blob_t *blob = hb_face_reference_blob(face);
   unsigned int length = 0;
@@ -76,7 +90,7 @@ extern "C" eot_status_t subset_backend_harfbuzz_run(const sfnt_font_t *input,
     return EOT_ERR_ALLOCATION;
   }
 
-  face = hb_face_create_or_fail(blob, 0);
+  face = HB_FACE_CREATE_OR_FAIL(blob, 0);
   if (face == nullptr) {
     hb_blob_destroy(blob);
     return EOT_ERR_CORRUPT_DATA;
