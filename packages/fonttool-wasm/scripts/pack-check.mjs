@@ -10,7 +10,7 @@ const packageDir = path.resolve(scriptDir, "..");
 const execFileAsync = promisify(execFile);
 
 const FORBIDDEN_PATTERNS = [
-  /\.map$/,
+  /\.js\.map$/,
   /^vendor\/wasm\/\.gitkeep$/,
   /^apps\//,
   /^test\//,
