@@ -37,6 +37,9 @@ version = "0.1.0"
 [[package]]
 name = "fonttool-sfnt"
 version = "0.1.0"
+dependencies = [
+ "fonttool-bytes",
+]
 
 [[package]]
 name = "fonttool-subset"
