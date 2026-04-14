@@ -4,14 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build:runtime": "npm run build --workspace fonttool-wasm",
-    "dev": "npm run build:runtime && vite",
-    "build": "npm run build:runtime && tsc -p tsconfig.json && vite build",
+    "build:runtime": "pnpm --filter fonttool-wasm build",
+    "dev": "pnpm build:runtime && vite",
+    "build": "pnpm build:runtime && tsc -p tsconfig.json && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
-    "fonttool-wasm": "0.0.0",
+    "fonttool-wasm": "workspace:*",
     "radix-ui": "^1.4.3",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"
@@ -20,8 +20,10 @@
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@tailwindcss/vite": "^4.1.13",
     "@vitejs/plugin-react": "^5.2.0",
     "clsx": "^2.1.1",
+    "tailwindcss": "^4.1.13",
     "tailwind-merge": "^3.4.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.2"

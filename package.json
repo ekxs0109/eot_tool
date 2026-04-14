@@ -1,19 +1,19 @@
 {
   "name": "eot_tool",
   "private": true,
-  "packageManager": "npm@10.0.0",
+  "packageManager": "pnpm@10.33.0",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=24.7.0"
   },
   "scripts": {
     "build": "turbo run build",
     "build:benchmark-web": "turbo run build --filter=benchmark-web",
     "build:wasm": "make wasm",
-    "dev:benchmark-web": "npm run dev --workspace benchmark-web",
+    "dev:benchmark-web": "pnpm --filter benchmark-web dev",
     "pack-check": "turbo run pack-check",
     "test": "turbo run test",
     "verify:wasm": "make verify-wasm-artifacts"

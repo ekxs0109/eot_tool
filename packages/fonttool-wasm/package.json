@@ -31,7 +31,7 @@
     "test:node-smoke": "npm run build && node ./test/node-smoke.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24.7.0"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
