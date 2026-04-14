@@ -4,6 +4,10 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use fonttool_cff::{
+    encode_otf_with_legacy_backend, inspect_otf_font, subset_otf_with_legacy_backend, CffError,
+    OtfSubsetRequest,
+};
 use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::encode_glyf;
 use fonttool_harfbuzz::{run_subset_adapter, LegacySubsetRequest};
@@ -21,6 +25,8 @@ const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
 const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
+const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
+const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -57,7 +63,7 @@ fn main() -> ExitCode {
             }
         },
         Some("subset") => match handle_subset_args(args.collect()) {
-            Ok((input, output, glyph_ids)) => match subset_file(&input, &output, &glyph_ids) {
+            Ok(request) => match subset_file(request) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("fonttool: {error}");
@@ -82,9 +88,9 @@ fn print_help() {
     println!("Usage: fonttool <COMMAND>");
     println!();
     println!("Commands:");
-    println!("  encode <INPUT> <OUTPUT>  Encode a TrueType font into EOT/MTX");
+    println!("  encode <INPUT> <OUTPUT>  Encode a TrueType or OTF font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
-    println!("  subset <INPUT> <OUTPUT> --glyph-ids <LIST>  Subset a font through the Rust adapter boundary");
+    println!("  subset <INPUT> <OUTPUT> [--glyph-ids <LIST>|--text <TEXT>] [--variation <AXES>]");
     println!();
     println!("Options:");
     println!("  -h, --help  Print help");
@@ -134,8 +140,13 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
         .map_err(|error| format!("failed to read {}: {error}", input_path.as_ref().display()))?;
     let source_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
 
+    if source_font.table(TAG_CFF).is_some() || source_font.table(TAG_CFF2).is_some() {
+        return encode_otf_with_legacy_backend(input_path.as_ref(), output_path.as_ref())
+            .map_err(|error| error.to_string());
+    }
+
     if source_font.version_tag() != SFNT_VERSION_TRUETYPE {
-        return Err("encode currently only supports TrueType glyf fonts".to_string());
+        return Err("encode currently only supports TrueType glyf or OTF/CFF fonts".to_string());
     }
 
     let head = table_bytes(&source_font, TAG_HEAD, "head")?;
@@ -183,20 +194,24 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     Ok(())
 }
 
-fn subset_file(
-    input_path: impl AsRef<Path>,
-    output_path: impl AsRef<Path>,
-    glyph_ids_csv: &str,
-) -> Result<(), String> {
-    let request =
-        GlyphIdRequest::parse_csv(glyph_ids_csv).map_err(|error| format!("invalid subset arguments: {error}"))?;
+fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
+    if is_otf_path(&request.input_path) {
+        return subset_otf_file(&request);
+    }
+
+    let glyph_ids_csv = request
+        .glyph_ids
+        .as_deref()
+        .ok_or_else(|| "subset currently only supports --glyph-ids for non-OTF input".to_string())?;
+    let glyph_request = GlyphIdRequest::parse_csv(glyph_ids_csv)
+        .map_err(|error| format!("invalid subset arguments: {error}"))?;
 
     // Keep the Rust-owned planning boundary narrow for Task 6. The adapter executes
     // the currently trusted backend while we migrate the rest of the subset pipeline.
-    let plan = plan_subset_for_input(input_path.as_ref(), &request)?;
+    let plan = plan_subset_for_input(&request.input_path, &glyph_request)?;
     let warnings = run_subset_adapter(LegacySubsetRequest {
-        input_path: input_path.as_ref(),
-        output_path: output_path.as_ref(),
+        input_path: &request.input_path,
+        output_path: &request.output_path,
         plan: &plan,
     })
     .map_err(|error| error.to_string())?;
@@ -205,16 +220,62 @@ fn subset_file(
     Ok(())
 }
 
-fn handle_subset_args(args: Vec<String>) -> Result<(String, String, String), String> {
-    if args.len() != 4 {
-        return Err("subset expects INPUT OUTPUT --glyph-ids LIST".to_string());
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SubsetCliRequest {
+    input_path: std::path::PathBuf,
+    output_path: std::path::PathBuf,
+    glyph_ids: Option<String>,
+    text: Option<String>,
+    variation_axes: Option<String>,
+}
+
+fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
+    if args.len() < 4 {
+        return Err("subset expects INPUT OUTPUT plus a selection flag".to_string());
     }
 
-    if args[2] != "--glyph-ids" {
-        return Err("subset currently only supports --glyph-ids".to_string());
+    let mut request = SubsetCliRequest {
+        input_path: args[0].clone().into(),
+        output_path: args[1].clone().into(),
+        glyph_ids: None,
+        text: None,
+        variation_axes: None,
+    };
+
+    let mut index = 2usize;
+    while index < args.len() {
+        let flag = &args[index];
+        if index + 1 >= args.len() {
+            return Err("subset flag is missing a value".to_string());
+        }
+
+        match flag.as_str() {
+            "--glyph-ids" => {
+                if request.glyph_ids.is_some() || request.text.is_some() {
+                    return Err("subset accepts only one selection mode".to_string());
+                }
+                request.glyph_ids = Some(args[index + 1].clone());
+            }
+            "--text" => {
+                if request.glyph_ids.is_some() || request.text.is_some() {
+                    return Err("subset accepts only one selection mode".to_string());
+                }
+                request.text = Some(args[index + 1].clone());
+            }
+            "--variation" => {
+                request.variation_axes = Some(args[index + 1].clone());
+            }
+            _ => return Err(format!("unsupported subset flag `{flag}`")),
+        }
+
+        index += 2;
     }
 
-    Ok((args[0].clone(), args[1].clone(), args[3].clone()))
+    if request.glyph_ids.is_none() && request.text.is_none() {
+        return Err("subset requires either --glyph-ids or --text".to_string());
+    }
+
+    Ok(request)
 }
 
 fn plan_subset_for_input(input_path: &Path, request: &GlyphIdRequest) -> Result<fonttool_subset::SubsetPlan, String> {
@@ -262,6 +323,36 @@ fn emit_subset_warnings(warnings: SubsetWarnings) {
     if warnings.dropped_vdmx {
         eprintln!("warning: unsupported VDMX in MTX encode/subset path; dropping table");
     }
+}
+
+fn subset_otf_file(request: &SubsetCliRequest) -> Result<(), String> {
+    let text = request
+        .text
+        .as_deref()
+        .ok_or_else(|| "subset currently requires --text for OTF input".to_string())?;
+    let input_bytes = fs::read(&request.input_path)
+        .map_err(|error| format!("failed to read {}: {error}", request.input_path.display()))?;
+    let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
+    if !kind.is_cff_flavor {
+        return Err("subset OTF path expects CFF or CFF2 input".to_string());
+    }
+    if request.variation_axes.is_some() && !kind.is_variable {
+        return Err(CffError::VariationRejectedForStaticInput.to_string());
+    }
+
+    subset_otf_with_legacy_backend(OtfSubsetRequest {
+        input_path: &request.input_path,
+        output_path: &request.output_path,
+        text,
+        variation_axes: request.variation_axes.as_deref(),
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn is_otf_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("otf"))
 }
 
 fn temp_subset_decode_path() -> String {

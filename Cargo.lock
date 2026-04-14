@@ -9,11 +9,15 @@ version = "0.1.0"
 [[package]]
 name = "fonttool-cff"
 version = "0.1.0"
+dependencies = [
+ "fonttool-sfnt",
+]
 
 [[package]]
 name = "fonttool-cli"
 version = "0.1.0"
 dependencies = [
+ "fonttool-cff",
  "fonttool-eot",
  "fonttool-glyf",
  "fonttool-harfbuzz",
