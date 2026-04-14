@@ -31,12 +31,14 @@ import type { RuntimeLoadState } from "@/components/runtime/useFonttoolRuntime";
 
 type RuntimePanelProps = {
   loadState: RuntimeLoadState;
+  selectedStrategy: RuntimeStrategy;
   support: RuntimeSupport;
   onWarmRuntime: (strategy: RuntimeStrategy) => void;
 };
 
 export function RuntimePanel({
   loadState,
+  selectedStrategy,
   support,
   onWarmRuntime
 }: RuntimePanelProps) {
@@ -97,7 +99,7 @@ export function RuntimePanel({
 
             <ToggleGroup
               className="justify-start"
-              defaultValue="single"
+              value={selectedStrategy}
               onValueChange={(value: string) => {
                 if (value === "single" || value === "auto" || value === "pthreads") {
                   onWarmRuntime(value);

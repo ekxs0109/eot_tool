@@ -29,10 +29,18 @@ import {
 } from "@/lib/benchmark/scenarios";
 
 export function BenchmarkPage() {
-  const { loadState, support, warmRuntime } = useFonttoolRuntime();
+  const { loadState, selectedStrategy, support, warmRuntime } = useFonttoolRuntime();
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6 md:py-8">
+    <>
+      <a className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground" href="#main-content">
+        Skip to main content
+      </a>
+
+      <main
+        className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-6 md:py-8"
+        id="main-content"
+      >
       <Card className="overflow-hidden border-border/60 bg-white/85 shadow-xl shadow-slate-950/5 backdrop-blur">
         <CardHeader className="gap-3">
           <div className="flex flex-wrap items-center gap-2">
@@ -52,6 +60,7 @@ export function BenchmarkPage() {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)]">
         <RuntimePanel
           loadState={loadState}
+          selectedStrategy={selectedStrategy}
           support={support}
           onWarmRuntime={(strategy) => {
             void warmRuntime(strategy);
@@ -64,7 +73,7 @@ export function BenchmarkPage() {
               <div>
                 <CardTitle className="text-xl">Scaffolded benchmark surfaces</CardTitle>
                 <CardDescription>
-                  Runtime logic stays under <code>@/lib</code>; the UI only renders state and controls.
+                  Runtime logic stays under <code translate="no">@/lib</code>; the UI only renders state &amp; controls.
                 </CardDescription>
               </div>
               <Badge variant="secondary">{scaffoldBenchmarkScenarios.length} scenarios</Badge>
@@ -118,6 +127,7 @@ export function BenchmarkPage() {
           </CardContent>
         </Card>
       </div>
-    </main>
+      </main>
+    </>
   );
 }
