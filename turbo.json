@@ -3,7 +3,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", "build/**", "packages/fonttool-wasm/vendor/wasm/**"]
+      "outputs": ["dist/**", "vendor/wasm/**"]
     },
     "test": {
       "dependsOn": ["^build"],
