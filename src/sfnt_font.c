@@ -7,6 +7,7 @@ void sfnt_font_init(sfnt_font_t *font) {
   font->tables = NULL;
   font->num_tables = 0;
   font->capacity = 0;
+  font->version = 0x00010000u;
 }
 
 eot_status_t sfnt_font_add_table(sfnt_font_t *font, uint32_t tag, const uint8_t *data, size_t length) {
@@ -130,4 +131,5 @@ void sfnt_font_destroy(sfnt_font_t *font) {
   font->tables = NULL;
   font->num_tables = 0;
   font->capacity = 0;
+  font->version = 0x00010000u;
 }

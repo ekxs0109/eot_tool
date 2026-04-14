@@ -16,6 +16,7 @@ typedef struct {
   sfnt_table_t *tables;
   size_t num_tables;
   size_t capacity;
+  uint32_t version;
 } sfnt_font_t;
 
 void sfnt_font_init(sfnt_font_t *font);

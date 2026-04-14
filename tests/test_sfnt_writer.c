@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../src/sfnt_reader.h"
 #include "../src/sfnt_writer.h"
 #include "../src/sfnt_font.h"
 
@@ -9,7 +10,9 @@ extern void test_register(const char *name, void (*fn)(void));
 extern void test_fail_with_message(const char *message);
 
 #define TAG_head 0x68656164u
+#define TAG_CFF  0x43464620u
 #define SFNT_CHECKSUM_MAGIC 0xB1B0AFBAu
+#define SFNT_VERSION_OTTO 0x4f54544fu
 
 #define ASSERT_OK(expr) do { \
   eot_status_t status = (expr); \
@@ -213,6 +216,28 @@ static void test_sfnt_writer_search_range_calculation(void) {
   ASSERT_EQ(search_range, 64);   // 4 * 16 (highest power of 2 <= 5 is 4)
   ASSERT_EQ(entry_selector, 2);  // log2(4) = 2
   ASSERT_EQ(range_shift, 16);    // (5 - 4) * 16
+
+  free(output);
+  sfnt_font_destroy(&font);
+}
+
+static void test_sfnt_writer_preserves_otf_sfnt_version(void) {
+  static const uint8_t otto_font_bytes[] = {
+      0x4f, 0x54, 0x54, 0x4f, 0x00, 0x01, 0x00, 0x10,
+      0x00, 0x00, 0x00, 0x00, 0x43, 0x46, 0x46, 0x20,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1c,
+      0x00, 0x00, 0x00, 0x04, 0xde, 0xad, 0xbe, 0xef
+  };
+  sfnt_font_t font;
+  uint8_t *output = NULL;
+  size_t output_size = 0;
+
+  ASSERT_OK(sfnt_reader_parse(otto_font_bytes, sizeof(otto_font_bytes), &font));
+  ASSERT_TRUE(sfnt_font_has_table(&font, TAG_CFF));
+
+  ASSERT_OK(sfnt_writer_serialize(&font, &output, &output_size));
+  ASSERT_TRUE(output != NULL);
+  ASSERT_EQ(read_u32be_local(output), SFNT_VERSION_OTTO);
 
   free(output);
   sfnt_font_destroy(&font);
@@ -438,6 +463,8 @@ void register_sfnt_writer_tests(void) {
   test_register("test_sfnt_writer_table_alignment", test_sfnt_writer_table_alignment);
   test_register("test_sfnt_writer_table_sorting", test_sfnt_writer_table_sorting);
   test_register("test_sfnt_writer_search_range_calculation", test_sfnt_writer_search_range_calculation);
+  test_register("test_sfnt_writer_preserves_otf_sfnt_version",
+                test_sfnt_writer_preserves_otf_sfnt_version);
   test_register("test_sfnt_writer_checksum_calculation", test_sfnt_writer_checksum_calculation);
   test_register("test_sfnt_writer_padding_zeros", test_sfnt_writer_padding_zeros);
   test_register("test_sfnt_writer_multiple_tables", test_sfnt_writer_multiple_tables);

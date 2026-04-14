@@ -4,7 +4,6 @@ node_modules/
 *.tgz
 build/
 dist/
-docs/
 coverage/
 .idea/
 .DS_Store
@@ -13,3 +12,4 @@ coverage/
 *.local
 *.cache
 testdata/
+docs/superpowers/

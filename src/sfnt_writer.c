@@ -87,7 +87,7 @@ eot_status_t sfnt_writer_serialize(sfnt_font_t *font, uint8_t **out_data, size_t
   }
   memset(output, 0, total_size);
 
-  write_u32be(output, 0x00010000);
+  write_u32be(output, font->version);
   write_u16be(output + 4, (uint16_t)font->num_tables);
 
   int search_range_shift = highest_bit((int)font->num_tables);

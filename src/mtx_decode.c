@@ -65,6 +65,7 @@ static eot_status_t extract_tables_from_block1(buffer_view_t block1, sfnt_font_t
       return EOT_ERR_CORRUPT_DATA;
     }
 
+    font->version = version;
     *out_num_glyphs = 0;
     for (uint16_t i = 0; i < num_tables; i++) {
       size_t entry_offset = 12 + i * 16;

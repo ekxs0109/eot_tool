@@ -30,6 +30,7 @@ eot_status_t sfnt_reader_parse(const uint8_t *data, size_t length, sfnt_font_t *
   }
 
   sfnt_font_init(font);
+  font->version = version;
 
   for (uint16_t i = 0; i < num_tables; i++) {
     const uint8_t *entry = data + 12 + i * 16;

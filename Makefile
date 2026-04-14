@@ -236,7 +236,8 @@ $(FONTTOOL_OBJ): $(ROOT_DIR)/src/main.c $(ROOT_DIR)/src/status.h \
 	$(ROOT_DIR)/src/sfnt_subset.h $(ROOT_DIR)/src/mtx_decode.h \
 	$(ROOT_DIR)/src/mtx_encode.h $(ROOT_DIR)/src/cff_reader.h \
 	$(ROOT_DIR)/src/cff_variation.h $(ROOT_DIR)/src/otf_convert.h \
-	$(ROOT_DIR)/src/sfnt_reader.h | $(OBJ_DIR)
+	$(ROOT_DIR)/src/sfnt_reader.h $(ROOT_DIR)/src/sfnt_font.h \
+	$(ROOT_DIR)/src/sfnt_writer.h | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TEST_MAIN_SRC_OBJ): $(ROOT_DIR)/src/main.c $(ROOT_DIR)/src/status.h \
@@ -245,7 +246,8 @@ $(TEST_MAIN_SRC_OBJ): $(ROOT_DIR)/src/main.c $(ROOT_DIR)/src/status.h \
 	$(ROOT_DIR)/src/sfnt_subset.h $(ROOT_DIR)/src/mtx_decode.h \
 	$(ROOT_DIR)/src/mtx_encode.h $(ROOT_DIR)/src/cff_reader.h \
 	$(ROOT_DIR)/src/cff_variation.h $(ROOT_DIR)/src/otf_convert.h \
-	$(ROOT_DIR)/src/sfnt_reader.h | $(OBJ_DIR)
+	$(ROOT_DIR)/src/sfnt_reader.h $(ROOT_DIR)/src/sfnt_font.h \
+	$(ROOT_DIR)/src/sfnt_writer.h | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -DFONTTOOL_NO_MAIN -c $< -o $@
 
 $(TEST_MAIN_OBJ): $(ROOT_DIR)/tests/test_main.c | $(OBJ_DIR)
