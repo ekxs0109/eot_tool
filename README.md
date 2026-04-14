@@ -258,6 +258,37 @@ Browser deployment notes for `make wasm-pthreads`:
 
 - requires `SharedArrayBuffer`, which in browsers usually means
   cross-origin-isolated delivery
+
+## Benchmark Web App
+
+The benchmark scaffold lives in `apps/benchmark-web` and uses Vite + React +
+TypeScript with a shadcn-compatible project surface. It is wired to the
+workspace `fonttool-wasm` package, with runtime loading isolated under
+`src/lib/fonttool/` instead of UI components, and keeps the full shadcn UI
+composition work for a later task.
+
+Install workspace dependencies once from the repo root:
+
+```bash
+npm install
+```
+
+Run the benchmark app in development:
+
+```bash
+npm run dev:benchmark-web
+```
+
+Build only the benchmark app:
+
+```bash
+npm run build:benchmark-web
+```
+
+The current scaffold is intentionally minimal. It establishes the app package,
+shadcn-compatible aliases/utilities, runtime boundary, benchmark-oriented
+component structure, and a clean build target without starting the full UI
+composition or benchmark polish work.
 - typical headers are `Cross-Origin-Opener-Policy: same-origin` and
   `Cross-Origin-Embedder-Policy: require-corp`
 - the single-thread build remains the compatibility fallback when those

@@ -1,0 +1,27 @@
+{
+  "name": "benchmark-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build:runtime": "npm run build --workspace fonttool-wasm",
+    "dev": "npm run build:runtime && vite",
+    "build": "npm run build:runtime && tsc -p tsconfig.json && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "fonttool-wasm": "0.0.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.4.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.2"
+  }
+}

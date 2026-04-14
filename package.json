@@ -11,7 +11,9 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "build:benchmark-web": "turbo run build --filter=benchmark-web",
     "build:wasm": "make wasm",
+    "dev:benchmark-web": "npm run dev --workspace benchmark-web",
     "pack-check": "turbo run pack-check",
     "test": "turbo run test",
     "verify:wasm": "make verify-wasm-artifacts"
