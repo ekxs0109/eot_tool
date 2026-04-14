@@ -1,4 +1,28 @@
 import type { RuntimeStrategy, RuntimeSupport } from "fonttool-wasm";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from "@/components/ui/table";
+import {
+  ToggleGroup,
+  ToggleGroupItem
+} from "@/components/ui/toggle-group";
 import {
   formatCapability,
   formatFallbackReason
@@ -16,85 +40,189 @@ export function RuntimePanel({
   support,
   onWarmRuntime
 }: RuntimePanelProps) {
+  const diagnostics =
+    loadState.status === "ready" ? loadState.diagnostics : undefined;
+  const progressValue =
+    loadState.status === "idle"
+      ? 0
+      : loadState.status === "loading"
+        ? 45
+        : loadState.status === "ready"
+          ? 100
+          : 100;
+
   return (
-    <section className="panel-card" aria-labelledby="runtime-title">
-      <div className="panel-header">
-        <p className="eyebrow">Runtime boundary</p>
-        <h2 id="runtime-title">Workspace runtime status</h2>
-      </div>
+    <Card className="border-border/60 bg-white/90 shadow-xl shadow-slate-950/5">
+      <CardHeader className="gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">Runtime boundary</Badge>
+          <Badge variant="outline">{support.runtimeKind}</Badge>
+        </div>
+        <CardTitle className="text-xl">Workspace runtime status</CardTitle>
+        <CardDescription>
+          Warm the package runtime from a non-UI hook and surface diagnostics as benchmark metadata.
+        </CardDescription>
+      </CardHeader>
 
-      <dl className="stat-grid">
-        <div className="stat-tile">
-          <dt>Runtime kind</dt>
-          <dd>{support.runtimeKind}</dd>
+      <CardContent className="flex flex-col gap-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <CapabilityTile
+            label="SharedArrayBuffer"
+            value={formatCapability(support.sharedArrayBuffer)}
+          />
+          <CapabilityTile
+            label="Cross-origin isolated"
+            value={formatCapability(support.crossOriginIsolated)}
+          />
+          <CapabilityTile
+            label="Pthreads possible"
+            value={formatCapability(support.pthreadsPossible)}
+          />
+          <CapabilityTile
+            label="Runtime kind"
+            value={support.runtimeKind}
+          />
         </div>
 
-        <div className="stat-tile">
-          <dt>SharedArrayBuffer</dt>
-          <dd>{formatCapability(support.sharedArrayBuffer)}</dd>
+        <Separator />
+
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Warmup strategy</p>
+              <p className="text-sm text-muted-foreground">
+                Keep this scaffold intentionally narrow: prove runtime loading before adding full benchmark flows.
+              </p>
+            </div>
+
+            <ToggleGroup
+              className="justify-start"
+              defaultValue="single"
+              onValueChange={(value: string) => {
+                if (value === "single" || value === "auto" || value === "pthreads") {
+                  onWarmRuntime(value);
+                }
+              }}
+              type="single"
+            >
+              <ToggleGroupItem value="single">Single</ToggleGroupItem>
+              <ToggleGroupItem value="auto">Auto</ToggleGroupItem>
+              <ToggleGroupItem value="pthreads">Pthreads</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              disabled={loadState.status === "loading"}
+              onClick={() => {
+                onWarmRuntime("single");
+              }}
+              type="button"
+            >
+              {loadState.status === "loading" ? "Loading runtime..." : "Warm single runtime"}
+            </Button>
+            <Button
+              disabled={loadState.status === "loading"}
+              onClick={() => {
+                onWarmRuntime("auto");
+              }}
+              type="button"
+              variant="outline"
+            >
+              Probe auto runtime
+            </Button>
+          </div>
+
+          <Progress value={progressValue} />
         </div>
-
-        <div className="stat-tile">
-          <dt>Cross-origin isolated</dt>
-          <dd>{formatCapability(support.crossOriginIsolated)}</dd>
-        </div>
-
-        <div className="stat-tile">
-          <dt>Pthreads possible</dt>
-          <dd>{formatCapability(support.pthreadsPossible)}</dd>
-        </div>
-      </dl>
-
-      <div className="runtime-actions">
-        <button
-          className="primary-action"
-          type="button"
-          onClick={() => {
-            onWarmRuntime("single");
-          }}
-          disabled={loadState.status === "loading"}
-        >
-          {loadState.status === "loading" ? "Loading runtime..." : "Warm single-thread runtime"}
-        </button>
-      </div>
-
-      <div className="runtime-status">
-        <p className="status-label">Load status</p>
 
         {loadState.status === "idle" ? (
-          <p>Runtime has not been loaded yet. Use the warmup action to verify the package boundary.</p>
+          <Alert>
+            <AlertTitle>Runtime idle</AlertTitle>
+            <AlertDescription>
+              No wasm runtime has been loaded yet. Use the warmup controls to verify the package boundary.
+            </AlertDescription>
+          </Alert>
         ) : null}
 
         {loadState.status === "loading" ? (
-          <p>Loading the workspace `fonttool-wasm` runtime bundle.</p>
+          <Alert>
+            <AlertTitle>Runtime loading</AlertTitle>
+            <AlertDescription>
+              The workspace package is loading staged wasm artifacts and resolving the runtime variant.
+            </AlertDescription>
+          </Alert>
         ) : null}
 
-        {loadState.status === "ready" ? (
-          <dl className="diagnostic-list">
-            <div>
-              <dt>Resolved mode</dt>
-              <dd>{loadState.diagnostics.resolvedMode}</dd>
-            </div>
-
-            <div>
-              <dt>Requested threads</dt>
-              <dd>{String(loadState.diagnostics.requestedThreads)}</dd>
-            </div>
-
-            <div>
-              <dt>Effective threads</dt>
-              <dd>{String(loadState.diagnostics.effectiveThreads)}</dd>
-            </div>
-
-            <div>
-              <dt>Fallback</dt>
-              <dd>{formatFallbackReason(loadState.diagnostics.fallbackReason)}</dd>
-            </div>
-          </dl>
+        {loadState.status === "error" ? (
+          <Alert variant="destructive">
+            <AlertTitle>Runtime failed</AlertTitle>
+            <AlertDescription>{loadState.message}</AlertDescription>
+          </Alert>
         ) : null}
 
-        {loadState.status === "error" ? <p className="status-error">{loadState.message}</p> : null}
-      </div>
-    </section>
+        {diagnostics !== undefined ? (
+          <Card className="border-border/60 bg-slate-50/70 shadow-none">
+            <CardHeader className="gap-2">
+              <CardTitle className="text-lg">Last runtime diagnostics</CardTitle>
+              <CardDescription>
+                This is the state that future benchmark runs will snapshot and compare.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Field</TableHead>
+                    <TableHead>Value</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="font-medium">Resolved mode</TableCell>
+                    <TableCell>{diagnostics.resolvedMode}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="font-medium">Variant</TableCell>
+                    <TableCell>{diagnostics.variant}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="font-medium">Requested threads</TableCell>
+                    <TableCell>{String(diagnostics.requestedThreads)}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="font-medium">Effective threads</TableCell>
+                    <TableCell>{String(diagnostics.effectiveThreads)}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="font-medium">Fallback</TableCell>
+                    <TableCell>{formatFallbackReason(diagnostics.fallbackReason)}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CapabilityTile({
+  label,
+  value
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <Card className="border-border/60 bg-slate-50/70 shadow-none">
+      <CardContent className="flex flex-col gap-1 px-5 py-4">
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          {label}
+        </p>
+        <p className="text-base font-semibold text-foreground">{value}</p>
+      </CardContent>
+    </Card>
   );
 }

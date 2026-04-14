@@ -1,16 +1,33 @@
+@layer theme, base, components, utilities;
+
 :root {
   color-scheme: light;
+  --background: 210 40% 98%;
+  --foreground: 223 38% 16%;
+  --card: 0 0% 100%;
+  --card-foreground: 223 38% 16%;
+  --primary: 215 79% 45%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 223 38% 16%;
+  --muted: 214 33% 94%;
+  --muted-foreground: 217 17% 42%;
+  --accent: 214 55% 92%;
+  --accent-foreground: 223 38% 16%;
+  --destructive: 0 72% 51%;
+  --border: 214 31% 89%;
+  --input: 214 31% 89%;
+  --ring: 215 79% 45%;
+  --radius: 1rem;
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-  background:
-    radial-gradient(circle at top left, rgba(64, 140, 255, 0.22), transparent 34%),
-    linear-gradient(180deg, #f5f9ff 0%, #edf2fb 100%);
-  color: #13233f;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background:
+    radial-gradient(circle at top left, rgba(64, 140, 255, 0.24), transparent 34%),
+    linear-gradient(180deg, #f7faff 0%, #eef4fc 100%);
+  color: hsl(var(--foreground));
 }
 
 * {
@@ -30,183 +47,6 @@ textarea {
   font: inherit;
 }
 
-.page-shell {
-  width: min(1120px, calc(100% - 2rem));
-  margin: 0 auto;
-  padding: 3rem 0 4rem;
-}
-
-.hero-card,
-.panel-card {
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(19, 35, 63, 0.08);
-  border-radius: 24px;
-  box-shadow: 0 24px 60px rgba(19, 35, 63, 0.08);
-  backdrop-filter: blur(18px);
-}
-
-.hero-card {
-  padding: 2rem;
-  margin-bottom: 1.5rem;
-}
-
-.hero-card h1 {
-  max-width: 14ch;
-  margin: 0.25rem 0 0.75rem;
-  font-size: clamp(2.2rem, 6vw, 4.5rem);
-  line-height: 0.96;
-  letter-spacing: -0.04em;
-}
-
-.hero-copy {
-  max-width: 58rem;
-  margin: 0;
-  font-size: 1.05rem;
-  color: #354664;
-}
-
-.content-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-  gap: 1.5rem;
-}
-
-.panel-card {
-  padding: 1.5rem;
-}
-
-.panel-header {
-  margin-bottom: 1rem;
-}
-
-.eyebrow {
-  margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-size: 0.73rem;
-  font-weight: 700;
-  color: #2d68c4;
-}
-
-.panel-header h2,
-.scenario-header h3 {
-  margin: 0.25rem 0 0;
-}
-
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.9rem;
-  margin: 0;
-}
-
-.stat-tile {
-  padding: 0.9rem 1rem;
-  border-radius: 18px;
-  background: #f4f7fd;
-}
-
-.stat-tile dt,
-.status-label,
-.diagnostic-list dt {
-  color: #54637e;
-  font-size: 0.85rem;
-}
-
-.stat-tile dd,
-.diagnostic-list dd {
-  margin: 0.25rem 0 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-
-.runtime-actions {
-  margin-top: 1.25rem;
-}
-
-.primary-action {
-  border: 0;
-  border-radius: 999px;
-  padding: 0.8rem 1.15rem;
-  background: linear-gradient(135deg, #1557c6 0%, #1d8dd8 100%);
-  color: #fff;
-  cursor: pointer;
-}
-
-.primary-action:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.runtime-status {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid rgba(19, 35, 63, 0.08);
-}
-
-.diagnostic-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.8rem;
-  margin: 0;
-}
-
-.status-error {
-  color: #b42318;
-}
-
-.scenario-list {
-  display: grid;
-  gap: 1rem;
-}
-
-.scenario-card {
-  padding: 1rem;
-  border-radius: 20px;
-  background: linear-gradient(180deg, rgba(226, 235, 251, 0.8), rgba(255, 255, 255, 0.95));
-  border: 1px solid rgba(45, 104, 196, 0.12);
-}
-
-.scenario-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.scenario-badge {
-  padding: 0.28rem 0.6rem;
-  border-radius: 999px;
-  background: rgba(29, 141, 216, 0.12);
-  color: #1557c6;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.scenario-points {
-  margin: 0.85rem 0 0;
-  padding-left: 1.1rem;
-  color: #354664;
-}
-
-@media (max-width: 860px) {
-  .page-shell {
-    width: min(100% - 1.25rem, 42rem);
-    padding-top: 1.25rem;
-  }
-
-  .content-grid,
-  .stat-grid,
-  .diagnostic-list {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-card,
-  .panel-card {
-    border-radius: 20px;
-  }
-
-  .hero-card {
-    padding: 1.5rem;
-  }
+code {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
 }
