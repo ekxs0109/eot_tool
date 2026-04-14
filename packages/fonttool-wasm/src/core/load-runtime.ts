@@ -152,7 +152,7 @@ async function loadRuntimeArtifactModule(
   const wasmUrl = resolveAssetUrl(assets.wasmUrl);
   const workerUrl =
     assets.workerUrl !== undefined ? resolveAssetUrl(assets.workerUrl) : undefined;
-  const importedModule = (await import(jsUrl.href)) as RuntimeArtifactModule;
+  const importedModule = (await import(/* @vite-ignore */ jsUrl.href)) as RuntimeArtifactModule;
   const factory = importedModule.default;
 
   if (typeof factory !== "function") {

@@ -1,6 +1,9 @@
 node_modules/
 .npm/
+.turbo/
 *.tgz
+build/
+dist/
 docs/
 coverage/
 .idea/

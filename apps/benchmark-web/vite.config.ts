@@ -8,9 +8,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  preview: {
+    headers: {
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin"
+    }
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src")
+    }
+  },
+  server: {
+    headers: {
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin"
     }
   }
 });
