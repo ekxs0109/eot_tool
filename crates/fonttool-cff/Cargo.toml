@@ -1,0 +1,6 @@
+[package]
+name = "fonttool-cff"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+

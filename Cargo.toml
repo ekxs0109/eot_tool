@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/fonttool-bytes",
+    "crates/fonttool-sfnt",
+    "crates/fonttool-eot",
+    "crates/fonttool-mtx",
+    "crates/fonttool-glyf",
+    "crates/fonttool-subset",
+    "crates/fonttool-cff",
+    "crates/fonttool-harfbuzz",
+    "crates/fonttool-runtime",
+    "crates/fonttool-cli",
+    "crates/fonttool-wasm",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+

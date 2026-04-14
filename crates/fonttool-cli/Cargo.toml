@@ -1,0 +1,10 @@
+[package]
+name = "fonttool-cli"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "fonttool"
+path = "src/main.rs"
+

@@ -1,0 +1,6 @@
+[package]
+name = "fonttool-eot"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+

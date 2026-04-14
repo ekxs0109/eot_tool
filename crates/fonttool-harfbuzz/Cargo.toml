@@ -1,0 +1,6 @@
+[package]
+name = "fonttool-harfbuzz"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+

@@ -1,0 +1,6 @@
+[package]
+name = "fonttool-glyf"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
