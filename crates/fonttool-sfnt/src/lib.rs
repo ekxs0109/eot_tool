@@ -87,12 +87,6 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-impl From<ByteError> for ParseError {
-    fn from(_: ByteError) -> Self {
-        ParseError::TruncatedHeader
-    }
-}
-
 #[must_use]
 pub fn parse_sfnt(bytes: &[u8]) -> Result<SfntFont, ParseError> {
     let mut reader = ByteReader::new(bytes);
@@ -101,13 +95,19 @@ pub fn parse_sfnt(bytes: &[u8]) -> Result<SfntFont, ParseError> {
         return Err(ParseError::TruncatedHeader);
     }
 
-    let version_tag = reader.read_u32_be()?;
+    let version_tag = reader
+        .read_u32_be()
+        .map_err(|_: ByteError| ParseError::TruncatedHeader)?;
     if version_tag != SFNT_VERSION_TRUETYPE && version_tag != SFNT_VERSION_OTTO {
         return Err(ParseError::InvalidVersionTag(version_tag));
     }
 
-    let num_tables = reader.read_u16_be()? as usize;
-    reader.skip(6)?;
+    let num_tables = reader
+        .read_u16_be()
+        .map_err(|_: ByteError| ParseError::TruncatedHeader)? as usize;
+    reader
+        .skip(6)
+        .map_err(|_: ByteError| ParseError::TruncatedHeader)?;
 
     let directory_len = num_tables
         .checked_mul(SFNT_TABLE_RECORD_SIZE)
@@ -120,10 +120,22 @@ pub fn parse_sfnt(bytes: &[u8]) -> Result<SfntFont, ParseError> {
 
     let mut table_directory = Vec::with_capacity(num_tables);
     for _ in 0..num_tables {
-        let tag = reader.read_u32_be()?;
-        let checksum = reader.read_u32_be()?;
-        let offset = reader.read_u32_be()?;
-        let length = reader.read_u32_be()?;
+        let tag = reader
+            .read_u32_be()
+            .map_err(|_: ByteError| ParseError::TruncatedDirectory)?;
+        let checksum = reader
+            .read_u32_be()
+            .map_err(|_: ByteError| ParseError::TruncatedDirectory)?;
+        let offset = reader
+            .read_u32_be()
+            .map_err(|_: ByteError| ParseError::TruncatedDirectory)?;
+        let length = reader
+            .read_u32_be()
+            .map_err(|_: ByteError| ParseError::TruncatedDirectory)?;
+
+        if length > 0 && (offset as usize) < directory_len {
+            return Err(ParseError::InvalidTableRange { tag });
+        }
 
         let end = offset
             .checked_add(length)
