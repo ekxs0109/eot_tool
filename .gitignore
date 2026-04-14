@@ -11,6 +11,7 @@ coverage/
 *.env
 *.local
 *.cache
+target/
 testdata/
 docs/superpowers/
 .worktrees/

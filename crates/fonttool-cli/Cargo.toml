@@ -2,9 +2,9 @@
 name = "fonttool-cli"
 edition.workspace = true
 license.workspace = true
+publish = false
 version.workspace = true
 
 [[bin]]
 name = "fonttool"
 path = "src/main.rs"
-
