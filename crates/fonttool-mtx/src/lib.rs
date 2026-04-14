@@ -25,11 +25,11 @@ impl std::error::Error for MtxContainerError {}
 pub struct MtxContainer<'a> {
     pub num_blocks: u8,
     pub copy_dist: u32,
-    pub offset_block2: usize,
-    pub offset_block3: usize,
     pub block1: &'a [u8],
     pub block2: Option<&'a [u8]>,
     pub block3: Option<&'a [u8]>,
+    offset_block2: usize,
+    offset_block3: usize,
 }
 
 #[must_use]

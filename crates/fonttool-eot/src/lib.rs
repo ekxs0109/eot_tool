@@ -136,6 +136,12 @@ pub fn parse_eot_header<'a>(bytes: &'a [u8]) -> Result<EotHeader<'a>, EotHeaderE
         return Err(EotHeaderError::InvalidSizeMetadata);
     }
 
+    let declared_eot_size =
+        usize::try_from(eot_size).map_err(|_| EotHeaderError::InvalidSizeMetadata)?;
+    if bytes.len() < declared_eot_size {
+        return Err(EotHeaderError::InvalidSizeMetadata);
+    }
+
     Ok(EotHeader {
         eot_size,
         font_data_size,

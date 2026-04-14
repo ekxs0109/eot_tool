@@ -5,19 +5,23 @@ fn fixture_bytes() -> Vec<u8> {
     bytes[0] = 3;
     bytes[1..4].copy_from_slice(&0x000100u32.to_be_bytes()[1..4]);
     bytes[4..7].copy_from_slice(&12u32.to_be_bytes()[1..4]);
-    bytes[7..10].copy_from_slice(&16u32.to_be_bytes()[1..4]);
-    bytes[10..].copy_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22]);
+    bytes[7..10].copy_from_slice(&15u32.to_be_bytes()[1..4]);
+    bytes[10..12].copy_from_slice(&[0xaa, 0xbb]);
+    bytes[12..15].copy_from_slice(&[0xcc, 0xdd, 0xee]);
+    bytes[15..18].copy_from_slice(&[0xff, 0x11, 0x22]);
     bytes
 }
 
 #[test]
-fn parses_mtx_container_offsets() {
+fn parses_mtx_container_block_slices() {
     let bytes = fixture_bytes();
     let container = parse_mtx_container(&bytes).unwrap();
 
     assert_eq!(container.num_blocks, 3);
-    assert!(container.offset_block2 >= 10);
-    assert!(container.offset_block3 > container.offset_block2);
+    assert_eq!(container.copy_dist, 0x000100);
+    assert_eq!(container.block1, &[0xaa, 0xbb]);
+    assert_eq!(container.block2.unwrap(), &[0xcc, 0xdd, 0xee]);
+    assert_eq!(container.block3.unwrap(), &[0xff, 0x11, 0x22]);
 }
 
 #[test]
