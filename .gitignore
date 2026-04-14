@@ -13,3 +13,4 @@ coverage/
 *.cache
 testdata/
 docs/superpowers/
+.worktrees/
