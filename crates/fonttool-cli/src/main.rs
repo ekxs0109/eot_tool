@@ -73,6 +73,7 @@ fn decode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
 
     let container = parse_mtx_container(&payload_bytes)
         .map_err(|error| format!("invalid MTX container: {error}"))?;
+    reject_unsupported_extra_blocks(&container)?;
     let sfnt_bytes = decompress_lz(container.block1)
         .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
 
@@ -83,6 +84,26 @@ fn decode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
             output_path.as_ref().display()
         )
     })?;
+
+    Ok(())
+}
+
+fn reject_unsupported_extra_blocks(
+    container: &fonttool_mtx::MtxContainer<'_>,
+) -> Result<(), String> {
+    for (index, block) in [container.block2, container.block3].into_iter().enumerate() {
+        let Some(block) = block else {
+            continue;
+        };
+
+        let decoded = decompress_lz(block)
+            .map_err(|error| format!("failed to decode MTX block{}: {error}", index + 2))?;
+        if !decoded.is_empty() {
+            return Err(
+                "non-empty extra MTX blocks are not supported in this decode slice".to_string(),
+            );
+        }
+    }
 
     Ok(())
 }
