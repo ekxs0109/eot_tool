@@ -1,1 +1,3 @@
-//! TrueType glyf-related codecs will live here.
+mod encode;
+
+pub use encode::{encode_glyf, EncodedGlyfData, GlyfEncodeError};

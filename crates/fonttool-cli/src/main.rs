@@ -3,11 +3,21 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use fonttool_eot::parse_eot_header;
-use fonttool_mtx::{decompress_lz, parse_mtx_container};
-use fonttool_sfnt::parse_sfnt;
+use fonttool_eot::{build_eot_file, parse_eot_header};
+use fonttool_glyf::encode_glyf;
+use fonttool_mtx::{compress_lz_literals, decompress_lz, pack_mtx_container, parse_mtx_container};
+use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
+const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
+const TAG_HHEA: u32 = u32::from_be_bytes(*b"hhea");
+const TAG_HMTX: u32 = u32::from_be_bytes(*b"hmtx");
+const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
+const TAG_GLYF: u32 = u32::from_be_bytes(*b"glyf");
+const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
+const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
+const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
+const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -30,6 +40,19 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Some("encode") => match (args.next(), args.next(), args.next()) {
+            (Some(input), Some(output), None) => match encode_file(&input, &output) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("fonttool: {error}");
+                    ExitCode::from(1)
+                }
+            },
+            _ => {
+                eprintln!("fonttool: encode expects INPUT and OUTPUT paths");
+                ExitCode::from(2)
+            }
+        },
         Some(command) => {
             eprintln!("fonttool: unknown command `{command}`");
             ExitCode::from(2)
@@ -43,6 +66,7 @@ fn print_help() {
     println!("Usage: fonttool <COMMAND>");
     println!();
     println!("Commands:");
+    println!("  encode <INPUT> <OUTPUT>  Encode a TrueType font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
     println!();
     println!("Options:");
@@ -88,6 +112,60 @@ fn decode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     Ok(())
 }
 
+fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> Result<(), String> {
+    let input_bytes = fs::read(input_path.as_ref())
+        .map_err(|error| format!("failed to read {}: {error}", input_path.as_ref().display()))?;
+    let source_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+
+    if source_font.version_tag() != SFNT_VERSION_TRUETYPE {
+        return Err("encode currently only supports TrueType glyf fonts".to_string());
+    }
+
+    let head = table_bytes(&source_font, TAG_HEAD, "head")?;
+    let maxp = table_bytes(&source_font, TAG_MAXP, "maxp")?;
+    let glyf = table_bytes(&source_font, TAG_GLYF, "glyf")?;
+    let loca = table_bytes(&source_font, TAG_LOCA, "loca")?;
+    let _hhea = table_bytes(&source_font, TAG_HHEA, "hhea")?;
+    let _hmtx = table_bytes(&source_font, TAG_HMTX, "hmtx")?;
+    let os2 = table_bytes(&source_font, TAG_OS_2, "OS/2")?;
+
+    if head.len() < 52 {
+        return Err("head table is truncated".to_string());
+    }
+    if maxp.len() < 6 {
+        return Err("maxp table is truncated".to_string());
+    }
+
+    let index_to_loca_format = i16::from_be_bytes([head[50], head[51]]);
+    let num_glyphs = u16::from_be_bytes([maxp[4], maxp[5]]);
+
+    let encoded_glyf = encode_glyf(glyf, loca, index_to_loca_format, num_glyphs)
+        .map_err(|error| format!("failed to encode glyf/loca tables: {error}"))?;
+
+    let block1_font = build_block1_font(&source_font, &head, encoded_glyf.glyf_stream)?;
+    let block1 = serialize_sfnt(&block1_font)
+        .map_err(|error| format!("failed to serialize encoded SFNT: {error}"))?;
+    let block2 = compress_lz_literals(&encoded_glyf.push_stream)
+        .map_err(|error| format!("failed to compress MTX block2: {error}"))?;
+    let block3 = compress_lz_literals(&encoded_glyf.code_stream)
+        .map_err(|error| format!("failed to compress MTX block3: {error}"))?;
+    let block1 = compress_lz_literals(&block1)
+        .map_err(|error| format!("failed to compress MTX block1: {error}"))?;
+    let mtx_payload = pack_mtx_container(&block1, Some(&block2), Some(&block3))
+        .map_err(|error| format!("failed to pack MTX container: {error}"))?;
+    let encoded_eot = build_eot_file(head, os2, &mtx_payload, false)
+        .map_err(|error| format!("failed to build EOT header: {error}"))?;
+
+    fs::write(output_path.as_ref(), encoded_eot).map_err(|error| {
+        format!(
+            "failed to write {}: {error}",
+            output_path.as_ref().display()
+        )
+    })?;
+
+    Ok(())
+}
+
 fn reject_unsupported_extra_blocks(
     container: &fonttool_mtx::MtxContainer<'_>,
 ) -> Result<(), String> {
@@ -106,4 +184,32 @@ fn reject_unsupported_extra_blocks(
     }
 
     Ok(())
+}
+
+fn table_bytes<'a>(font: &'a OwnedSfntFont, tag: u32, name: &str) -> Result<&'a [u8], String> {
+    font.table(tag)
+        .map(|table| table.data.as_slice())
+        .ok_or_else(|| format!("required table `{name}` is missing"))
+}
+
+fn build_block1_font(
+    source_font: &OwnedSfntFont,
+    head_table: &[u8],
+    encoded_glyf: Vec<u8>,
+) -> Result<OwnedSfntFont, String> {
+    let mut subset = OwnedSfntFont::new(source_font.version_tag());
+    for table in source_font.tables() {
+        if should_copy_block1_table(table.tag) {
+            subset.add_table(table.tag, table.data.clone());
+        }
+    }
+
+    subset.add_table(TAG_HEAD, head_table.to_vec());
+    subset.add_table(TAG_GLYF, encoded_glyf);
+    subset.add_table(TAG_LOCA, Vec::new());
+    Ok(subset)
+}
+
+fn should_copy_block1_table(tag: u32) -> bool {
+    !matches!(tag, TAG_HEAD | TAG_GLYF | TAG_LOCA | TAG_DSIG | TAG_VDMX)
 }

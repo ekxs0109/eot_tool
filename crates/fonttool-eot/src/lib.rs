@@ -6,6 +6,8 @@ use core::fmt;
 pub const EOT_FIXED_HEADER_SIZE: usize = 82;
 const EOT_VERSION_20002: u32 = 0x0002_0002;
 const EOT_MAGIC_NUMBER: u16 = 0x504c;
+const EOT_FLAG_COMPRESSED: u32 = 0x0000_0004;
+const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EotHeaderError {
@@ -33,6 +35,21 @@ impl fmt::Display for EotHeaderError {
 }
 
 impl std::error::Error for EotHeaderError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EotEncodeError {
+    PayloadTooLarge,
+}
+
+impl fmt::Display for EotEncodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EotEncodeError::PayloadTooLarge => f.write_str("encoded EOT payload is too large"),
+        }
+    }
+}
+
+impl std::error::Error for EotEncodeError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EotHeader<'a> {
@@ -68,6 +85,154 @@ pub struct EotHeader<'a> {
     pub eudc_flags: u32,
     pub eudc_font_size: u32,
     pub header_length: u32,
+}
+
+#[must_use]
+pub fn build_eot_file(
+    head_table: &[u8],
+    os2_table: &[u8],
+    mtx_payload: &[u8],
+    apply_ppt_xor: bool,
+) -> Result<Vec<u8>, EotEncodeError> {
+    let header_len = 120usize;
+    let total_size = header_len
+        .checked_add(mtx_payload.len())
+        .ok_or(EotEncodeError::PayloadTooLarge)?;
+
+    let mut header = [0u8; 120];
+    let mut pos = 0usize;
+
+    write_u32_le(
+        &mut header,
+        &mut pos,
+        u32::try_from(total_size).map_err(|_| EotEncodeError::PayloadTooLarge)?,
+    );
+    write_u32_le(
+        &mut header,
+        &mut pos,
+        u32::try_from(mtx_payload.len()).map_err(|_| EotEncodeError::PayloadTooLarge)?,
+    );
+    write_u32_le(&mut header, &mut pos, EOT_VERSION_20002);
+    write_u32_le(
+        &mut header,
+        &mut pos,
+        EOT_FLAG_COMPRESSED | if apply_ppt_xor { EOT_FLAG_PPT_XOR } else { 0 },
+    );
+
+    if os2_table.len() >= 42 {
+        header[pos..pos + 10].copy_from_slice(&os2_table[32..42]);
+    }
+    pos += 10;
+
+    header[pos] = 1;
+    pos += 1;
+
+    header[pos] = if os2_table.len() >= 64 {
+        if u16::from_be_bytes([os2_table[62], os2_table[63]]) & 1 != 0 {
+            1
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    pos += 1;
+
+    write_u32_le(
+        &mut header,
+        &mut pos,
+        if os2_table.len() >= 6 {
+            u32::from(u16::from_be_bytes([os2_table[4], os2_table[5]]))
+        } else {
+            0
+        },
+    );
+    write_u16_le(
+        &mut header,
+        &mut pos,
+        if os2_table.len() >= 10 {
+            u16::from_be_bytes([os2_table[8], os2_table[9]])
+        } else {
+            0
+        },
+    );
+    write_u16_le(&mut header, &mut pos, EOT_MAGIC_NUMBER);
+
+    for range_index in 0..4 {
+        write_u32_le(
+            &mut header,
+            &mut pos,
+            if os2_table.len() >= 58 {
+                let base = 42 + range_index * 4;
+                u32::from_be_bytes([
+                    os2_table[base],
+                    os2_table[base + 1],
+                    os2_table[base + 2],
+                    os2_table[base + 3],
+                ])
+            } else {
+                0
+            },
+        );
+    }
+
+    for range_index in 0..2 {
+        write_u32_le(
+            &mut header,
+            &mut pos,
+            if os2_table.len() >= 86 {
+                let base = 78 + range_index * 4;
+                u32::from_be_bytes([
+                    os2_table[base],
+                    os2_table[base + 1],
+                    os2_table[base + 2],
+                    os2_table[base + 3],
+                ])
+            } else {
+                0
+            },
+        );
+    }
+
+    write_u32_le(
+        &mut header,
+        &mut pos,
+        if head_table.len() >= 12 {
+            u32::from_be_bytes([head_table[8], head_table[9], head_table[10], head_table[11]])
+        } else {
+            0
+        },
+    );
+
+    pos += 16;
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u32_le(&mut header, &mut pos, 0);
+    write_u32_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u16_le(&mut header, &mut pos, 0);
+    write_u32_le(&mut header, &mut pos, 0);
+    write_u32_le(&mut header, &mut pos, 0);
+
+    let mut payload = mtx_payload.to_vec();
+    if apply_ppt_xor {
+        for byte in &mut payload {
+            *byte ^= 0x50;
+        }
+    }
+
+    let mut output = Vec::with_capacity(total_size);
+    output.extend_from_slice(&header[..pos]);
+    output.extend_from_slice(&payload);
+    Ok(output)
 }
 
 #[must_use]
@@ -182,6 +347,16 @@ fn read_u8(bytes: &[u8], offset: &mut usize) -> Result<u8, EotHeaderError> {
     let value = *bytes.get(*offset).ok_or(EotHeaderError::Truncated)?;
     *offset += 1;
     Ok(value)
+}
+
+fn write_u16_le(dst: &mut [u8], offset: &mut usize, value: u16) {
+    dst[*offset..*offset + 2].copy_from_slice(&value.to_le_bytes());
+    *offset += 2;
+}
+
+fn write_u32_le(dst: &mut [u8], offset: &mut usize, value: u32) {
+    dst[*offset..*offset + 4].copy_from_slice(&value.to_le_bytes());
+    *offset += 4;
 }
 
 fn read_u16_le(bytes: &[u8], offset: &mut usize) -> Result<u16, EotHeaderError> {

@@ -15,6 +15,7 @@ name = "fonttool-cli"
 version = "0.1.0"
 dependencies = [
  "fonttool-eot",
+ "fonttool-glyf",
  "fonttool-mtx",
  "fonttool-sfnt",
 ]

@@ -35,6 +35,48 @@ impl fmt::Display for LzDecompressError {
 impl std::error::Error for LzDecompressError {}
 
 #[derive(Debug, Clone)]
+struct BitWriter {
+    bytes: Vec<u8>,
+    byte_buf: u8,
+    bit_count: u8,
+}
+
+impl BitWriter {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            byte_buf: 0,
+            bit_count: 0,
+        }
+    }
+
+    fn write_bit(&mut self, bit: bool) {
+        if bit {
+            self.byte_buf |= 1 << (7 - self.bit_count);
+        }
+        self.bit_count += 1;
+        if self.bit_count == 8 {
+            self.bytes.push(self.byte_buf);
+            self.byte_buf = 0;
+            self.bit_count = 0;
+        }
+    }
+
+    fn write_bits(&mut self, value: u32, count: usize) {
+        for shift in (0..count).rev() {
+            self.write_bit(((value >> shift) & 1) != 0);
+        }
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        if self.bit_count != 0 {
+            self.bytes.push(self.byte_buf);
+        }
+        self.bytes
+    }
+}
+
+#[derive(Debug, Clone)]
 struct BitReader<'a> {
     bytes: &'a [u8],
     byte_pos: usize,
@@ -84,6 +126,157 @@ struct TreeNode {
     right: usize,
     code: i32,
     weight: i32,
+}
+
+#[derive(Debug, Clone)]
+struct HuffmanEncoder {
+    tree: Vec<TreeNode>,
+    symbol_index: Vec<usize>,
+}
+
+impl HuffmanEncoder {
+    fn new(range: usize) -> Result<Self, LzDecompressError> {
+        let bit_count2 = if range > 256 && range < 512 {
+            bits_used(range - 257)
+        } else {
+            0
+        };
+
+        let mut tree = vec![TreeNode::default(); 2 * range];
+        let mut symbol_index = vec![0usize; range];
+
+        for (index, node) in tree.iter_mut().enumerate().skip(2) {
+            node.up = index / 2;
+            node.weight = 1;
+        }
+
+        for (index, node) in tree.iter_mut().enumerate().take(range).skip(1) {
+            node.left = 2 * index;
+            node.right = 2 * index + 1;
+        }
+
+        for index in 0..range {
+            tree[index].code = -1;
+            tree[range + index].code = index as i32;
+            tree[range + index].left = usize::MAX;
+            tree[range + index].right = usize::MAX;
+            symbol_index[index] = range + index;
+        }
+
+        let mut encoder = Self { tree, symbol_index };
+        encoder.init_weight(ROOT);
+
+        if bit_count2 != 0 {
+            encoder.update_weight(encoder.symbol_index[256]);
+            encoder.update_weight(encoder.symbol_index[257]);
+            for _ in 0..12 {
+                encoder.update_weight(encoder.symbol_index[range - 3]);
+            }
+            for _ in 0..6 {
+                encoder.update_weight(encoder.symbol_index[range - 2]);
+            }
+        } else {
+            for _ in 0..2 {
+                for symbol in 0..range {
+                    encoder.update_weight(encoder.symbol_index[symbol]);
+                }
+            }
+        }
+
+        Ok(encoder)
+    }
+
+    fn init_weight(&mut self, index: usize) -> i32 {
+        if self.tree[index].code < 0 {
+            self.tree[index].weight =
+                self.init_weight(self.tree[index].left) + self.init_weight(self.tree[index].right);
+        }
+
+        self.tree[index].weight
+    }
+
+    fn swap_nodes(&mut self, a: usize, b: usize) {
+        let up_a = self.tree[a].up;
+        let up_b = self.tree[b].up;
+        self.tree.swap(a, b);
+        self.tree[a].up = up_a;
+        self.tree[b].up = up_b;
+
+        let code_a = self.tree[a].code;
+        if code_a < 0 {
+            let left = self.tree[a].left;
+            let right = self.tree[a].right;
+            self.tree[left].up = a;
+            self.tree[right].up = a;
+        } else {
+            self.symbol_index[code_a as usize] = a;
+        }
+
+        let code_b = self.tree[b].code;
+        if code_b < 0 {
+            let left = self.tree[b].left;
+            let right = self.tree[b].right;
+            self.tree[left].up = b;
+            self.tree[right].up = b;
+        } else {
+            self.symbol_index[code_b as usize] = b;
+        }
+    }
+
+    fn update_weight(&mut self, mut index: usize) {
+        while index != ROOT {
+            let mut weight = self.tree[index].weight;
+            let mut candidate = index - 1;
+
+            if self.tree[candidate].weight == weight {
+                while self.tree[candidate].weight == weight {
+                    candidate -= 1;
+                }
+                candidate += 1;
+
+                if candidate > ROOT {
+                    self.swap_nodes(index, candidate);
+                    index = candidate;
+                }
+            }
+
+            weight += 1;
+            self.tree[index].weight = weight;
+            index = self.tree[index].up;
+        }
+
+        self.tree[index].weight += 1;
+    }
+
+    fn write_symbol(
+        &mut self,
+        writer: &mut BitWriter,
+        symbol: usize,
+    ) -> Result<(), LzDecompressError> {
+        if symbol >= self.symbol_index.len() {
+            return Err(LzDecompressError::MalformedStream);
+        }
+
+        let mut index = self.symbol_index[symbol];
+        let terminal_index = index;
+        let mut stack = [false; 64];
+        let mut depth = 0usize;
+
+        while index != ROOT {
+            let up = self.tree[index].up;
+            stack[depth] = self.tree[up].right == index;
+            depth += 1;
+            index = up;
+        }
+
+        while depth > 0 {
+            depth -= 1;
+            writer.write_bit(stack[depth]);
+        }
+
+        self.update_weight(terminal_index);
+        Ok(())
+    }
 }
 
 impl Default for TreeNode {
@@ -337,14 +530,25 @@ pub fn decompress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
     Ok(output[PRELOAD_SIZE..output_limit].to_vec())
 }
 
-fn bits_used(value: usize) -> usize {
-    for bits in (2..=usize::BITS as usize).rev() {
-        if (value & (1usize << (bits - 1))) != 0 {
-            return bits;
-        }
+#[must_use]
+pub fn compress_lz_literals(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
+    let mut writer = BitWriter::new();
+    writer.write_bit(false);
+    writer.write_bits(
+        u32::try_from(bytes.len()).map_err(|_| LzDecompressError::OutputTooLarge)?,
+        24,
+    );
+
+    let num_dist_ranges = num_dist_ranges(bytes.len());
+    let dup6 = 256 + (1 << LEN_WIDTH) * num_dist_ranges + 2;
+    let num_syms = dup6 + 1;
+    let mut sym_encoder = HuffmanEncoder::new(num_syms)?;
+
+    for byte in bytes {
+        sym_encoder.write_symbol(&mut writer, usize::from(*byte))?;
     }
 
-    1
+    Ok(writer.finish())
 }
 
 fn initialize_preload_buffer(buffer: &mut [u8]) {
@@ -384,6 +588,15 @@ fn num_dist_ranges(length: usize) -> usize {
     }
 
     ranges
+}
+
+fn bits_used(x: usize) -> usize {
+    for i in (2..=32).rev() {
+        if x & (1 << (i - 1)) != 0 {
+            return i;
+        }
+    }
+    1
 }
 
 fn decode_length(

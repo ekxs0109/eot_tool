@@ -7,6 +7,7 @@ version.workspace = true
 
 [dependencies]
 fonttool-eot = { path = "../fonttool-eot" }
+fonttool-glyf = { path = "../fonttool-glyf" }
 fonttool-mtx = { path = "../fonttool-mtx" }
 fonttool-sfnt = { path = "../fonttool-sfnt" }
 
@@ -20,3 +21,7 @@ path = "src/main.rs"
 [[test]]
 name = "decode"
 path = "../../tests/rust_integration/decode.rs"
+
+[[test]]
+name = "encode"
+path = "../../tests/rust_integration/encode.rs"

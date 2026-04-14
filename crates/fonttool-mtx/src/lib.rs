@@ -5,8 +5,9 @@ use core::fmt;
 mod lz;
 
 pub const MTX_HEADER_SIZE: usize = 10;
+const MTX_PRELOAD_SIZE: usize = 7168;
 
-pub use lz::{decompress_lz, LzDecompressError};
+pub use lz::{compress_lz_literals, decompress_lz, LzDecompressError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MtxContainerError {
@@ -24,6 +25,23 @@ impl fmt::Display for MtxContainerError {
 }
 
 impl std::error::Error for MtxContainerError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MtxPackError {
+    MissingBlock1,
+    PayloadTooLarge,
+}
+
+impl fmt::Display for MtxPackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MtxPackError::MissingBlock1 => f.write_str("mtx block1 is required"),
+            MtxPackError::PayloadTooLarge => f.write_str("mtx payload is too large"),
+        }
+    }
+}
+
+impl std::error::Error for MtxPackError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtxContainer<'a> {
@@ -91,6 +109,66 @@ pub fn parse_mtx_container<'a>(bytes: &'a [u8]) -> Result<MtxContainer<'a>, MtxC
     })
 }
 
+#[must_use]
+pub fn pack_mtx_container(
+    block1: &[u8],
+    block2: Option<&[u8]>,
+    block3: Option<&[u8]>,
+) -> Result<Vec<u8>, MtxPackError> {
+    if block1.is_empty() {
+        return Err(MtxPackError::MissingBlock1);
+    }
+
+    let block2 = block2.unwrap_or(&[]);
+    let block3 = block3.unwrap_or(&[]);
+    let num_blocks = 1 + u8::from(!block2.is_empty()) + u8::from(!block3.is_empty());
+
+    let total_size = MTX_HEADER_SIZE
+        .checked_add(block1.len())
+        .and_then(|size| size.checked_add(block2.len()))
+        .and_then(|size| size.checked_add(block3.len()))
+        .ok_or(MtxPackError::PayloadTooLarge)?;
+
+    let max_block_size = block1.len().max(block2.len()).max(block3.len());
+    let copy_dist = MTX_PRELOAD_SIZE
+        .checked_add(max_block_size)
+        .ok_or(MtxPackError::PayloadTooLarge)?;
+    let offset_block2 = MTX_HEADER_SIZE
+        .checked_add(block1.len())
+        .ok_or(MtxPackError::PayloadTooLarge)?;
+    let offset_block3 = offset_block2
+        .checked_add(block2.len())
+        .ok_or(MtxPackError::PayloadTooLarge)?;
+
+    if copy_dist > 0x00FF_FFFF || offset_block2 > 0x00FF_FFFF || offset_block3 > 0x00FF_FFFF {
+        return Err(MtxPackError::PayloadTooLarge);
+    }
+
+    let mut data = Vec::with_capacity(total_size);
+    data.push(num_blocks);
+    write_u24_be(
+        u32::try_from(copy_dist).map_err(|_| MtxPackError::PayloadTooLarge)?,
+        &mut data,
+    );
+    write_u24_be(
+        u32::try_from(offset_block2).map_err(|_| MtxPackError::PayloadTooLarge)?,
+        &mut data,
+    );
+    write_u24_be(
+        u32::try_from(offset_block3).map_err(|_| MtxPackError::PayloadTooLarge)?,
+        &mut data,
+    );
+    data.extend_from_slice(block1);
+    data.extend_from_slice(block2);
+    data.extend_from_slice(block3);
+    Ok(data)
+}
+
 fn read_u24_be(bytes: &[u8]) -> u32 {
     u32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]])
+}
+
+fn write_u24_be(value: u32, out: &mut Vec<u8>) {
+    let bytes = value.to_be_bytes();
+    out.extend_from_slice(&bytes[1..4]);
 }
