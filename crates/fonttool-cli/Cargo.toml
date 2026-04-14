@@ -8,8 +8,10 @@ version.workspace = true
 [dependencies]
 fonttool-eot = { path = "../fonttool-eot" }
 fonttool-glyf = { path = "../fonttool-glyf" }
+fonttool-harfbuzz = { path = "../fonttool-harfbuzz" }
 fonttool-mtx = { path = "../fonttool-mtx" }
 fonttool-sfnt = { path = "../fonttool-sfnt" }
+fonttool-subset = { path = "../fonttool-subset" }
 
 [dev-dependencies]
 fonttool-sfnt = { path = "../fonttool-sfnt" }
@@ -25,3 +27,7 @@ path = "../../tests/rust_integration/decode.rs"
 [[test]]
 name = "encode"
 path = "../../tests/rust_integration/encode.rs"
+
+[[test]]
+name = "subset"
+path = "../../tests/rust_integration/subset.rs"

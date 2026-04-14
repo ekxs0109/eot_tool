@@ -2,11 +2,14 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::encode_glyf;
+use fonttool_harfbuzz::{run_subset_adapter, LegacySubsetRequest};
 use fonttool_mtx::{compress_lz_literals, decompress_lz, pack_mtx_container, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
+use fonttool_subset::{plan_glyph_subset, GlyphIdRequest, SubsetWarnings};
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
@@ -53,6 +56,19 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Some("subset") => match handle_subset_args(args.collect()) {
+            Ok((input, output, glyph_ids)) => match subset_file(&input, &output, &glyph_ids) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("fonttool: {error}");
+                    ExitCode::from(1)
+                }
+            },
+            Err(error) => {
+                eprintln!("fonttool: {error}");
+                ExitCode::from(2)
+            }
+        },
         Some(command) => {
             eprintln!("fonttool: unknown command `{command}`");
             ExitCode::from(2)
@@ -68,6 +84,7 @@ fn print_help() {
     println!("Commands:");
     println!("  encode <INPUT> <OUTPUT>  Encode a TrueType font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
+    println!("  subset <INPUT> <OUTPUT> --glyph-ids <LIST>  Subset a font through the Rust adapter boundary");
     println!();
     println!("Options:");
     println!("  -h, --help  Print help");
@@ -164,6 +181,102 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     })?;
 
     Ok(())
+}
+
+fn subset_file(
+    input_path: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+    glyph_ids_csv: &str,
+) -> Result<(), String> {
+    let request =
+        GlyphIdRequest::parse_csv(glyph_ids_csv).map_err(|error| format!("invalid subset arguments: {error}"))?;
+
+    // Keep the Rust-owned planning boundary narrow for Task 6. The adapter executes
+    // the currently trusted backend while we migrate the rest of the subset pipeline.
+    let plan = plan_subset_for_input(input_path.as_ref(), &request)?;
+    let warnings = run_subset_adapter(LegacySubsetRequest {
+        input_path: input_path.as_ref(),
+        output_path: output_path.as_ref(),
+        plan: &plan,
+    })
+    .map_err(|error| error.to_string())?;
+    emit_subset_warnings(warnings);
+
+    Ok(())
+}
+
+fn handle_subset_args(args: Vec<String>) -> Result<(String, String, String), String> {
+    if args.len() != 4 {
+        return Err("subset expects INPUT OUTPUT --glyph-ids LIST".to_string());
+    }
+
+    if args[2] != "--glyph-ids" {
+        return Err("subset currently only supports --glyph-ids".to_string());
+    }
+
+    Ok((args[0].clone(), args[1].clone(), args[3].clone()))
+}
+
+fn plan_subset_for_input(input_path: &Path, request: &GlyphIdRequest) -> Result<fonttool_subset::SubsetPlan, String> {
+    let extension = input_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+
+    let font = match extension.as_deref() {
+        Some("ttf") | Some("otf") => {
+            let input_bytes = fs::read(input_path)
+                .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
+            load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?
+        }
+        Some("eot") | Some("fntdata") => {
+            let temp_output = temp_subset_decode_path();
+            let decode_status = std::process::Command::new("build/fonttool")
+                .arg("decode")
+                .arg(input_path)
+                .arg(&temp_output)
+                .output()
+                .map_err(|error| format!("failed to launch legacy decode backend: {error}"))?;
+            if !decode_status.status.success() {
+                return Err(format!(
+                    "failed to load subset input {}: {}",
+                    input_path.display(),
+                    String::from_utf8_lossy(&decode_status.stderr).trim()
+                ));
+            }
+            let sfnt_bytes = fs::read(&temp_output)
+                .map_err(|error| format!("failed to read decoded subset input: {error}"))?;
+            let _ = fs::remove_file(&temp_output);
+            load_sfnt(&sfnt_bytes).map_err(|error| format!("invalid decoded SFNT: {error}"))?
+        }
+        _ => return Err(format!("unsupported subset input path: {}", input_path.display())),
+    };
+
+    plan_glyph_subset(&font, request, false).map_err(|error| error.to_string())
+}
+
+fn emit_subset_warnings(warnings: SubsetWarnings) {
+    if warnings.dropped_hdmx {
+        eprintln!("warning: unsupported HDMX in subset path; dropping table");
+    }
+    if warnings.dropped_vdmx {
+        eprintln!("warning: unsupported VDMX in MTX encode/subset path; dropping table");
+    }
+}
+
+fn temp_subset_decode_path() -> String {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should move forward")
+        .as_nanos();
+
+    std::env::temp_dir()
+        .join(format!(
+            "fonttool-subset-plan-{}-{unique}.ttf",
+            std::process::id()
+        ))
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn reject_unsupported_extra_blocks(
