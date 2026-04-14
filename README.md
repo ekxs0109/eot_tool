@@ -12,6 +12,8 @@ make
 ## Test
 
 ```bash
+cargo test --workspace
+cargo test --test runtime_wasm
 make test
 make test TESTCASE=cli_help_prints_usage
 make test TESTCASE=eot_header_
@@ -19,6 +21,13 @@ make test TESTCASE=roundtrip_open_sans_writes_decodeable_ttf
 make verify-decode
 make verify-roundtrip
 ```
+
+Rust is the primary test harness for the migrated decode, encode, subset,
+OTF/CFF conversion, and Rust-facing runtime/WASM bridge slices. The legacy
+native harness is still required for the not-yet-migrated runtime scheduler,
+buffer ABI, CoreText acceptance, and several codec/parity details.
+
+Migration tracking lives in `tests/rust-test-inventory.md`.
 
 ## Python Verification
 
@@ -222,6 +231,19 @@ Focused native coverage:
 make test TESTCASE=test_wasm_runtime_mode_constant_is_exposed
 make test TESTCASE=test_browser_wasm_api_converts_cff2_instance
 ```
+
+Current Rust-facing bridge coverage for the staged rewrite:
+
+```bash
+cargo test -p fonttool-runtime
+cargo test -p fonttool-wasm
+cargo test --test runtime_wasm
+```
+
+These Rust tests cover the staged `fonttool-runtime` / `fonttool-wasm` API
+surface and conversion bridge. They do not yet replace the legacy native WASM
+buffer ABI checks, variable-font conversion success path, or the full
+parallel-runtime diagnostics behavior.
 
 The Makefile exposes explicit Emscripten build variants:
 

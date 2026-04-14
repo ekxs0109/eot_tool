@@ -5,10 +5,7 @@ use std::path::{Path, PathBuf};
 
 pub use fonttool_cff::CffError;
 
-use fonttool_cff::{
-    encode_otf_with_legacy_backend, inspect_otf_font, subset_otf_with_legacy_backend,
-    OtfSubsetRequest,
-};
+use fonttool_cff::{encode_otf_with_legacy_backend, inspect_otf_font};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeThreadMode {
@@ -117,7 +114,10 @@ pub fn default_runtime_diagnostics() -> RuntimeDiagnostics {
             RuntimeThreadMode::SingleThread => "single".to_string(),
             RuntimeThreadMode::Pthreads => "threaded".to_string(),
         },
-        fallback_reason: None,
+        fallback_reason: Some(
+            "runtime scheduling diagnostics are not yet available in the Rust bridge"
+                .to_string(),
+        ),
     }
 }
 
@@ -125,8 +125,7 @@ pub fn convert_otf_to_embedded_font(
     request: ConvertRequest<'_>,
 ) -> Result<ConvertResult, RuntimeError> {
     let temp_output = temp_runtime_output_path(request.output_kind);
-    let input_path = resolve_workspace_path(request.input_path);
-    run_conversion_request(request, &input_path, &temp_output)?;
+    run_conversion_request(request, request.input_path, &temp_output)?;
     let data = std::fs::read(&temp_output)
         .map_err(|error| RuntimeError::Io(format!("failed to read runtime output: {error}")))?;
     let _ = std::fs::remove_file(&temp_output);
@@ -138,19 +137,12 @@ pub fn convert_otf_to_embedded_font(
     })
 }
 
+#[cfg(test)]
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .expect("workspace root should exist")
-}
-
-fn resolve_workspace_path(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        workspace_root().join(path)
-    }
 }
 
 fn run_conversion_request(
@@ -172,14 +164,10 @@ fn run_conversion_request(
                 CffError::VariationRejectedForStaticInput,
             ));
         }
-
-        return subset_otf_with_legacy_backend(OtfSubsetRequest {
-            input_path,
-            output_path,
-            text: "ABC",
-            variation_axes: Some(variation_axes),
-        })
-        .map_err(RuntimeError::from);
+        let _ = variation_axes;
+        return Err(RuntimeError::Backend(
+            "runtime bridge does not yet support variable-font conversion".to_string(),
+        ));
     }
 
     encode_otf_with_legacy_backend(input_path, output_path).map_err(RuntimeError::from)
@@ -201,7 +189,10 @@ fn temp_runtime_output_path(output_kind: OutputKind) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+
+    fn fixture(path: &str) -> PathBuf {
+        workspace_root().join(path)
+    }
 
     #[test]
     fn reports_runtime_mode_string() {
@@ -214,7 +205,7 @@ mod tests {
     #[test]
     fn converts_static_otf_through_runtime_bridge() {
         let result = convert_otf_to_embedded_font(ConvertRequest {
-            input_path: Path::new("testdata/cff-static.otf"),
+            input_path: &fixture("testdata/cff-static.otf"),
             output_kind: OutputKind::Eot,
             variation_axes: None,
         })
@@ -227,7 +218,7 @@ mod tests {
     #[test]
     fn rejects_variation_axes_for_static_otf() {
         let error = convert_otf_to_embedded_font(ConvertRequest {
-            input_path: Path::new("testdata/cff-static.otf"),
+            input_path: &fixture("testdata/cff-static.otf"),
             output_kind: OutputKind::Fntdata,
             variation_axes: Some("wght=700"),
         })
@@ -236,6 +227,23 @@ mod tests {
         assert_eq!(
             error,
             RuntimeError::Cff(CffError::VariationRejectedForStaticInput)
+        );
+    }
+
+    #[test]
+    fn rejects_variable_font_conversion_until_runtime_bridge_grows_full_support() {
+        let error = convert_otf_to_embedded_font(ConvertRequest {
+            input_path: &fixture("testdata/cff2-variable.otf"),
+            output_kind: OutputKind::Fntdata,
+            variation_axes: Some("wght=700"),
+        })
+        .expect_err("variable conversion should stay explicitly unsupported");
+
+        assert_eq!(
+            error,
+            RuntimeError::Backend(
+                "runtime bridge does not yet support variable-font conversion".to_string()
+            )
         );
     }
 }

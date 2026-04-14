@@ -15,7 +15,9 @@ fonttool-sfnt = { path = "../fonttool-sfnt" }
 fonttool-subset = { path = "../fonttool-subset" }
 
 [dev-dependencies]
+fonttool-runtime = { path = "../fonttool-runtime" }
 fonttool-sfnt = { path = "../fonttool-sfnt" }
+fonttool-wasm = { path = "../fonttool-wasm" }
 
 [[bin]]
 name = "fonttool"
@@ -36,3 +38,7 @@ path = "../../tests/rust_integration/subset.rs"
 [[test]]
 name = "otf_convert"
 path = "../../tests/rust_integration/otf_convert.rs"
+
+[[test]]
+name = "runtime_wasm"
+path = "../../tests/rust_integration/runtime_wasm.rs"

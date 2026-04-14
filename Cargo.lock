@@ -22,8 +22,10 @@ dependencies = [
  "fonttool-glyf",
  "fonttool-harfbuzz",
  "fonttool-mtx",
+ "fonttool-runtime",
  "fonttool-sfnt",
  "fonttool-subset",
+ "fonttool-wasm",
 ]
 
 [[package]]

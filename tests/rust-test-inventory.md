@@ -1,0 +1,59 @@
+# Rust Test Migration Inventory
+
+This checklist tracks how the legacy native harness under `tests/test_*.c` and
+`tests/test_*.cc` maps into the Rust-first test surface.
+
+Status legend:
+
+- `covered`: the primary behavior is already represented by Rust tests
+- `partial`: some behavior is covered in Rust, but native-only coverage remains
+- `deferred`: still depends on legacy native internals or tooling not migrated yet
+- `next`: a good next migration target once the adjacent Rust crate is ready
+
+## Already Covered By Rust Tests
+
+| Legacy test file | Status | Rust destination | Notes |
+| --- | --- | --- | --- |
+| `tests/test_decode_pipeline.c` | covered | `tests/rust_integration/decode.rs` | Rust decode CLI path is primary coverage now. |
+| `tests/test_encode_pipeline.c` | partial | `tests/rust_integration/encode.rs` | TrueType encode path is covered; native-only runtime-thread parity checks remain. |
+| `tests/test_eot_header.c` | covered | `crates/fonttool-eot/tests/eot_header.rs` | Header parsing and rejection behavior migrated. |
+| `tests/test_lzcomp.c` | partial | `crates/fonttool-mtx/tests/lz_decode.rs` | Core decode and invalid-stream handling migrated; encode-specific parity remains native. |
+| `tests/test_mtx_container.c` | covered | `crates/fonttool-mtx/tests/mtx_container.rs` | Container parsing and reject-invalid behavior migrated. |
+| `tests/test_otf_convert.cc` | partial | `tests/rust_integration/otf_convert.rs` | Static CFF encode and variable CFF2 subset flow are covered; runtime-mode parity and error-order cases remain native. |
+| `tests/test_wasm_api.cc` | partial | `tests/rust_integration/runtime_wasm.rs` | Rust-facing runtime/WASM bridge shape is covered; native buffer ABI, variable-font conversion success, and legacy runtime diagnostics remain native-only. |
+
+## Partially Covered Or Deferred
+
+| Legacy test file | Status | Planned Rust destination | Reason |
+| --- | --- | --- | --- |
+| `tests/test_cff_reader.cc` | partial | `crates/fonttool-cff` tests | Rust OTF inspection exists, but detailed reader parity is still native. |
+| `tests/test_cff_variation.cc` | partial | `tests/rust_integration/otf_convert.rs` + future `fonttool-cff` tests | Variation rejection and instance export are only partially represented today. |
+| `tests/test_cli.c` | partial | `crates/fonttool-cli/tests/workspace_cli_smoke.rs` + existing integration tests | Major commands are covered, but many CLI stderr/exit-code cases still live only in native tests. |
+| `tests/test_coretext_acceptance.c` | deferred | `tests/macos-swift/...` | Plan Task 9 replaces this with a formal Swift/CoreText entrypoint. |
+| `tests/test_cu2qu.cc` | deferred | future `crates/fonttool-cff` or `fonttool-glyf` tests | Conversion internals not yet migrated into Rust ownership. |
+| `tests/test_cvt_codec.c` | deferred | future `fonttool-mtx` tests | `cvt` codec surface is not yet a Rust-owned public module. |
+| `tests/test_glyf_codec.c` | deferred | future `crates/fonttool-glyf` tests | Encode path exists, but detailed codec vectors are not yet ported. |
+| `tests/test_hdmx_codec.c` | deferred | future `fonttool-mtx`/integration tests | HDMX preservation/drop semantics still partly native-owned. |
+| `tests/test_otf_parity.cc` | partial | `tests/rust_integration/otf_convert.rs` + future parity helpers | OTF flow exists in Rust, but fonttools parity details remain native-only. |
+| `tests/test_parallel_runtime.cc` | deferred | future `crates/fonttool-runtime` tests | Current Rust runtime slice only exposes static mode/diagnostics defaults, not full task scheduling semantics. |
+| `tests/test_sfnt_subset.c` | partial | `tests/rust_integration/subset.rs` + future `fonttool-subset` tests | Rust subset planning is covered, but many native subset invariants remain. |
+| `tests/test_sfnt_writer.c` | deferred | future `crates/fonttool-sfnt` tests | Serialization coverage in Rust is still narrow. |
+| `tests/test_subset_args.c` | deferred | future `fonttool-cli` integration tests | CLI argument validation is not yet fully mirrored in Rust integration tests. |
+| `tests/test_table_policy.c` | deferred | future CLI/integration tests | Table retention policy is only indirectly covered right now. |
+| `tests/test_ttf_rebuilder.cc` | deferred | future `fonttool-glyf`/`fonttool-cff` tests | Rebuilder internals still live behind the legacy backend. |
+| `tests/test_ttf_rebuilder_header.c` | deferred | future `fonttool-glyf` tests | Same rebuild boundary as above. |
+
+## Native Harness Infrastructure Or Legacy-Only Entry Points
+
+| Legacy file | Status | Notes |
+| --- | --- | --- |
+| `tests/test_main.c` | deferred | Legacy test runner; remove only after Rust becomes the primary harness for the remaining native-only areas. |
+| `tests/test_fonttools_parity.py` | deferred | Still useful as an external parity/reference tool, not an internal Rust harness replacement target. |
+| `tests/verify_wasm_artifacts.sh` | deferred | Artifact verification remains tied to the legacy Emscripten outputs for now. |
+
+## Recommended Next Migrations
+
+1. `tests/test_subset_args.c` into Rust CLI integration tests once Task 8 continues.
+2. `tests/test_cli.c` command/exit-code coverage for Rust CLI behavior.
+3. `tests/test_coretext_acceptance.c` into the formal Swift/CoreText probe from Task 9.
+4. `tests/test_parallel_runtime.cc` only after the Rust runtime owns real task scheduling semantics instead of a narrow bridge.
