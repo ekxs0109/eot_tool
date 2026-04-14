@@ -2,7 +2,11 @@
 
 use core::fmt;
 
+mod lz;
+
 pub const MTX_HEADER_SIZE: usize = 10;
+
+pub use lz::{decompress_lz, LzDecompressError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MtxContainerError {

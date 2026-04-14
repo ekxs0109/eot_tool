@@ -5,6 +5,18 @@ license.workspace = true
 publish = false
 version.workspace = true
 
+[dependencies]
+fonttool-eot = { path = "../fonttool-eot" }
+fonttool-mtx = { path = "../fonttool-mtx" }
+fonttool-sfnt = { path = "../fonttool-sfnt" }
+
+[dev-dependencies]
+fonttool-sfnt = { path = "../fonttool-sfnt" }
+
 [[bin]]
 name = "fonttool"
 path = "src/main.rs"
+
+[[test]]
+name = "decode"
+path = "../../tests/rust_integration/decode.rs"
