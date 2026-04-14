@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -26,19 +26,15 @@ function fail(message) {
 
 async function main() {
   const tempDir = await mkdtemp(path.join(tmpdir(), "fonttool-wasm-pack-"));
-  const packJsonPath = path.join(tempDir, "pack-result.json");
 
   const { stdout } = await execFileAsync(
     "npm",
-    ["pack", "--json"],
+    ["pack", "--json", "--pack-destination", tempDir],
     { cwd: packageDir }
   );
 
   try {
-    await writeFile(packJsonPath, stdout, "utf8");
-
-    const raw = await readFile(packJsonPath, "utf8");
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(stdout);
     const result = Array.isArray(parsed) ? parsed[0] : parsed;
 
     if (result === undefined || !Array.isArray(result.files)) {

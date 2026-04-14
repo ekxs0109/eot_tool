@@ -10,10 +10,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npx turbo run build",
+    "build": "turbo run build",
     "build:wasm": "make wasm",
-    "pack-check": "npx turbo run pack-check",
-    "test": "npx turbo run test",
+    "pack-check": "turbo run pack-check",
+    "test": "turbo run test",
     "verify:wasm": "make verify-wasm-artifacts"
+  },
+  "devDependencies": {
+    "turbo": "2.9.6"
   }
 }
