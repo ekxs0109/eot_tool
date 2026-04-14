@@ -1,7 +1,7 @@
 //! CFF/CFF2 conversion boundary for the Rust rewrite.
 
 use core::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fonttool_sfnt::load_sfnt;
@@ -98,12 +98,19 @@ fn path_to_utf8(path: &Path) -> Result<&str, CffError> {
     path.to_str().ok_or(CffError::InvalidUtf8Path)
 }
 
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root should exist")
+}
+
 fn run_legacy_fonttool<I, S>(args: I) -> Result<(), CffError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    let legacy_binary = Path::new("build/fonttool");
+    let legacy_binary = workspace_root().join("build/fonttool");
     if !legacy_binary.exists() {
         return Err(CffError::Io(format!(
             "legacy fonttool binary is missing at {}",
@@ -111,7 +118,7 @@ where
         )));
     }
 
-    let output = Command::new(legacy_binary)
+    let output = Command::new(&legacy_binary)
         .args(args)
         .output()
         .map_err(|error| CffError::Io(format!("failed to launch legacy fonttool backend: {error}")))?;

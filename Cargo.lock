@@ -48,6 +48,9 @@ version = "0.1.0"
 [[package]]
 name = "fonttool-runtime"
 version = "0.1.0"
+dependencies = [
+ "fonttool-cff",
+]
 
 [[package]]
 name = "fonttool-sfnt"
@@ -66,3 +69,6 @@ dependencies = [
 [[package]]
 name = "fonttool-wasm"
 version = "0.1.0"
+dependencies = [
+ "fonttool-runtime",
+]
