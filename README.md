@@ -285,6 +285,23 @@ Build only the benchmark app:
 npm run build:benchmark-web
 ```
 
+Run the root workspace build and validation entrypoints:
+
+```bash
+npm run build
+npm run test
+npm run pack-check
+```
+
+Package-level validation for `fonttool-wasm`:
+
+```bash
+npm run build --workspace fonttool-wasm
+npm test --workspace fonttool-wasm
+npm run test:node-smoke --workspace fonttool-wasm
+node packages/fonttool-wasm/scripts/pack-check.mjs
+```
+
 The current scaffold is intentionally minimal. It establishes the app package,
 shadcn-compatible aliases/utilities, runtime boundary, benchmark-oriented
 component structure, and a clean build target without starting the full UI
