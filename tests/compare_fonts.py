@@ -1,4 +1,29 @@
 import sys
+from pathlib import Path
+
+
+def _ensure_fonttools_available() -> None:
+    try:
+        from fontTools.ttLib import TTFont as _  # noqa: F401
+        return
+    except ImportError as exc:
+        repo_python = Path(__file__).resolve().parents[1] / "build" / "venv" / "bin" / "python"
+        in_virtualenv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+        if repo_python.exists() and not in_virtualenv:
+            raise SystemExit(
+                __import__("subprocess").call([str(repo_python), __file__, *sys.argv[1:]])
+            ) from exc
+
+        print(
+            "fontTools is required; install it with "
+            "`python3 -m pip install -r tests/requirements.txt` "
+            "or create the repo venv with `python3 -m venv build/venv` first",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from exc
+
+
+_ensure_fonttools_available()
 
 from fontTools.ttLib import TTFont
 
@@ -82,8 +107,15 @@ def compare_required_tables(left: TTFont, right: TTFont) -> int:
 
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--require-subset-core-tables":
-        with TTFont(sys.argv[2]) as font:
-            require_subset_core_tables(font)
+        try:
+            with TTFont(sys.argv[2]) as font:
+                require_subset_core_tables(font)
+        except FileNotFoundError:
+            print(f"font file not found: {sys.argv[2]}", file=sys.stderr)
+            return 2
+        except Exception as exc:  # pragma: no cover - fontTools exception surface varies.
+            print(f"failed to read font: {exc}", file=sys.stderr)
+            return 1
         print("subset core tables verified")
         return 0
 
@@ -95,8 +127,15 @@ def main() -> int:
         )
         return 2
 
-    with TTFont(sys.argv[1]) as left, TTFont(sys.argv[2]) as right:
-        return compare_required_tables(left, right)
+    try:
+        with TTFont(sys.argv[1]) as left, TTFont(sys.argv[2]) as right:
+            return compare_required_tables(left, right)
+    except FileNotFoundError as exc:
+        print(f"font file not found: {exc.filename}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # pragma: no cover - fontTools exception surface varies.
+        print(f"failed to read font: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

@@ -39,6 +39,18 @@ build/venv/bin/python -m pip install -r tests/requirements.txt
 Python tooling is verification/reference-only. Runtime encode, subset, and the
 browser-facing conversion path remain pure native C/C++.
 
+Stable verifier entrypoints:
+
+```bash
+build/venv/bin/python tests/verify_font.py testdata/OpenSans-Regular.ttf
+build/venv/bin/python tests/compare_fonts.py \
+  testdata/OpenSans-Regular.ttf \
+  build/out/OpenSans-Regular.roundtrip.ttf
+```
+
+If you run the scripts through another Python interpreter, they will exit with a
+clear dependency error when `fontTools` is missing instead of crashing on import.
+
 ## Decode
 
 `fonttool decode <input.eot|input.fntdata> <output.ttf>` parses the EOT header,
@@ -332,6 +344,24 @@ composition or benchmark polish work.
   `Cross-Origin-Embedder-Policy: require-corp`
 - the single-thread build remains the compatibility fallback when those
   constraints are not available
+
+## Swift CoreText Validation
+
+The repository-level CoreText probe now lives in `tests/macos-swift`:
+
+```bash
+swift run --package-path tests/macos-swift FonttoolCoreTextProbe testdata/OpenSans-Regular.ttf
+```
+
+Expected output:
+
+```text
+coretext font accepted
+```
+
+This is a first-class validation entrypoint for macOS acceptance. It complements
+the Rust and Python validation flow; it does not yet retire all legacy native
+acceptance coverage by itself.
 
 ## Fixtures
 

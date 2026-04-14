@@ -42,3 +42,7 @@ path = "../../tests/rust_integration/otf_convert.rs"
 [[test]]
 name = "runtime_wasm"
 path = "../../tests/rust_integration/runtime_wasm.rs"
+
+[[test]]
+name = "validation"
+path = "../../tests/rust_integration/validation.rs"
