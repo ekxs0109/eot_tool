@@ -3,6 +3,15 @@
 This checklist tracks how the legacy native harness under `tests/test_*.c` and
 `tests/test_*.cc` maps into the Rust-first test surface.
 
+Deletion/archival source of truth:
+
+- `docs/superpowers/specs/2026-04-15-fonttool-support-matrix.md` is the
+  authoritative Phase 0 matrix for deciding whether a remaining native surface
+  must be replaced, can stay unsupported, or should move to archive-only status
+  before `src/` deletion.
+- Use this inventory to track test migration progress, but do not use it by
+  itself to decide the support boundary.
+
 Status legend:
 
 - `covered`: the primary behavior is already represented by Rust tests
