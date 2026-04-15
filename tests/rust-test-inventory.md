@@ -30,7 +30,7 @@ Status legend:
 | --- | --- | --- | --- |
 | `tests/test_cff_reader.cc` | partial | `crates/fonttool-cff` tests | Rust OTF inspection exists, but detailed reader parity is still native. |
 | `tests/test_cff_variation.cc` | partial | `tests/rust_integration/otf_convert.rs` + future `fonttool-cff` tests | Variation rejection and instance export are only partially represented today. |
-| `tests/test_cli.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + `crates/fonttool-cli/tests/workspace_cli_smoke.rs` + existing integration tests | Rust now covers top-level help/no-command behavior, unknown command status, decode/encode missing-arg contract errors, and subset parser rejection cases (missing value, duplicate/missing selection mode, unsupported flag). Native-only gaps remain for legacy-specific success-message/fixture-parity CLI assertions. |
+| `tests/test_cli.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + `crates/fonttool-cli/tests/workspace_cli_smoke.rs` + existing integration tests | Rust now covers top-level help/no-command behavior, unknown command status, decode/encode missing-arg contract errors, successful decode of the supported `font1.fntdata` fixture, successful static CFF OTF encode/decode roundtrip shape, decode of an XOR-obfuscated supported `.fntdata` copy, and the current subset OTF/non-OTF rejection matrix. Native-only gaps are now mostly legacy success-output text, `wingdings3.eot` fixture-specific success paths, `.fntdata` obfuscation-flag encode assertions, warning-count/order checks, and thread/env legacy parity. |
 | `tests/test_cu2qu.cc` | deferred | future `crates/fonttool-cff` or `fonttool-glyf` tests | Conversion internals not yet migrated into Rust ownership. |
 | `tests/test_cvt_codec.c` | deferred | future `fonttool-mtx` tests | `cvt` codec surface is not yet a Rust-owned public module. |
 | `tests/test_glyf_codec.c` | deferred | future `crates/fonttool-glyf` tests | Encode path exists, but detailed codec vectors are not yet ported. |
@@ -38,7 +38,7 @@ Status legend:
 | `tests/test_otf_parity.cc` | partial | `tests/rust_integration/otf_convert.rs` + `tests/test_fonttools_parity.py` | Rust now covers the static OTF roundtrip field checks for `post`, `hhea`, and normalized `head` checksum/timestamp parity, plus the current `fonttools` parity invocation with the documented head-only residual; runtime-mode determinism remains native-only. |
 | `tests/test_parallel_runtime.cc` | deferred | future `crates/fonttool-runtime` tests | Current Rust runtime slice only exposes static mode/diagnostics defaults, not full task scheduling semantics. |
 | `tests/test_sfnt_subset.c` | partial | `tests/rust_integration/subset.rs` + future `fonttool-subset` tests | Rust subset planning is covered, but many native subset invariants remain. |
-| `tests/test_subset_args.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + future `fonttool-cli` integration tests | Core subset argument guardrails are now covered for current Rust parser contract; additional legacy edge-case parity remains to be migrated. |
+| `tests/test_subset_args.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + future `fonttool-cli` integration tests | Rust now covers the current parser and dispatch contract for missing values, duplicate or missing selection mode, unsupported flags, static OTF `--variation` rejection, OTF `--text` requirement, and non-OTF `--glyph-ids` requirement. Remaining native-only cases are mostly legacy parser features that Rust does not support, including `--keep-gids`, `--unicodes`, and helper-level request initialization APIs. |
 | `tests/test_table_policy.c` | deferred | future CLI/integration tests | Table retention policy is only indirectly covered right now. |
 | `tests/test_ttf_rebuilder.cc` | deferred | future `fonttool-glyf`/`fonttool-cff` tests | Rebuilder internals still live behind the legacy backend. |
 | `tests/test_ttf_rebuilder_header.c` | deferred | future `fonttool-glyf` tests | Same rebuild boundary as above. |
@@ -53,6 +53,6 @@ Status legend:
 
 ## Recommended Next Migrations
 
-1. Expand `tests/test_subset_args.c` parity in Rust for remaining legacy-only edge cases that are still relevant to the current parser.
-2. Continue `tests/test_cli.c` migration for any still-relevant success-output/diagnostic ordering checks not yet ported.
+1. Continue `tests/test_cli.c` migration only for still-relevant success/warning ordering checks and any supported fixture paths not yet represented by Rust tests.
+2. Leave `tests/test_subset_args.c` legacy-only flags and helper APIs native unless the Rust CLI gains equivalent support.
 3. `tests/test_parallel_runtime.cc` only after the Rust runtime owns real task scheduling semantics instead of a narrow bridge.
