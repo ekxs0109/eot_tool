@@ -148,14 +148,18 @@ Rust-owned subset support now covers the non-OTF glyph-id path:
 - `.otf`: `native CFF/CFF2 conversion -> subset -> encode`
 
 The supported Rust subset path now accepts `.eot`, `.fntdata`, and `.ttf`
-inputs with `--glyph-ids`, updates `maxp.numGlyphs`, and emits warnings when
+inputs with `--glyph-ids`, rebuilds the supported subset tables
+(`cmap`, `glyf`, `loca`, `hhea`, `hmtx`, and `maxp`), and emits warnings when
 `HDMX` or `VDMX` are dropped from the subset output. `.fntdata` output stays
 wrapped with the PPT XOR flag so the CLI can preserve the expected container
 shape.
 
 Extra-table behavior across the supported non-OTF subset path is:
 
+- `cmap`: rebuilt for the selected glyph subset
 - `cvt`: retained when present in the decoded/subset SFNT
+- `glyf` / `loca`: rebuilt for the selected glyph subset
+- `hhea` / `hmtx`: rebuilt for the selected glyph subset
 - `hdmx`: dropped during subset with a warning
 - `VDMX`: dropped during subset with a warning
 

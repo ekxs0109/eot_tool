@@ -17,6 +17,7 @@ const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
 const TAG_HDMX: u32 = u32::from_be_bytes(*b"hdmx");
 const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
+const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 
 fn workspace_root() -> PathBuf {
     support::workspace_root()
@@ -70,26 +71,204 @@ fn decode_subset_output(output_path: &Path) -> PathBuf {
     decoded_path
 }
 
-fn read_loaded_font(path: &Path) -> fonttool_sfnt::OwnedSfntFont {
-    let bytes = fs::read(path).expect("decoded subset output should be readable");
-    load_sfnt(&bytes).expect("decoded subset output should parse")
+fn read_font(path: &Path) -> fonttool_sfnt::OwnedSfntFont {
+    let bytes = fs::read(path).expect("font should be readable");
+    load_sfnt(&bytes).expect("font should parse")
 }
 
-fn read_maxp_num_glyphs(path: &Path) -> u16 {
-    let font = read_loaded_font(path);
-    let maxp = font.table(TAG_MAXP).expect("subset output should keep maxp");
-    u16::from_be_bytes([maxp.data[4], maxp.data[5]])
+fn read_u16_be(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_be_bytes(bytes[offset..offset + 2].try_into().expect("table should be long enough"))
 }
 
-fn assert_supported_subset_core_tables(path: &Path) {
-    let font = read_loaded_font(path);
-    for tag in [TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_GLYF, TAG_LOCA, TAG_CMAP] {
-        assert!(
-            font.table(tag).is_some(),
-            "expected table {:08X} in subset output",
-            tag
-        );
+fn read_u32_be(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(bytes[offset..offset + 4].try_into().expect("table should be long enough"))
+}
+
+fn read_maxp_num_glyphs(font: &fonttool_sfnt::OwnedSfntFont) -> u16 {
+    let maxp = font.table(TAG_MAXP).expect("font should contain maxp");
+    read_u16_be(&maxp.data, 4)
+}
+
+fn read_index_to_loca_format(font: &fonttool_sfnt::OwnedSfntFont) -> i16 {
+    let head = font.table(TAG_HEAD).expect("font should contain head");
+    assert!(head.data.len() >= 52, "head table should be long enough");
+    i16::from_be_bytes([head.data[50], head.data[51]])
+}
+
+fn read_num_hmetrics(font: &fonttool_sfnt::OwnedSfntFont) -> u16 {
+    let hhea = font.table(TAG_HHEA).expect("font should contain hhea");
+    assert!(hhea.data.len() >= 36, "hhea table should be long enough");
+    read_u16_be(&hhea.data, 34)
+}
+
+fn glyph_length(font: &fonttool_sfnt::OwnedSfntFont, glyph_id: u16) -> usize {
+    let loca = font.table(TAG_LOCA).expect("font should contain loca");
+    let glyf = font.table(TAG_GLYF).expect("font should contain glyf");
+    match read_index_to_loca_format(font) {
+        0 => {
+            let offset = usize::from(glyph_id) * 2;
+            assert!(offset + 4 <= loca.data.len(), "loca should be long enough");
+            let start = usize::from(read_u16_be(&loca.data, offset)) * 2;
+            let end = usize::from(read_u16_be(&loca.data, offset + 2)) * 2;
+            assert!(end >= start, "glyph range should be ordered");
+            assert!(end <= glyf.data.len(), "glyph range should fit glyf table");
+            end - start
+        }
+        1 => {
+            let offset = usize::from(glyph_id) * 4;
+            assert!(offset + 8 <= loca.data.len(), "loca should be long enough");
+            let start = read_u32_be(&loca.data, offset) as usize;
+            let end = read_u32_be(&loca.data, offset + 4) as usize;
+            assert!(end >= start, "glyph range should be ordered");
+            assert!(end <= glyf.data.len(), "glyph range should fit glyf table");
+            end - start
+        }
+        other => panic!("unsupported loca format {other}"),
     }
+}
+
+fn cmap_lookup_gid(font: &fonttool_sfnt::OwnedSfntFont, codepoint: u32) -> u16 {
+    let cmap = font.table(TAG_CMAP).expect("font should contain cmap");
+    assert!(cmap.data.len() >= 4, "cmap table should be long enough");
+    let num_tables = read_u16_be(&cmap.data, 2) as usize;
+    let mut best_score = -1i32;
+    let mut best_format = 0u16;
+    let mut best_offset = 0usize;
+
+    for index in 0..num_tables {
+        let record_offset = 4 + index * 8;
+        let platform_id = read_u16_be(&cmap.data, record_offset);
+        let encoding_id = read_u16_be(&cmap.data, record_offset + 2);
+        let subtable_offset = read_u32_be(&cmap.data, record_offset + 4) as usize;
+        if subtable_offset + 2 > cmap.data.len() {
+            continue;
+        }
+
+        let format = read_u16_be(&cmap.data, subtable_offset);
+        let score = match format {
+            12 if platform_id == 3 && encoding_id == 10 => 4,
+            12 if platform_id == 0 => 3,
+            4 if platform_id == 3 && encoding_id == 1 => 2,
+            4 if platform_id == 0 => 1,
+            _ => -1,
+        };
+        if score > best_score {
+            best_score = score;
+            best_format = format;
+            best_offset = subtable_offset;
+        }
+    }
+
+    match best_format {
+        4 => {
+            let subtable = &cmap.data[best_offset..];
+            let length = read_u16_be(subtable, 2) as usize;
+            assert!(length <= subtable.len(), "format 4 cmap should fit");
+            let seg_count = usize::from(read_u16_be(subtable, 6) / 2);
+            let end_codes_offset = 14;
+            let start_codes_offset = end_codes_offset + seg_count * 2 + 2;
+            let id_deltas_offset = start_codes_offset + seg_count * 2;
+            let id_range_offsets_offset = id_deltas_offset + seg_count * 2;
+
+            for seg_index in 0..seg_count {
+                let end_code = read_u16_be(subtable, end_codes_offset + seg_index * 2);
+                if codepoint > u32::from(end_code) {
+                    continue;
+                }
+                let start_code = read_u16_be(subtable, start_codes_offset + seg_index * 2);
+                if codepoint < u32::from(start_code) {
+                    return 0;
+                }
+
+                let id_delta = i16::from_be_bytes(
+                    subtable[id_deltas_offset + seg_index * 2..id_deltas_offset + seg_index * 2 + 2]
+                        .try_into()
+                        .expect("delta should exist"),
+                );
+                let id_range_offset = read_u16_be(subtable, id_range_offsets_offset + seg_index * 2);
+                if id_range_offset == 0 {
+                    return ((codepoint as i32 + id_delta as i32) & 0xFFFF) as u16;
+                }
+
+                let id_range_pos = id_range_offsets_offset + seg_index * 2;
+                let glyph_index_pos = id_range_pos
+                    + usize::from(id_range_offset)
+                    + usize::try_from(codepoint - u32::from(start_code)).expect("range width should fit") * 2;
+                if glyph_index_pos + 2 > length {
+                    return 0;
+                }
+                let glyph = read_u16_be(subtable, glyph_index_pos);
+                if glyph == 0 {
+                    return 0;
+                }
+                return ((u32::from(glyph) + id_delta as i32 as u32) & 0xFFFF) as u16;
+            }
+            0
+        }
+        12 => {
+            let subtable = &cmap.data[best_offset..];
+            let length = read_u32_be(subtable, 4) as usize;
+            assert!(length <= subtable.len(), "format 12 cmap should fit");
+            let num_groups = read_u32_be(subtable, 12) as usize;
+
+            for group_index in 0..num_groups {
+                let group_offset = 16 + group_index * 12;
+                let start_char = read_u32_be(subtable, group_offset);
+                let end_char = read_u32_be(subtable, group_offset + 4);
+                if codepoint < start_char {
+                    break;
+                }
+                if codepoint <= end_char {
+                    return (read_u32_be(subtable, group_offset + 8) + (codepoint - start_char)) as u16;
+                }
+            }
+            0
+        }
+        _ => 0,
+    }
+}
+
+fn assert_supported_subset_core_tables(font: &fonttool_sfnt::OwnedSfntFont) {
+    for tag in [TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_GLYF, TAG_LOCA, TAG_CMAP] {
+        assert!(font.table(tag).is_some(), "expected table {:08X} in subset output", tag);
+    }
+}
+
+fn assert_subset_rebuilds_core_tables(input_path: &Path, output_path: &Path) {
+    let input_font = read_font(input_path);
+    let output_font = read_font(output_path);
+
+    assert_supported_subset_core_tables(&output_font);
+    assert_eq!(read_maxp_num_glyphs(&output_font), 4);
+    assert_eq!(read_num_hmetrics(&output_font), 4);
+    assert_eq!(output_font.table(TAG_HMTX).expect("hmtx should exist").data.len(), 16);
+    assert_eq!(
+        output_font.table(TAG_LOCA).expect("loca should exist").data.len(),
+        match read_index_to_loca_format(&output_font) {
+            0 => 10,
+            1 => 20,
+            other => panic!("unsupported loca format {other}"),
+        }
+    );
+
+    assert!(
+        output_font.table(TAG_GLYF).expect("glyf should exist").data.len()
+            < input_font.table(TAG_GLYF).expect("input glyf should exist").data.len(),
+        "subset glyf table should be rebuilt smaller than the source"
+    );
+
+    assert_eq!(glyph_length(&output_font, 0), glyph_length(&input_font, 0));
+    assert!(glyph_length(&output_font, 1) > 0, "subset glyph 1 should retain outline data");
+    assert!(glyph_length(&output_font, 2) > 0, "subset glyph 2 should retain outline data");
+    assert!(glyph_length(&output_font, 3) > 0, "subset glyph 3 should retain outline data");
+
+    assert_eq!(cmap_lookup_gid(&input_font, u32::from('A')), 36);
+    assert_eq!(cmap_lookup_gid(&input_font, u32::from('B')), 37);
+    assert_eq!(cmap_lookup_gid(&input_font, u32::from('C')), 38);
+    assert_eq!(cmap_lookup_gid(&output_font, u32::from('A')), 1);
+    assert_eq!(cmap_lookup_gid(&output_font, u32::from('B')), 2);
+    assert_eq!(cmap_lookup_gid(&output_font, u32::from('C')), 3);
+    assert_eq!(cmap_lookup_gid(&output_font, u32::from('Z')), 0);
 }
 
 fn run_subset_command(args: &[&str], cwd: &Path) -> std::process::Output {
@@ -124,7 +303,7 @@ fn prepare_plain_subset_ttf_fixture() -> (PathBuf, TempCleanup) {
     (ttf_path, cleanup)
 }
 
-fn prepare_supported_subset_wrapper_fixture() -> (PathBuf, PathBuf, TempCleanup) {
+fn prepare_supported_subset_wrapper_fixture() -> (PathBuf, PathBuf, PathBuf, TempCleanup) {
     let ttf_path = temp_derived_file("fixture", "ttf");
     let eot_path = temp_derived_file("fixture", "eot");
     let fntdata_path = temp_derived_file("fixture", "fntdata");
@@ -138,7 +317,7 @@ fn prepare_supported_subset_wrapper_fixture() -> (PathBuf, PathBuf, TempCleanup)
         .data
         .clone();
     let os2 = font
-        .table(u32::from_be_bytes(*b"OS/2"))
+        .table(TAG_OS_2)
         .expect("fixture font should contain OS/2")
         .data
         .clone();
@@ -149,8 +328,8 @@ fn prepare_supported_subset_wrapper_fixture() -> (PathBuf, PathBuf, TempCleanup)
     fs::write(&eot_path, eot_bytes).expect("fixture eot should be writable");
     fs::copy(&eot_path, &fntdata_path).expect("fixture fntdata copy should be writable");
 
-    let cleanup = TempCleanup::new(vec![ttf_path, eot_path.clone(), fntdata_path.clone()]);
-    (eot_path, fntdata_path, cleanup)
+    let cleanup = TempCleanup::new(vec![ttf_path.clone(), eot_path.clone(), fntdata_path.clone()]);
+    (ttf_path, eot_path, fntdata_path, cleanup)
 }
 
 struct TempCleanup {
@@ -172,11 +351,11 @@ impl Drop for TempCleanup {
 }
 
 #[test]
-fn subset_wingdings3_eot_glyph_ids_updates_maxp_and_drops_warning_tables() {
+fn subset_wingdings3_eot_glyph_ids_rebuilds_core_tables_and_drops_warning_tables() {
     let output_path = temp_file("eot");
     let isolated_cwd = temp_file("cwd");
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
-    let (eot_input_path, _fntdata_path, _cleanup) = prepare_supported_subset_wrapper_fixture();
+    let (ttf_input_path, eot_input_path, _fntdata_path, _cleanup) = prepare_supported_subset_wrapper_fixture();
 
     let output = run_subset_command(
         &[
@@ -186,7 +365,7 @@ fn subset_wingdings3_eot_glyph_ids_updates_maxp_and_drops_warning_tables() {
                 .expect("fixture path should be valid utf-8"),
             output_path.to_str().expect("temp path should be valid utf-8"),
             "--glyph-ids",
-            "0,1,2",
+            "0,36,37,38",
         ],
         &isolated_cwd,
     );
@@ -208,10 +387,9 @@ fn subset_wingdings3_eot_glyph_ids_updates_maxp_and_drops_warning_tables() {
     assert!(output_path.is_file(), "expected subset to create an output file");
 
     let decoded_path = decode_subset_output(&output_path);
-    assert_eq!(read_maxp_num_glyphs(&decoded_path), 3);
-    assert_supported_subset_core_tables(&decoded_path);
+    assert_subset_rebuilds_core_tables(&ttf_input_path, &decoded_path);
 
-    let font = read_loaded_font(&decoded_path);
+    let font = read_font(&decoded_path);
     assert!(font.table(TAG_HDMX).is_none(), "hdmx should be dropped");
     assert!(font.table(TAG_VDMX).is_none(), "VDMX should be dropped");
 
@@ -221,8 +399,8 @@ fn subset_wingdings3_eot_glyph_ids_updates_maxp_and_drops_warning_tables() {
 }
 
 #[test]
-fn subset_wingdings3_fntdata_glyph_ids_updates_maxp_and_drops_warning_tables() {
-    let (ttf_path, fntdata_path, _cleanup) = prepare_supported_subset_wrapper_fixture();
+fn subset_wingdings3_fntdata_glyph_ids_rebuilds_core_tables_and_drops_warning_tables() {
+    let (ttf_input_path, _eot_path, fntdata_path, _cleanup) = prepare_supported_subset_wrapper_fixture();
     let output_path = temp_file("fntdata");
     let isolated_cwd = temp_file("cwd");
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
@@ -235,7 +413,7 @@ fn subset_wingdings3_fntdata_glyph_ids_updates_maxp_and_drops_warning_tables() {
                 .expect("temp path should be valid utf-8"),
             output_path.to_str().expect("temp path should be valid utf-8"),
             "--glyph-ids",
-            "0,1,2",
+            "0,36,37,38",
         ],
         &isolated_cwd,
     );
@@ -257,21 +435,19 @@ fn subset_wingdings3_fntdata_glyph_ids_updates_maxp_and_drops_warning_tables() {
     assert!(output_path.is_file(), "expected subset to create an output file");
 
     let decoded_path = decode_subset_output(&output_path);
-    assert_eq!(read_maxp_num_glyphs(&decoded_path), 3);
-    assert_supported_subset_core_tables(&decoded_path);
+    assert_subset_rebuilds_core_tables(&ttf_input_path, &decoded_path);
 
-    let font = read_loaded_font(&decoded_path);
+    let font = read_font(&decoded_path);
     assert!(font.table(TAG_HDMX).is_none(), "hdmx should be dropped");
     assert!(font.table(TAG_VDMX).is_none(), "VDMX should be dropped");
 
     let _ = fs::remove_file(output_path);
     let _ = fs::remove_file(decoded_path);
     let _ = fs::remove_dir_all(isolated_cwd);
-    let _ = fs::remove_file(ttf_path);
 }
 
 #[test]
-fn subset_opensans_ttf_glyph_ids_updates_maxp_and_keeps_core_tables() {
+fn subset_opensans_ttf_glyph_ids_rebuilds_core_tables() {
     let output_path = temp_file("eot");
     let isolated_cwd = temp_file("cwd");
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
@@ -283,7 +459,7 @@ fn subset_opensans_ttf_glyph_ids_updates_maxp_and_keeps_core_tables() {
             ttf_path.to_str().expect("fixture path should be valid utf-8"),
             output_path.to_str().expect("temp path should be valid utf-8"),
             "--glyph-ids",
-            "0,1,2",
+            "0,36,37,38",
         ],
         &isolated_cwd,
     );
@@ -299,9 +475,8 @@ fn subset_opensans_ttf_glyph_ids_updates_maxp_and_keeps_core_tables() {
     assert!(output_path.is_file(), "expected subset to create an output file");
 
     let decoded_path = decode_subset_output(&output_path);
-    assert_eq!(read_maxp_num_glyphs(&decoded_path), 3);
-    assert_supported_subset_core_tables(&decoded_path);
-    let font = read_loaded_font(&decoded_path);
+    assert_subset_rebuilds_core_tables(&ttf_path, &decoded_path);
+    let font = read_font(&decoded_path);
     assert!(font.table(TAG_HDMX).is_none(), "OpenSans output should not add hdmx");
     assert!(font.table(TAG_VDMX).is_none(), "OpenSans output should not add VDMX");
 
