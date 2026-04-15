@@ -43,14 +43,17 @@ pub fn temp_fntdata() -> PathBuf {
     temp_path("otf-convert", "fntdata")
 }
 
+#[allow(dead_code)]
 pub fn temp_ttf() -> PathBuf {
     temp_path("otf-convert", "ttf")
 }
 
+#[allow(dead_code)]
 pub fn temp_eot() -> PathBuf {
     temp_path("otf-convert", "eot")
 }
 
+#[allow(dead_code)]
 pub fn run_fonttool<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
@@ -97,6 +100,7 @@ where
         .expect("python binary should launch")
 }
 
+#[allow(dead_code)]
 fn run_legacy_fonttool<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
@@ -109,6 +113,7 @@ where
         .expect("legacy fonttool binary should launch")
 }
 
+#[allow(dead_code)]
 pub fn decode_with_legacy(input: &Path, output: &Path) {
     let decode = run_legacy_fonttool([
         "decode",
@@ -149,83 +154,4 @@ pub fn run_fonttools_parity(left: &Path, right: &Path) -> Output {
         left.as_os_str(),
         right.as_os_str(),
     ])
-}
-
-#[allow(dead_code)]
-pub struct StaticCffRoundtrip {
-    eot_path: PathBuf,
-    roundtrip_path: PathBuf,
-}
-
-impl StaticCffRoundtrip {
-    #[allow(dead_code)]
-    pub fn font_path(&self) -> &Path {
-        &self.roundtrip_path
-    }
-}
-
-impl Drop for StaticCffRoundtrip {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.eot_path);
-        let _ = fs::remove_file(&self.roundtrip_path);
-    }
-}
-
-#[allow(dead_code)]
-pub fn encode_static_cff_to_roundtrip_ttf() -> StaticCffRoundtrip {
-    encode_otf_to_roundtrip_ttf("testdata/cff-static.otf")
-}
-
-#[allow(dead_code)]
-pub fn encode_ttf_to_roundtrip_ttf(input_path: &str) -> StaticCffRoundtrip {
-    let output_path = temp_eot();
-    let decoded_path = temp_ttf();
-
-    let output = run_fonttool([
-        "encode",
-        input_path,
-        output_path
-            .to_str()
-            .expect("temp path should be valid utf-8"),
-    ]);
-
-    assert!(
-        output.status.success(),
-        "expected encode to succeed, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    decode_with_legacy(&output_path, &decoded_path);
-
-    StaticCffRoundtrip {
-        eot_path: output_path,
-        roundtrip_path: decoded_path,
-    }
-}
-
-#[allow(dead_code)]
-pub fn encode_otf_to_roundtrip_ttf(input_path: &str) -> StaticCffRoundtrip {
-    let output_path = temp_eot();
-    let decoded_path = temp_ttf();
-
-    let output = run_fonttool([
-        "encode",
-        input_path,
-        output_path
-            .to_str()
-            .expect("temp path should be valid utf-8"),
-    ]);
-
-    assert!(
-        output.status.success(),
-        "expected encode to succeed, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    decode_with_legacy(&output_path, &decoded_path);
-
-    StaticCffRoundtrip {
-        eot_path: output_path,
-        roundtrip_path: decoded_path,
-    }
 }

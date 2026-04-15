@@ -259,6 +259,12 @@ where
 pub fn convert_otf_to_embedded_font(
     request: ConvertRequest<'_>,
 ) -> Result<ConvertResult, RuntimeError> {
+    if request.output_kind == OutputKind::Fntdata {
+        return Err(RuntimeError::Backend(
+            "PowerPoint-compatible .fntdata output remains Phase 2-owned; use the archived native binary for compatibility flows".to_string(),
+        ));
+    }
+
     let temp_output = temp_runtime_output_path(request.output_kind);
     let diagnostics = run_indexed_tasks(1, RuntimeSchedulingOptions::default(), |_| {
         run_conversion_request(request, request.input_path, &temp_output)?;
@@ -290,15 +296,16 @@ fn run_conversion_request(
     input_path: &Path,
     output_path: &Path,
 ) -> Result<(), RuntimeError> {
+    let font_bytes = std::fs::read(input_path)
+        .map_err(|error| RuntimeError::Io(format!("failed to read OTF input: {error}")))?;
+    let kind = inspect_otf_font(&font_bytes)?;
+    if !kind.is_cff_flavor {
+        return Err(RuntimeError::Backend(
+            "runtime bridge expects OTF/CFF or OTF/CFF2 input".to_string(),
+        ));
+    }
+
     if let Some(variation_axes) = request.variation_axes {
-        let font_bytes = std::fs::read(input_path)
-            .map_err(|error| RuntimeError::Io(format!("failed to read OTF input: {error}")))?;
-        let kind = inspect_otf_font(&font_bytes)?;
-        if !kind.is_cff_flavor {
-            return Err(RuntimeError::Backend(
-                "runtime bridge expects OTF/CFF or OTF/CFF2 input".to_string(),
-            ));
-        }
         if !kind.is_variable {
             return Err(RuntimeError::Cff(CffError::VariationRejectedForStaticInput));
         }
@@ -570,7 +577,7 @@ mod tests {
     fn rejects_variation_axes_for_static_otf() {
         let error = convert_otf_to_embedded_font(ConvertRequest {
             input_path: &fixture("testdata/cff-static.otf"),
-            output_kind: OutputKind::Fntdata,
+            output_kind: OutputKind::Eot,
             variation_axes: Some("wght=700"),
         })
         .expect_err("static CFF input should reject variation axes");
@@ -585,7 +592,7 @@ mod tests {
     fn rejects_variable_font_conversion_until_runtime_bridge_grows_full_support() {
         let error = convert_otf_to_embedded_font(ConvertRequest {
             input_path: &fixture("testdata/cff2-variable.otf"),
-            output_kind: OutputKind::Fntdata,
+            output_kind: OutputKind::Eot,
             variation_axes: Some("wght=700"),
         })
         .expect_err("variable conversion should stay explicitly unsupported");

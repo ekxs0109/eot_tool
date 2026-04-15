@@ -30,7 +30,7 @@ impl fmt::Display for CffError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CffError::MissingTextSelection => {
-                f.write_str("Task 7 currently only supports --text for OTF subset input")
+                f.write_str("subset currently requires --text for OTF input")
             }
             CffError::VariationRejectedForStaticInput => {
                 f.write_str("variation arguments require a variable CFF2 input")

@@ -15,7 +15,7 @@ cargo build --workspace
 cargo test --workspace
 cargo test -p fonttool-cli --test validation
 cargo run -p fonttool-cli --bin fonttool -- --help
-cargo run -p fonttool-cli --bin fonttool -- decode testdata/font1.fntdata build/out/font1.rust-smoke.otf
+cargo run -p fonttool-cli --bin fonttool -- decode testdata/font1.fntdata build/out/font1.rust-smoke.ttf
 build/venv/bin/python tests/verify_font.py testdata/OpenSans-Regular.ttf
 ```
 
@@ -94,12 +94,15 @@ make verify-decode
 ## Encode / Roundtrip
 
 `fonttool encode <input.ttf> <output.eot>` emits an MTX-compressed EOT.
-When the output path ends in `.fntdata`, the tool also applies the PowerPoint
-`XOR 0x50` obfuscation layer and sets the `0x10000000` flag.
+
+The Rust CLI currently treats PowerPoint-compatible `.fntdata` output as
+Phase 2-owned work. The archived native compatibility binary `./build/fonttool`
+still provides that path; the Rust-owned encode boundary does not currently set
+the PowerPoint XOR flag or apply the `0x50` obfuscation layer.
 
 ### Runtime Thread Control
 
-`EOT_TOOL_THREADS` controls encode/subset parallelism at runtime.
+`EOT_TOOL_THREADS` controls Rust-owned encode/runtime parallelism.
 
 - default: unset (or invalid) uses the platform hardware concurrency
 - `EOT_TOOL_THREADS=1`: strict serial mode for debugging/regression checks
@@ -130,7 +133,11 @@ Converged runtime behavior:
 
 - `cvt`: preserved on encode/decode
 - `hdmx`: preserved on encode/decode, including shared trailing advance widths
-- `VDMX`: dropped on encode/subset with a warning on `stderr`
+- `VDMX`: dropped from the current Rust TrueType encode path
+
+Archived native compatibility behavior still covers warning parity for dropped
+`VDMX`/`HDMX` tables during the old subset/encode paths; those warnings are not
+part of the current Rust-owned Phase 1 contract.
 
 Subset architecture for the archived native compatibility flow is:
 
@@ -181,7 +188,7 @@ Make target:
 make verify-roundtrip
 ```
 
-Subset verification example:
+Archived native-compatibility subset verification example:
 
 ```bash
 ./build/fonttool subset testdata/wingdings3.eot build/out/wingdings3-subset.eot --glyph-ids 0,1,2
@@ -210,7 +217,8 @@ of silently ignoring the request.
 
 ## CFF2 Instancing
 
-`CFF2` support is instance-export only. The conversion pipeline:
+`CFF2` instance export remains an archived/native compatibility path during the
+current rewrite phase. The historical conversion pipeline is:
 
 1. validates the user axis-tag map
 2. clamps to `fvar`
@@ -219,7 +227,8 @@ of silently ignoring the request.
 5. instantiates outlines/metrics before `cu2qu` and TT rebuild
 
 Variation tables such as `CFF2`, `fvar`, `avar`, `HVAR`, `MVAR`, `VVAR`,
-`cvar`, and `gvar` are dropped from the rebuilt embedded-font output.
+`cvar`, and `gvar` were historically dropped from the rebuilt embedded-font
+output in that archived compatibility flow.
 
 ## Conversion Tuning
 
@@ -365,9 +374,8 @@ On macOS, the formal Rust-first CoreText acceptance check is:
 cargo test -p fonttool-cli --test validation
 ```
 
-That test roundtrips `testdata/cff-static.otf` through the current Rust CLI
-encode path, decodes via the current legacy adapter, and invokes the Swift
-probe in `tests/macos-swift` on the produced TTF.
+That test decodes `testdata/font1.fntdata` through the current Rust CLI decode
+path and invokes the Swift probe in `tests/macos-swift` on the produced TTF.
 
 The repository-level Swift probe remains directly runnable for manual smoke
 checks:

@@ -277,6 +277,46 @@ fn encode_ttf_succeeds_outside_workspace_without_legacy_binary() {
 }
 
 #[test]
+fn encode_fntdata_output_is_explicitly_phase2_owned() {
+    let isolated_cwd = temp_dir("encode-fntdata-phase2-cwd");
+    let output_path = temp_path("ttf-phase2-fntdata", "fntdata");
+    let input_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+
+    let output = run_fonttool_in_dir(
+        [
+            "encode",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+        ],
+        &isolated_cwd,
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected explicit Phase 2 boundary, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("PowerPoint-compatible .fntdata encode remains Phase 2-owned"),
+        "expected explicit Phase 2 boundary, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !output_path.exists(),
+        "encode should not create .fntdata output while the path is deferred"
+    );
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
+}
+
+#[test]
 fn encode_cff_static_otf_is_explicitly_phase3_owned() {
     let isolated_cwd = temp_dir("cff-phase3-cwd");
     let encoded_path = temp_path("cff-static-roundtrip", "eot");
@@ -427,6 +467,33 @@ fn subset_static_otf_with_variation_is_rejected_by_current_contract() {
         stderr.contains("variation arguments require a variable CFF2 input"),
         "expected static OTF variation rejection, stderr: {stderr}"
     );
+}
+
+#[test]
+fn subset_cff_bytes_with_ttf_extension_still_use_otf_boundary() {
+    let input_path = temp_path("cff-static-misnamed", "ttf");
+    fs::copy(workspace_root().join("testdata/cff-static.otf"), &input_path)
+        .expect("fixture copy should be writable");
+
+    let output = run_fonttool([
+        "subset",
+        input_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+        "out.eot",
+        "--text",
+        "ABC",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("OTF(CFF/CFF2) subset remains Phase 3-owned"),
+        "expected content-based OTF boundary, stderr: {stderr}"
+    );
+
+    let _ = fs::remove_file(input_path);
 }
 
 #[test]

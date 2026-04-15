@@ -32,7 +32,7 @@ fn subset_non_otf_input_is_explicitly_phase2_owned_without_shellout() {
     ));
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
 
-    let input_path = workspace_root().join("testdata/font1.fntdata");
+    let input_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
     let output = support::run_fonttool_in_dir(
         [
             "subset",

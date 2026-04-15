@@ -4,15 +4,13 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use fonttool_cff::{
-    encode_otf_with_legacy_backend, inspect_otf_font, subset_otf_with_legacy_backend, CffError,
-    OtfSubsetRequest,
+    inspect_otf_font, CffError,
 };
 use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::encode_glyf;
-use fonttool_harfbuzz::{run_subset_adapter, LegacySubsetRequest};
 use fonttool_mtx::{compress_lz_literals, decompress_lz, pack_mtx_container, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
-use fonttool_subset::{plan_glyph_subset, GlyphIdRequest, SubsetWarnings};
+use fonttool_subset::GlyphIdRequest;
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
@@ -87,9 +85,9 @@ fn print_help() {
     println!("Usage: fonttool <COMMAND>");
     println!();
     println!("Commands:");
-    println!("  encode <INPUT> <OUTPUT>  Encode a TrueType or OTF font into EOT/MTX");
+    println!("  encode <INPUT> <OUTPUT>  Encode a TrueType font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
-    println!("  subset <INPUT> <OUTPUT> [--glyph-ids <LIST>|--text <TEXT>] [--variation <AXES>]");
+    println!("  subset <INPUT> <OUTPUT> ...  Validate subset arguments; execution beyond the current Rust-owned boundary is deferred");
     println!();
     println!("Options:");
     println!("  -h, --help  Print help");
@@ -137,17 +135,27 @@ fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> Result<(), String> {
+    let output_path = output_path.as_ref();
+    if output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("fntdata"))
+    {
+        return Err(
+            "PowerPoint-compatible .fntdata encode remains Phase 2-owned; use the archived native binary for compatibility flows".to_string(),
+        );
+    }
+
     let input_bytes = fs::read(input_path.as_ref())
         .map_err(|error| format!("failed to read {}: {error}", input_path.as_ref().display()))?;
     let source_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
 
     if source_font.table(TAG_CFF).is_some() || source_font.table(TAG_CFF2).is_some() {
-        return encode_otf_with_legacy_backend(input_path.as_ref(), output_path.as_ref())
-            .map_err(|error| error.to_string());
+        return Err(CffError::EncodeDeferredToPhase3.to_string());
     }
 
     if source_font.version_tag() != SFNT_VERSION_TRUETYPE {
-        return Err("encode currently only supports TrueType glyf or OTF/CFF fonts".to_string());
+        return Err("encode currently only supports TrueType glyf fonts in the Rust-owned Phase 1 boundary".to_string());
     }
 
     let head = table_bytes(&source_font, TAG_HEAD, "head")?;
@@ -185,10 +193,10 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     let encoded_eot = build_eot_file(head, os2, &mtx_payload, false)
         .map_err(|error| format!("failed to build EOT header: {error}"))?;
 
-    fs::write(output_path.as_ref(), encoded_eot).map_err(|error| {
+    fs::write(output_path, encoded_eot).map_err(|error| {
         format!(
             "failed to write {}: {error}",
-            output_path.as_ref().display()
+            output_path.display()
         )
     })?;
 
@@ -196,28 +204,19 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
 }
 
 fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
-    if is_otf_path(&request.input_path) {
-        return subset_otf_file(&request);
+    let input_bytes = load_subset_input_sfnt_bytes(&request.input_path)?;
+    let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
+    if kind.is_cff_flavor {
+        return subset_otf_file(&request, &kind);
     }
 
     let glyph_ids_csv = request.glyph_ids.as_deref().ok_or_else(|| {
         "subset currently only supports --glyph-ids for non-OTF input".to_string()
     })?;
-    let glyph_request = GlyphIdRequest::parse_csv(glyph_ids_csv)
+    GlyphIdRequest::parse_csv(glyph_ids_csv)
         .map_err(|error| format!("invalid subset arguments: {error}"))?;
 
-    // Keep the Rust-owned planning boundary narrow for Task 6. The adapter executes
-    // the currently trusted backend while we migrate the rest of the subset pipeline.
-    let plan = plan_subset_for_input(&request.input_path, &glyph_request)?;
-    let warnings = run_subset_adapter(LegacySubsetRequest {
-        input_path: &request.input_path,
-        output_path: &request.output_path,
-        plan: &plan,
-    })
-    .map_err(|error| error.to_string())?;
-    emit_subset_warnings(warnings);
-
-    Ok(())
+    Err("subset execution for non-OTF input remains Phase 2-owned; use the archived native binary for compatibility flows".to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,80 +277,35 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
     Ok(request)
 }
 
-fn plan_subset_for_input(
-    input_path: &Path,
-    request: &GlyphIdRequest,
-) -> Result<fonttool_subset::SubsetPlan, String> {
+fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
     let extension = input_path
         .extension()
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase());
 
-    let font = match extension.as_deref() {
-        Some("ttf") | Some("otf") => {
-            let input_bytes = fs::read(input_path)
-                .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
-            load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?
-        }
+    match extension.as_deref() {
         Some("eot") | Some("fntdata") => {
             let input_bytes = fs::read(input_path)
                 .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
-            let sfnt_bytes = decode_embedded_font_bytes(&input_bytes).map_err(|error| {
-                format!(
-                    "failed to load subset input {}: {error}",
-                    input_path.display()
-                )
-            })?;
-            load_sfnt(&sfnt_bytes).map_err(|error| format!("invalid decoded SFNT: {error}"))?
+            decode_embedded_font_bytes(&input_bytes)
+                .map_err(|error| format!("failed to load subset input {}: {error}", input_path.display()))
         }
-        _ => {
-            return Err(format!(
-                "unsupported subset input path: {}",
-                input_path.display()
-            ))
-        }
-    };
-
-    plan_glyph_subset(&font, request, false).map_err(|error| error.to_string())
-}
-
-fn emit_subset_warnings(warnings: SubsetWarnings) {
-    if warnings.dropped_hdmx {
-        eprintln!("warning: unsupported HDMX in subset path; dropping table");
-    }
-    if warnings.dropped_vdmx {
-        eprintln!("warning: unsupported VDMX in MTX encode/subset path; dropping table");
+        _ => fs::read(input_path)
+            .map_err(|error| format!("failed to read {}: {error}", input_path.display())),
     }
 }
 
-fn subset_otf_file(request: &SubsetCliRequest) -> Result<(), String> {
+fn subset_otf_file(request: &SubsetCliRequest, kind: &fonttool_cff::CffFontKind) -> Result<(), String> {
     let text = request
         .text
         .as_deref()
         .ok_or_else(|| "subset currently requires --text for OTF input".to_string())?;
-    let input_bytes = fs::read(&request.input_path)
-        .map_err(|error| format!("failed to read {}: {error}", request.input_path.display()))?;
-    let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
-    if !kind.is_cff_flavor {
-        return Err("subset OTF path expects CFF or CFF2 input".to_string());
-    }
     if request.variation_axes.is_some() && !kind.is_variable {
         return Err(CffError::VariationRejectedForStaticInput.to_string());
     }
 
-    subset_otf_with_legacy_backend(OtfSubsetRequest {
-        input_path: &request.input_path,
-        output_path: &request.output_path,
-        text,
-        variation_axes: request.variation_axes.as_deref(),
-    })
-    .map_err(|error| error.to_string())
-}
-
-fn is_otf_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("otf"))
+    let _ = text;
+    Err(CffError::SubsetDeferredToPhase3.to_string())
 }
 
 fn reject_unsupported_extra_blocks(

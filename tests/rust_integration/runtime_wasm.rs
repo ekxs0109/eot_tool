@@ -239,17 +239,36 @@ fn runtime_bridge_rejects_static_cff_conversion_until_phase3() {
 }
 
 #[test]
-fn wasm_bridge_rejects_static_cff_conversion_until_phase3() {
+fn runtime_bridge_rejects_fntdata_output_until_phase2() {
+    let error = convert_otf_to_embedded_font(ConvertRequest {
+        input_path: &fixture("testdata/cff-static.otf"),
+        output_kind: OutputKind::Fntdata,
+        variation_axes: None,
+    })
+    .expect_err(".fntdata output should stay outside the Phase 1 runtime boundary");
+
+    assert_eq!(
+        error,
+        RuntimeError::Backend(
+            "PowerPoint-compatible .fntdata output remains Phase 2-owned; use the archived native binary for compatibility flows".to_string()
+        )
+    );
+}
+
+#[test]
+fn wasm_bridge_rejects_fntdata_output_until_phase2() {
     let error = wasm_convert_otf_to_embedded_font(ConvertRequest {
         input_path: &fixture("testdata/cff-static.otf"),
         output_kind: OutputKind::Fntdata,
         variation_axes: None,
     })
-    .expect_err("static CFF conversion should stay outside the Phase 1 wasm boundary");
+    .expect_err(".fntdata output should stay outside the Phase 1 wasm boundary");
 
     assert_eq!(
         error,
-        RuntimeError::Cff(fonttool_runtime::CffError::EncodeDeferredToPhase3)
+        RuntimeError::Backend(
+            "PowerPoint-compatible .fntdata output remains Phase 2-owned; use the archived native binary for compatibility flows".to_string()
+        )
     );
 }
 
@@ -257,7 +276,7 @@ fn wasm_bridge_rejects_static_cff_conversion_until_phase3() {
 fn runtime_bridge_rejects_variation_axes_for_static_input() {
     let error = convert_otf_to_embedded_font(ConvertRequest {
         input_path: &fixture("testdata/cff-static.otf"),
-        output_kind: OutputKind::Fntdata,
+        output_kind: OutputKind::Eot,
         variation_axes: Some("wght=700"),
     })
     .expect_err("static cff input should reject variation request");
@@ -272,7 +291,7 @@ fn runtime_bridge_rejects_variation_axes_for_static_input() {
 fn wasm_bridge_surfaces_runtime_validation_errors() {
     let error = wasm_convert_otf_to_embedded_font(ConvertRequest {
         input_path: &fixture("testdata/cff-static.otf"),
-        output_kind: OutputKind::Fntdata,
+        output_kind: OutputKind::Eot,
         variation_axes: Some("wght=700"),
     })
     .expect_err("wasm bridge should surface runtime validation errors");
@@ -287,7 +306,7 @@ fn wasm_bridge_surfaces_runtime_validation_errors() {
 fn runtime_bridge_rejects_variable_font_conversion_for_now() {
     let error = convert_otf_to_embedded_font(ConvertRequest {
         input_path: &fixture("testdata/cff2-variable.otf"),
-        output_kind: OutputKind::Fntdata,
+        output_kind: OutputKind::Eot,
         variation_axes: Some("wght=700"),
     })
     .expect_err("variable conversion should stay explicitly unsupported");
@@ -304,7 +323,7 @@ fn runtime_bridge_rejects_variable_font_conversion_for_now() {
 fn wasm_bridge_rejects_variable_font_conversion_for_now() {
     let error = wasm_convert_otf_to_embedded_font(ConvertRequest {
         input_path: &fixture("testdata/cff2-variable.otf"),
-        output_kind: OutputKind::Fntdata,
+        output_kind: OutputKind::Eot,
         variation_axes: Some("wght=700"),
     })
     .expect_err("variable conversion should stay explicitly unsupported");
