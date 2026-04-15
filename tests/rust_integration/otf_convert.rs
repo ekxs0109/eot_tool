@@ -43,6 +43,13 @@ fn read_u64_be(bytes: &[u8], offset: usize) -> u64 {
     ])
 }
 
+fn normalized_head_bytes(head: &[u8]) -> Vec<u8> {
+    let mut normalized = head.to_vec();
+    normalized[8..12].fill(0);
+    normalized[20..36].fill(0);
+    normalized
+}
+
 #[test]
 fn encode_static_cff_input_to_eot() {
     let roundtrip = support::encode_static_cff_to_roundtrip_ttf();
@@ -87,6 +94,61 @@ fn roundtrip_otf_fixture_writes_nonzero_head_checksum_and_timestamps() {
     assert_ne!(checksum_adjustment, 0);
     assert_ne!(created, 0);
     assert_eq!(created, modified);
+}
+
+#[test]
+fn roundtrip_otf_fixture_matches_fonttools_resave_except_for_head_serialization() {
+    let roundtrip = support::encode_otf_to_roundtrip_ttf(
+        "testdata/aipptfonts/\u{9999}\u{8549}Plus__20220301185701917366.otf",
+    );
+    let fonttools_saved = support::temp_ttf();
+    support::save_ttf_with_fonttools(roundtrip.font_path(), &fonttools_saved);
+    let parity = support::run_fonttools_parity(roundtrip.font_path(), &fonttools_saved);
+    let roundtrip_bytes = fs::read(roundtrip.font_path()).expect("roundtrip font should be readable");
+    let fonttools_bytes = fs::read(&fonttools_saved).expect("fonttools-saved font should be readable");
+    let roundtrip_sfnt = load_sfnt(&roundtrip_bytes).expect("roundtrip font should parse");
+    let fonttools_sfnt = load_sfnt(&fonttools_bytes).expect("fonttools-saved font should parse");
+    let stdout = String::from_utf8_lossy(&parity.stdout);
+    let stderr = String::from_utf8_lossy(&parity.stderr);
+    let diff_lines: Vec<&str> = stdout.lines().filter(|line| line.starts_with("  ")).collect();
+    let roundtrip_head = table_bytes(&roundtrip_sfnt, TAG_HEAD, "roundtrip head");
+    let fonttools_head = table_bytes(&fonttools_sfnt, TAG_HEAD, "fonttools head");
+
+    let _ = fs::remove_file(fonttools_saved);
+
+    assert!(
+        parity.status.code() == Some(1),
+        "expected fonttools parity to report the known residual, stdout: {}, stderr: {}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stderr.trim().is_empty(),
+        "expected no stderr from parity script, stderr: {}",
+        stderr
+    );
+    assert!(
+        !stdout.contains("only in left") && !stdout.contains("only in right"),
+        "expected no missing or extra tables, stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("different tables (1):"),
+        "expected exactly one differing table, stdout: {stdout}"
+    );
+    assert_eq!(diff_lines.len(), 1, "expected a single head diff, stdout: {stdout}");
+    assert!(
+        diff_lines[0].starts_with("  head:"),
+        "expected the fonttools residual to remain limited to the head table, stdout: {stdout}"
+    );
+    assert_ne!(
+        roundtrip_head, fonttools_head,
+        "expected the raw head tables to differ before normalization"
+    );
+    assert_eq!(
+        normalized_head_bytes(roundtrip_head),
+        normalized_head_bytes(fonttools_head),
+        "expected head residuals to be confined to checksum/timestamp serialization fields"
+    );
 }
 
 #[test]

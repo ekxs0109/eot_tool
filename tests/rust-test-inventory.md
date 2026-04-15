@@ -35,7 +35,7 @@ Status legend:
 | `tests/test_cvt_codec.c` | deferred | future `fonttool-mtx` tests | `cvt` codec surface is not yet a Rust-owned public module. |
 | `tests/test_glyf_codec.c` | deferred | future `crates/fonttool-glyf` tests | Encode path exists, but detailed codec vectors are not yet ported. |
 | `tests/test_hdmx_codec.c` | deferred | future `fonttool-mtx`/integration tests | HDMX preservation/drop semantics still partly native-owned. |
-| `tests/test_otf_parity.cc` | partial | `tests/rust_integration/otf_convert.rs` + future parity helpers | Rust now covers static OTF roundtrip field checks for `post`, `hhea`, and serialized `head` metadata, but fonttools byte-parity and runtime-mode determinism checks remain native-only. |
+| `tests/test_otf_parity.cc` | partial | `tests/rust_integration/otf_convert.rs` + `tests/test_fonttools_parity.py` | Rust now covers the static OTF roundtrip field checks for `post`, `hhea`, and normalized `head` checksum/timestamp parity, plus the current `fonttools` parity invocation with the documented head-only residual; runtime-mode determinism remains native-only. |
 | `tests/test_parallel_runtime.cc` | deferred | future `crates/fonttool-runtime` tests | Current Rust runtime slice only exposes static mode/diagnostics defaults, not full task scheduling semantics. |
 | `tests/test_sfnt_subset.c` | partial | `tests/rust_integration/subset.rs` + future `fonttool-subset` tests | Rust subset planning is covered, but many native subset invariants remain. |
 | `tests/test_subset_args.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + future `fonttool-cli` integration tests | Core subset argument guardrails are now covered for current Rust parser contract; additional legacy edge-case parity remains to be migrated. |

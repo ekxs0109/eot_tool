@@ -48,6 +48,19 @@ where
         .expect("fonttool binary should launch")
 }
 
+#[allow(dead_code)]
+pub fn run_python<I, S>(args: I) -> Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    Command::new(workspace_root().join("build/venv/bin/python"))
+        .args(args)
+        .current_dir(workspace_root())
+        .output()
+        .expect("python binary should launch")
+}
+
 fn run_legacy_fonttool<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
@@ -72,6 +85,34 @@ pub fn decode_with_legacy(input: &Path, output: &Path) {
         "expected legacy decode to succeed, stderr: {}",
         String::from_utf8_lossy(&decode.stderr)
     );
+}
+
+#[allow(dead_code)]
+pub fn save_ttf_with_fonttools(input: &Path, output: &Path) {
+    let save = run_python([
+        OsStr::new("-c"),
+        OsStr::new(
+            "from fontTools.ttLib import TTFont; import sys; \
+             font = TTFont(sys.argv[1]); font.save(sys.argv[2]); font.close()",
+        ),
+        input.as_os_str(),
+        output.as_os_str(),
+    ]);
+
+    assert!(
+        save.status.success(),
+        "expected fonttools save to succeed, stderr: {}",
+        String::from_utf8_lossy(&save.stderr)
+    );
+}
+
+#[allow(dead_code)]
+pub fn run_fonttools_parity(left: &Path, right: &Path) -> Output {
+    run_python([
+        OsStr::new("tests/test_fonttools_parity.py"),
+        left.as_os_str(),
+        right.as_os_str(),
+    ])
 }
 
 pub struct StaticCffRoundtrip {
