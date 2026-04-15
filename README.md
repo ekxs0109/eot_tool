@@ -35,6 +35,9 @@ See [legacy/README.md](legacy/README.md) for the archived native-harness
 notes.
 
 Migration tracking lives in `tests/rust-test-inventory.md`.
+The file-by-file Phase 1 ownership map for `parallel_runtime`,
+`table_policy`, and the remaining shellout/deferred adapter callsites lives in
+`docs/superpowers/specs/2026-04-15-fonttool-support-matrix.md`.
 
 ## Python Verification
 

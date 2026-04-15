@@ -9,6 +9,9 @@ Deletion/archival source of truth:
   authoritative Phase 0 matrix for deciding whether a remaining native surface
   must be replaced, can stay unsupported, or should move to archive-only status
   before `src/` deletion.
+- The `Explicit Phase 1 Shared-Support Ownership Map` section in that document
+  is the file-by-file source of truth for `parallel_runtime`,
+  `table_policy`, and the remaining shellout/deferred adapter callsites.
 - Use this inventory to track test migration progress, but do not use it by
   itself to decide the support boundary.
 
