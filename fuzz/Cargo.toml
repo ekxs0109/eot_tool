@@ -1,0 +1,53 @@
+[workspace]
+
+[package]
+name = "fonttool-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.fonttool-cff]
+path = "../crates/fonttool-cff"
+
+[dependencies.fonttool-eot]
+path = "../crates/fonttool-eot"
+
+[dependencies.fonttool-mtx]
+path = "../crates/fonttool-mtx"
+
+[dependencies.fonttool-sfnt]
+path = "../crates/fonttool-sfnt"
+
+[[bin]]
+name = "eot_header"
+path = "fuzz_targets/eot_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mtx_container"
+path = "fuzz_targets/mtx_container.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sfnt_directory"
+path = "fuzz_targets/sfnt_directory.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cff"
+path = "fuzz_targets/cff.rs"
+test = false
+doc = false
+bench = false

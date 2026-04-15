@@ -46,3 +46,7 @@ path = "../../tests/rust_integration/runtime_wasm.rs"
 [[test]]
 name = "validation"
 path = "../../tests/rust_integration/validation.rs"
+
+[[test]]
+name = "crash_resistance"
+path = "../../tests/rust_integration/crash_resistance.rs"
