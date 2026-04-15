@@ -22,6 +22,13 @@ make verify-decode
 make verify-roundtrip
 ```
 
+Fuzz smoke build:
+
+```bash
+cd fuzz
+PATH="/opt/homebrew/opt/rustup/bin:$PATH" cargo +nightly fuzz build
+```
+
 Rust is the primary test harness for the migrated decode, encode, subset,
 OTF/CFF conversion, and Rust-facing runtime/WASM bridge slices. The legacy
 native harness is still required for the not-yet-migrated runtime scheduler,
