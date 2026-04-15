@@ -12,11 +12,11 @@
   "scripts": {
     "build": "turbo run build",
     "build:benchmark-web": "turbo run build --filter=benchmark-web",
-    "build:wasm": "make wasm",
+    "build:wasm": "pnpm --filter fonttool-wasm build",
     "dev:benchmark-web": "pnpm --filter benchmark-web dev",
     "pack-check": "turbo run pack-check",
     "test": "turbo run test",
-    "verify:wasm": "make verify-wasm-artifacts"
+    "verify:wasm": "bash tests/verify_wasm_artifacts.sh"
   },
   "devDependencies": {
     "turbo": "2.9.6"

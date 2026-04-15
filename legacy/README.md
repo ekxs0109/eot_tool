@@ -1,26 +1,14 @@
-# Legacy Native Build Notes
+# Legacy Retirement Notes
 
-This directory records the native C/C++ build and test surface that remains in
-the tree for reference and compatibility.
+The legacy native `src/` tree, Makefile, and native C/C++ harness were removed
+from this repository on 2026-04-15.
 
-## What Is Retained
+What remains:
 
-- `src/` contains the original native implementation.
-- `Makefile` still builds and tests the native harness for historical coverage.
-- Some Rust crates call into legacy-native adapters while the remaining slices
-  are migrated.
+- historical migration context in `docs/superpowers/plans/`
+- the support boundary and ownership map in
+  `docs/superpowers/specs/2026-04-15-fonttool-support-matrix.md`
+- the historical test-to-Rust mapping in `tests/rust-test-inventory.md`
 
-## How To Use It
-
-- Prefer the Rust workspace for day-to-day build and test work:
-  `cargo test --workspace`
-- Use the native Makefile only when you need compatibility checks, parity
-  confirmation, or to compare behavior with the archived implementation.
-- The Makefile emits a deprecation warning at parse time so direct native
-  invocations are clearly marked as compatibility-only.
-
-## What This Means
-
-The native implementation is still useful as reference coverage, but it is no
-longer the primary entrypoint for the repository. New work should target the
-Rust workspace unless a change explicitly depends on the legacy surface.
+Day-to-day build, test, and packaging work should use the Rust workspace and
+package scripts only.

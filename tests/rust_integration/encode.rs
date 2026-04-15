@@ -237,7 +237,7 @@ fn encode_ttf_excludes_vdmx_from_block1_and_roundtrip_output() {
         "block1 should exclude VDMX"
     );
 
-    support::decode_with_legacy(&output_path, &decoded_path);
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
     let roundtrip_bytes = fs::read(&decoded_path).expect("roundtrip sfnt should be readable");
     let roundtrip_font = load_sfnt(&roundtrip_bytes).expect("roundtrip sfnt should parse");
     assert!(
@@ -285,7 +285,7 @@ fn encode_ttf_roundtrip_preserves_hdmx_table_when_present() {
     fs::write(&source_path, &source_bytes).expect("synthetic font should be writable");
 
     run_encode(&source_path, &output_path);
-    support::decode_with_legacy(&output_path, &decoded_path);
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
 
     let source_font = load_sfnt(&source_bytes).expect("synthetic source font should parse");
     let roundtrip_bytes = fs::read(&decoded_path).expect("roundtrip font should be readable");

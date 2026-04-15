@@ -1,11 +1,9 @@
-import { access, copyFile, mkdir, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.resolve(scriptDir, "..");
-const repoRoot = path.resolve(packageDir, "..", "..");
-const buildDir = path.join(repoRoot, "build");
 const vendorDir = path.join(packageDir, "vendor", "wasm");
 
 const REQUIRED_ARTIFACTS = [
@@ -32,51 +30,31 @@ async function listMatchingFiles(dir, pattern) {
   }
 }
 
-async function assertExists(filePath) {
-  try {
-    await access(filePath);
-  } catch (error) {
-    if (error && error.code === "ENOENT") {
-      throw new Error(`missing required build artifact: ${path.relative(repoRoot, filePath)}`);
-    }
-    throw error;
-  }
-}
-
 async function copyArtifacts() {
   await mkdir(vendorDir, { recursive: true });
-
-  const workerArtifacts = await listMatchingFiles(
-    buildDir,
-    OPTIONAL_PTHREAD_WORKER_PATTERN
-  );
-
-  const stagedCandidates = [
-    ...REQUIRED_ARTIFACTS,
-    ...(await listMatchingFiles(vendorDir, OPTIONAL_PTHREAD_WORKER_PATTERN))
-  ];
-
-  for (const fileName of stagedCandidates) {
-    await rm(path.join(vendorDir, fileName), { force: true });
+  const vendorFiles = await readdir(vendorDir);
+  const present = vendorFiles.filter((fileName) => REQUIRED_ARTIFACTS.includes(fileName));
+  if (present.length !== REQUIRED_ARTIFACTS.length) {
+    const missing = REQUIRED_ARTIFACTS.filter((fileName) => !present.includes(fileName));
+    throw new Error(
+      `missing required vendored WASM artifact(s): ${missing.join(", ")}`
+    );
   }
 
   for (const fileName of REQUIRED_ARTIFACTS) {
-    const sourcePath = path.join(buildDir, fileName);
-    await assertExists(sourcePath);
-    const targetPath = path.join(vendorDir, fileName);
-    await copyFile(sourcePath, targetPath);
-    console.log(`staged ${path.relative(repoRoot, targetPath)}`);
+    console.log(`using vendored artifact ${path.join("packages/fonttool-wasm/vendor/wasm", fileName)}`);
+  }
+
+  const workerArtifacts = await listMatchingFiles(vendorDir, OPTIONAL_PTHREAD_WORKER_PATTERN);
+  if (workerArtifacts.length === 0) {
+    console.log("optional pthread worker helper not emitted by this toolchain");
+    return;
   }
 
   for (const fileName of workerArtifacts) {
-    const sourcePath = path.join(buildDir, fileName);
-    const targetPath = path.join(vendorDir, fileName);
-    await copyFile(sourcePath, targetPath);
-    console.log(`staged ${path.relative(repoRoot, targetPath)}`);
-  }
-
-  if (workerArtifacts.length === 0) {
-    console.log("optional pthread worker helper not emitted by this toolchain");
+    console.log(
+      `using vendored pthread worker helper ${path.join("packages/fonttool-wasm/vendor/wasm", fileName)}`
+    );
   }
 }
 

@@ -1,8 +1,11 @@
 # eot_tool
 
-Standalone Rust-first font toolchain for MTX-compressed EOT decode/encode,
-with archived native compatibility paths for subset execution and
-`OTF(CFF/CFF2)` conversion.
+Standalone Rust-first font toolchain for MTX-compressed EOT decode, TrueType
+encode, non-OTF glyph-id subset, and packaged WASM runtime delivery.
+
+The legacy native `src/` tree and Makefile pipeline were retired on
+2026-04-15. The Rust workspace, package scripts, and vendored WASM artifacts
+are now the only supported repository entrypoints.
 
 ## Rust-First Verification
 
@@ -27,17 +30,11 @@ cd fuzz
 PATH="$(brew --prefix rustup)/bin:$PATH" rustup run nightly cargo fuzz build
 ```
 
-Rust is the primary build and test path. The legacy native harness remains in
-tree for compatibility and reference coverage, but it is no longer the default
-entrypoint.
-
-See [legacy/README.md](legacy/README.md) for the archived native-harness
-notes.
-
 Migration tracking lives in `tests/rust-test-inventory.md`.
-The file-by-file Phase 1 ownership map for `parallel_runtime`,
-`table_policy`, and the remaining shellout/deferred adapter callsites lives in
-`docs/superpowers/specs/2026-04-15-fonttool-support-matrix.md`.
+The file-by-file ownership map for supported and explicitly deferred behavior
+lives in `docs/superpowers/specs/2026-04-15-fonttool-support-matrix.md`.
+
+Historical retirement notes live in [legacy/README.md](legacy/README.md).
 
 ## Python Verification
 
@@ -46,11 +43,9 @@ python3 -m venv build/venv
 build/venv/bin/python -m pip install -r tests/requirements.txt
 ```
 
-Python tooling is verification/reference-only. The Rust workspace primarily
-owns the migrated decode, TrueType encode, and Rust-facing runtime/WASM
-diagnostics and contract slices. Subset execution and `OTF(CFF/CFF2)`
-conversion remain archived native compatibility paths until later rewrite
-phases.
+Python tooling is verification/reference-only. The Rust workspace owns the
+supported decode, TrueType encode, non-OTF subset, and Rust-facing runtime/WASM
+contract surfaces.
 
 Stable verifier entrypoints:
 
@@ -62,49 +57,34 @@ build/venv/bin/python tests/compare_fonts.py \
 ```
 
 If you run the scripts through another Python interpreter, they will exit with a
-clear dependency error when `fontTools` is missing instead of crashing on import.
-
-Legacy compatibility note: the sections below still include `./build/fonttool`,
-`make verify-*`, and a few `make test TESTCASE=...` examples because those
-paths remain useful for parity checks. Treat them as archived compatibility
-commands unless a section explicitly says otherwise.
+clear dependency error when `fontTools` is missing instead of crashing on
+import.
 
 ## Decode
 
 `fonttool decode <input.eot|input.fntdata> <output.ttf>` is currently supported
 for the Rust-owned decode slice where the embedded MTX payload decodes through
-block1 without requiring non-empty extra MTX blocks. Within that supported
+`block1` without requiring non-empty extra MTX blocks. Within that supported
 slice, it parses the EOT header, decodes the MTX payload, transparently removes
 PowerPoint-style XOR obfuscation when the `0x10000000` flag is set, rebuilds an
 SFNT, and writes a TTF.
 
-Reproducible manual check recorded on 2026-04-08:
+Smoke check:
 
 ```bash
-./build/fonttool decode testdata/wingdings3.eot build/out/wingdings3.ttf
-Decoded testdata/wingdings3.eot -> build/out/wingdings3.ttf (32120 bytes)
-
-ls -lh build/out/wingdings3.ttf
--rw-r--r--  1 ... 31K ... build/out/wingdings3.ttf
-
-build/venv/bin/python tests/verify_font.py build/out/wingdings3.ttf
-font structure verified
+cargo run -p fonttool-cli --bin fonttool -- \
+  decode testdata/font1.fntdata build/out/font1.rust-smoke.ttf
+build/venv/bin/python tests/verify_font.py build/out/font1.rust-smoke.ttf
 ```
 
-Make target:
-
-```bash
-make verify-decode
-```
+The standalone Rust `decode` command still keeps its narrower support boundary.
+The wider multi-block MTX bridge currently exists for subset input
+reconstruction, not for general decode.
 
 ## Encode / Roundtrip
 
-`fonttool encode <input.ttf> <output.eot>` emits an MTX-compressed EOT.
-
-The Rust CLI currently treats PowerPoint-compatible `.fntdata` output as
-Phase 2-owned work. The archived native compatibility binary `./build/fonttool`
-still provides that path; the Rust-owned encode boundary does not currently set
-the PowerPoint XOR flag or apply the `0x50` obfuscation layer.
+`fonttool encode <input.ttf> <output.eot>` emits an MTX-compressed EOT for the
+supported TrueType path.
 
 ### Runtime Thread Control
 
@@ -114,70 +94,25 @@ the PowerPoint XOR flag or apply the `0x50` obfuscation layer.
 - `EOT_TOOL_THREADS=1`: strict serial mode for debugging/regression checks
 - `EOT_TOOL_THREADS=<N>`: requests `N` worker threads
 
-The Rust CLI currently supports TrueType input in the forward-supported
-boundary. `OTF(CFF/CFF2)` encode and subset commands shown below are archived
-compatibility flows that still require `./build/fonttool`.
+Current supported/unsupported encode boundaries:
 
-OTF/CFF parity check against a reproducible local `fonttools` save (fixture:
-`testdata/aipptfonts/香蕉Plus__20220301185701917366.otf`):
+- TrueType input to `.eot`: supported
+- TrueType input to `.fntdata`: unsupported
+- `OTF(CFF/CFF2)` input: unsupported
 
-```bash
-mkdir -p build/out
-./build/fonttool encode testdata/aipptfonts/香蕉Plus__20220301185701917366.otf build/out/0213-parity.eot
-./build/fonttool decode build/out/0213-parity.eot build/out/0213-fixed.ttf
-build/venv/bin/python -c "from fontTools.ttLib import TTFont; f=TTFont('build/out/0213-fixed.ttf'); f.save('build/out/0213-fonttools-saved.ttf'); f.close()"
-build/venv/bin/python tests/test_fonttools_parity.py \
-  build/out/0213-fixed.ttf \
-  build/out/0213-fonttools-saved.ttf
-```
-
-Current expected residual difference for this comparison is:
-
-- `head`: checksum/timestamp serialization bytes differ
-
-Converged runtime behavior:
+Converged runtime behavior across the supported TrueType path:
 
 - `cvt`: preserved on encode/decode
 - `hdmx`: preserved on encode/decode, including shared trailing advance widths
 - `VDMX`: dropped from the current Rust TrueType encode path
 
-Rust-owned subset support now covers the non-OTF glyph-id path:
-
-- `.eot` / `.fntdata`: `decode -> sfnt subset -> encode`
-- `.ttf`: `sfnt load -> subset -> encode`
-- `.otf`: `native CFF/CFF2 conversion -> subset -> encode`
-
-The supported Rust subset path now accepts `.eot`, `.fntdata`, and `.ttf`
-inputs with `--glyph-ids`, rebuilds the supported subset tables
-(`cmap`, `glyf`, `loca`, `hhea`, `hmtx`, and `maxp`), and emits warnings when
-`HDMX` or `VDMX` are dropped from the subset output. `.fntdata` output stays
-wrapped with the PPT XOR flag so the CLI can preserve the expected container
-shape.
-
-For `.eot` / `.fntdata` input, the Rust subset path now reconstructs a real
-SFNT from the current Rust-encoded multi-block MTX payload (`block1` +
-`block2` + `block3`) before handing the font to HarfBuzz. This support is
-specific to the subset input bridge; the standalone Rust `decode` command still
-keeps its narrower supported surface.
-
-Extra-table behavior across the supported non-OTF subset path is:
-
-- `cmap`: rebuilt for the selected glyph subset
-- `cvt`: retained when present in the decoded/subset SFNT
-- `glyf` / `loca`: rebuilt for the selected glyph subset
-- `hhea` / `hmtx`: rebuilt for the selected glyph subset
-- `hdmx`: dropped during subset with a warning
-- `VDMX`: dropped during subset with a warning
-
-`--keep-gids` depends on HarfBuzz retain-gids support. The native test suite
-covers that behavior explicitly so unsupported builds fail instead of silently
-renumbering glyphs.
-
 Roundtrip verification example:
 
 ```bash
-./build/fonttool encode testdata/OpenSans-Regular.ttf build/out/OpenSans-Regular.eot
-./build/fonttool decode build/out/OpenSans-Regular.eot build/out/OpenSans-Regular.roundtrip.ttf
+cargo run -p fonttool-cli --bin fonttool -- \
+  encode testdata/OpenSans-Regular.ttf build/out/OpenSans-Regular.eot
+cargo run -p fonttool-cli --bin fonttool -- \
+  decode build/out/OpenSans-Regular.eot build/out/OpenSans-Regular.roundtrip.ttf
 build/venv/bin/python tests/compare_fonts.py \
   testdata/OpenSans-Regular.ttf \
   build/out/OpenSans-Regular.roundtrip.ttf
@@ -192,152 +127,94 @@ required tables match exactly
 When `cvt` or `hdmx` exist on both fonts, the same verifier also checks that
 those preserved tables still match byte-for-byte.
 
-PowerPoint-compatible `.fntdata` example:
+## Subset
+
+Rust-owned subset support currently covers the non-OTF glyph-id path:
+
+- `.eot` / `.fntdata`: `decode -> sfnt subset -> encode`
+- `.ttf`: `sfnt load -> subset -> encode`
+- `.otf`: unsupported in the Rust contract
+
+The supported Rust subset path accepts `.eot`, `.fntdata`, and `.ttf` inputs
+with `--glyph-ids`, rebuilds the supported subset tables (`cmap`, `glyf`,
+`loca`, `hhea`, `hmtx`, and `maxp`), and emits warnings when `HDMX` or `VDMX`
+are dropped from the subset output. `.fntdata` output stays wrapped with the
+PPT XOR flag so the CLI can preserve the expected container shape.
+
+For `.eot` / `.fntdata` input, the Rust subset path reconstructs a real SFNT
+from the current Rust-encoded multi-block MTX payload (`block1` + `block2` +
+`block3`) before handing the font to HarfBuzz.
+
+Extra-table behavior across the supported non-OTF subset path is:
+
+- `cmap`: rebuilt for the selected glyph subset
+- `cvt`: retained when present in the decoded/subset SFNT
+- `glyf` / `loca`: rebuilt for the selected glyph subset
+- `hhea` / `hmtx`: rebuilt for the selected glyph subset
+- `hdmx`: dropped during subset with a warning
+- `VDMX`: dropped during subset with a warning
+
+The Rust CLI does not currently support `--text`, `--unicodes`, or
+`--keep-gids` for non-OTF input.
+
+Subset verification example:
 
 ```bash
-./build/fonttool encode testdata/OpenSans-Regular.ttf build/out/OpenSans-Regular.fntdata
-./build/fonttool decode build/out/OpenSans-Regular.fntdata build/out/OpenSans-Regular.fntdata.roundtrip.ttf
-```
-
-Make target:
-
-```bash
-make verify-roundtrip
-```
-
-Archived native-compatibility subset verification example:
-
-```bash
-./build/fonttool subset testdata/wingdings3.eot build/out/wingdings3-subset.eot --glyph-ids 0,1,2
-./build/fonttool decode build/out/wingdings3-subset.eot build/out/wingdings3-subset.ttf
-build/venv/bin/python tests/verify_font.py build/out/wingdings3-subset.ttf
+cargo run -p fonttool-cli --bin fonttool -- \
+  subset testdata/OpenSans-Regular.ttf build/out/OpenSans-Regular.subset.eot --glyph-ids 0,1,2
+cargo run -p fonttool-cli --bin fonttool -- \
+  decode build/out/OpenSans-Regular.subset.eot build/out/OpenSans-Regular.subset.ttf
 build/venv/bin/python tests/compare_fonts.py \
   --require-subset-core-tables \
-  build/out/wingdings3-subset.ttf
+  build/out/OpenSans-Regular.subset.ttf
 ```
 
-Static CFF subset example:
+## OTF/CFF Deferred Boundary
+
+`OTF(CFF/CFF2)` encode, subset, and variable-instance export remain explicitly
+unsupported in the Rust contract. The CLI/runtime/WASM entrypoints surface
+Phase 3-owned errors instead of silently routing through a hidden native
+backend.
+
+## Browser / WASM Runtime
+
+The supported browser/WASM surface is the Rust-owned `fonttool-wasm` package
+plus the vendored runtime artifacts under
+`packages/fonttool-wasm/vendor/wasm`.
+
+Canonical verification entrypoints:
 
 ```bash
-./build/fonttool subset testdata/cff-static.otf build/out/cff-static-subset.eot --text ABC
+pnpm --filter fonttool-wasm build
+pnpm --filter fonttool-wasm test -- --runInBand
+pnpm verify:wasm
 ```
 
-CFF2 instance subset example:
+`pnpm verify:wasm` runs `tests/verify_wasm_artifacts.sh`, which:
 
-```bash
-./build/fonttool subset testdata/cff2-variable.otf build/out/cff2-bold-subset.fntdata \
-  --text ABC --variation wght=700
-```
+- verifies the required vendored single-thread and pthread artifacts exist
+- stages them through the package contract
+- builds the `fonttool-wasm` package entrypoint
+- probes the staged runtimes through the package loader contract
 
-If `--variation` is passed for a non-variable input, the command fails instead
-of silently ignoring the request.
+Expected vendored artifacts:
 
-## CFF2 Instancing
-
-`CFF2` instance export remains an archived/native compatibility path during the
-current rewrite phase. The historical conversion pipeline is:
-
-1. validates the user axis-tag map
-2. clamps to `fvar`
-3. applies `avar`
-4. resolves a full ordered axis location
-5. instantiates outlines/metrics before `cu2qu` and TT rebuild
-
-Variation tables such as `CFF2`, `fvar`, `avar`, `HVAR`, `MVAR`, `VVAR`,
-`cvar`, and `gvar` were historically dropped from the rebuilt embedded-font
-output in that archived compatibility flow.
-
-## Conversion Tuning
-
-The native cubic-to-quadratic conversion uses a conservative default tolerance.
-`cu2quMaxError` is treated as an advanced option in the conversion modules and
-is intentionally not auto-relaxed on failure.
-
-## Browser / WASM API
-
-This C buffer ABI is currently an archived/native compatibility surface. The
-Rust-facing runtime/WASM crates are the primary path for new Phase 1 work, but
-the `src/wasm_api.{h,cc}` exports still define the supported C interface until
-later retirement phases replace them.
-
-The browser-oriented buffer API is exported from `src/wasm_api.{h,cc}`:
-
-```c
-const char *wasm_runtime_thread_mode(void);
-
-eot_status_t wasm_convert_otf_to_embedded_font(const uint8_t *input,
-                                               size_t input_size,
-                                               const char *output_kind,
-                                               const char *variation_axes,
-                                               wasm_buffer_t *out);
-```
-
-- `wasm_runtime_thread_mode()`: compile-time build metadata string, either
-  `"single-thread"` or `"pthreads"`
-- `input` / `input_size`: memory buffer containing `.ttf` or `.otf`
-- `output_kind`: `"eot"` or `"fntdata"`
-- `variation_axes`: optional axis-tag map such as `"wght=700"`
-- `out`: owned output buffer; release it with `wasm_buffer_destroy(...)`
-
-Focused native coverage:
-
-```bash
-make test TESTCASE=test_wasm_runtime_mode_constant_is_exposed
-make test TESTCASE=test_browser_wasm_api_converts_cff2_instance
-```
-
-Current Rust-facing bridge coverage for the staged rewrite:
-
-```bash
-cargo test -p fonttool-runtime
-cargo test -p fonttool-wasm
-cargo test --test runtime_wasm
-```
-
-These Rust tests cover the staged `fonttool-runtime` / `fonttool-wasm` API
-surface, Rust-owned scheduling semantics, and the explicit unsupported boundary
-for deferred `OTF(CFF/CFF2)` conversion. They do not yet replace the legacy
-native WASM buffer ABI checks or the native-only variable-font conversion
-success path.
-
-The Makefile exposes explicit Emscripten build variants:
-
-```bash
-make wasm
-make wasm-single
-make wasm-pthreads
-make verify-wasm-artifacts
-```
-
-Expected artifacts under `build/`:
-
-- `fonttool-wasm.js` and `fonttool-wasm.wasm`: baseline single-thread build
-- `fonttool-wasm-pthreads.js` and `fonttool-wasm-pthreads.wasm`: pthreads build
-- optional `fonttool-wasm-pthreads*.worker.js`: toolchain-emitted pthread worker
-  helper, depending on the Emscripten version and flags in use
+- `fonttool-wasm.js` and `fonttool-wasm.wasm`: baseline single-thread runtime
+- `fonttool-wasm-pthreads.js` and `fonttool-wasm-pthreads.wasm`: pthread
+  runtime
+- optional `fonttool-wasm-pthreads*.worker.js`: toolchain-emitted worker helper
 
 These are separate outputs on purpose. Host code should pick the artifact that
 matches the deployment environment instead of expecting one binary to toggle
 thread support at runtime.
 
-Artifact verification is wired into the build flow:
-
-```bash
-make verify-wasm-artifacts
-```
-
-That target builds both WASM outputs first, then runs
-`tests/verify_wasm_artifacts.sh` to check required files and, when `node` is
-available, load each generated JS module and verify that
-`wasm_runtime_thread_mode()` reports the expected exact mode string.
-
-Browser deployment notes for `make wasm-pthreads`:
+Browser deployment notes for the pthread variant:
 
 - requires `SharedArrayBuffer`, which in browsers usually means
   cross-origin-isolated delivery
 - typical headers are `Cross-Origin-Opener-Policy: same-origin` and
   `Cross-Origin-Embedder-Policy: require-corp`
-- the single-thread build remains the compatibility fallback when those
+- the single-thread runtime remains the compatibility fallback when those
   constraints are not available
 
 ## Benchmark Web App
@@ -345,8 +222,7 @@ Browser deployment notes for `make wasm-pthreads`:
 The benchmark scaffold lives in `apps/benchmark-web` and uses Vite + React +
 TypeScript with a shadcn-compatible project surface. It is wired to the
 workspace `fonttool-wasm` package, with runtime loading isolated under
-`src/lib/fonttool/` instead of UI components, and keeps the full shadcn UI
-composition work for a later task.
+`src/lib/fonttool/` instead of UI components.
 
 Install workspace dependencies once from the repo root:
 
@@ -383,11 +259,6 @@ npm run test:node-smoke --workspace fonttool-wasm
 node packages/fonttool-wasm/scripts/pack-check.mjs
 ```
 
-The current scaffold is intentionally minimal. It establishes the app package,
-shadcn-compatible aliases/utilities, runtime boundary, benchmark-oriented
-component structure, and a clean build target without starting the full UI
-composition or benchmark polish work.
-
 ## Swift CoreText Validation
 
 On macOS, the formal Rust-first CoreText acceptance check is:
@@ -412,21 +283,12 @@ Expected output:
 coretext font accepted
 ```
 
-This complements the Python verifier entrypoint while keeping the Swift
-CoreText probe as a standalone manual diagnostic when needed.
-
 ## Fixtures
 
-```bash
-make fixtures
-```
-
-By default this copies the workspace-root `font2.fntdata` into
-`eot_tool/testdata/wingdings3.eot`, with paths resolved relative to this
-Makefile, and normalizes the fixture mode to non-executable.
-
-Override the source path when needed:
+Recreate the `wingdings3.eot` fixture from a local `font2.fntdata` copy when
+needed:
 
 ```bash
-make fixtures FIXTURE_SOURCE=/path/to/font2.fntdata
+cp /path/to/font2.fntdata testdata/wingdings3.eot
+chmod 0644 testdata/wingdings3.eot
 ```
