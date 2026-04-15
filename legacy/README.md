@@ -16,6 +16,8 @@ the tree for reference and compatibility.
   `cargo test --workspace`
 - Use the native Makefile only when you need compatibility checks, parity
   confirmation, or to compare behavior with the archived implementation.
+- The Makefile emits a deprecation warning at parse time so direct native
+  invocations are clearly marked as compatibility-only.
 
 ## What This Means
 

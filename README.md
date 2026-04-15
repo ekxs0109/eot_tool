@@ -3,17 +3,17 @@
 Standalone Rust-first font toolchain for MTX-compressed EOT decode/encode,
 HarfBuzz-backed subset, and native `OTF(CFF/CFF2)` conversion.
 
-## Build
+## Rust-First Verification
+
+Use the Rust workspace first. On macOS, include the Swift validation step.
 
 ```bash
+cargo build --workspace
 cargo test --workspace
 cargo run -p fonttool-cli --bin fonttool -- --help
-```
-
-## Test
-
-```bash
 cargo run -p fonttool-cli --bin fonttool -- decode testdata/font1.fntdata build/out/font1.rust-smoke.otf
+build/venv/bin/python tests/verify_font.py testdata/OpenSans-Regular.ttf
+swift run --package-path tests/macos-swift FonttoolCoreTextProbe testdata/OpenSans-Regular.ttf
 ```
 
 Fuzz smoke build (`fuzz/rust-toolchain.toml` pins nightly; when Homebrew's Rust
@@ -40,9 +40,10 @@ python3 -m venv build/venv
 build/venv/bin/python -m pip install -r tests/requirements.txt
 ```
 
-Python tooling is verification/reference-only. The Rust workspace owns the
-migrated decode, encode, subset, OTF/CFF conversion, and Rust-facing runtime
-and WASM bridge slices.
+Python tooling is verification/reference-only. The Rust workspace primarily
+owns the migrated decode, encode, subset, OTF/CFF conversion, and
+Rust-facing runtime and WASM bridge slices, while a few adapter-backed paths
+still delegate to the archived native backend.
 
 Stable verifier entrypoints:
 
@@ -55,6 +56,11 @@ build/venv/bin/python tests/compare_fonts.py \
 
 If you run the scripts through another Python interpreter, they will exit with a
 clear dependency error when `fontTools` is missing instead of crashing on import.
+
+Legacy compatibility note: the sections below still include `./build/fonttool`,
+`make verify-*`, and a few `make test TESTCASE=...` examples because those
+paths remain useful for parity checks. Treat them as archived compatibility
+commands unless a section explicitly says otherwise.
 
 ## Decode
 
@@ -258,9 +264,9 @@ cargo test --test runtime_wasm
 ```
 
 These Rust tests cover the staged `fonttool-runtime` / `fonttool-wasm` API
-surface and conversion bridge. They do not yet replace the legacy native WASM
-buffer ABI checks, variable-font conversion success path, or the full
-parallel-runtime diagnostics behavior.
+surface and the adapter-backed conversion bridge. They do not yet replace the
+legacy native WASM buffer ABI checks, variable-font conversion success path, or
+the full parallel-runtime diagnostics behavior.
 
 The Makefile exposes explicit Emscripten build variants:
 
@@ -365,8 +371,8 @@ coretext font accepted
 ```
 
 This is a first-class validation entrypoint for macOS acceptance. It complements
-the Rust and Python validation flow; it does not yet retire all legacy native
-acceptance coverage by itself.
+the Rust and Python validation flow, while some legacy native acceptance
+coverage still remains in place for parity and reference checks.
 
 ## Fixtures
 
