@@ -316,6 +316,10 @@ Browser deployment notes for `make wasm-pthreads`:
 
 - requires `SharedArrayBuffer`, which in browsers usually means
   cross-origin-isolated delivery
+- typical headers are `Cross-Origin-Opener-Policy: same-origin` and
+  `Cross-Origin-Embedder-Policy: require-corp`
+- the single-thread build remains the compatibility fallback when those
+  constraints are not available
 
 ## Benchmark Web App
 
@@ -364,10 +368,6 @@ The current scaffold is intentionally minimal. It establishes the app package,
 shadcn-compatible aliases/utilities, runtime boundary, benchmark-oriented
 component structure, and a clean build target without starting the full UI
 composition or benchmark polish work.
-- typical headers are `Cross-Origin-Opener-Policy: same-origin` and
-  `Cross-Origin-Embedder-Policy: require-corp`
-- the single-thread build remains the compatibility fallback when those
-  constraints are not available
 
 ## Swift CoreText Validation
 

@@ -34,11 +34,12 @@ Status legend:
 | `tests/test_sfnt_writer.c` | covered | `crates/fonttool-sfnt/tests/sfnt_serialize.rs` | Rust now covers directory structure, alignment/padding, sorting, search-range fields, OTTO preservation, checksum calculation, and `head` checksum-adjustment behavior. |
 | `tests/test_otf_convert.cc` | partial | `tests/rust_integration/otf_convert.rs` | Rust now covers the explicit Phase 3 boundary for static CFF encode, parity-fixture OTF encode, and variable CFF2 subset requests. Successful OTF conversion/subset flows remain native-only compatibility paths. |
 | `tests/test_coretext_acceptance.c` | covered | `tests/rust_integration/validation.rs` + `tests/macos-swift/...` | macOS Rust validation now decodes the supported `testdata/font1.fntdata` fixture through the Rust CLI path and invokes the Swift CoreText probe on the produced SFNT. Exact legacy fixture parity remains archived-only. |
+| `tests/test_table_policy.c` | covered | `crates/fonttool-subset` tests | Rust now owns the supported table-policy classification matrix that the legacy test covered, with adjacent Rust tests also proving subset output drop behavior that reuses the same boundary. |
 | `tests/test_wasm_api.cc` | partial | `tests/rust_integration/runtime_wasm.rs` | Rust-facing runtime/WASM bridge shape is covered, including Rust-owned scheduling semantics and the explicit unsupported boundary for deferred OTF conversion. Native buffer ABI and variable-font conversion success remain native-only. |
 
 ## Partially Covered Or Deferred
 
-| Legacy test file | Status | Planned Rust destination | Reason |
+| Legacy test file | Status | Current/Future Rust destination | Reason |
 | --- | --- | --- | --- |
 | `tests/test_cff_reader.cc` | partial | `crates/fonttool-cff` tests | Rust OTF inspection exists, but detailed reader parity is still native. |
 | `tests/test_cff_variation.cc` | partial | `tests/rust_integration/otf_convert.rs` + future `fonttool-cff` tests | Variation rejection and the explicit Phase 3 boundary are represented today. Successful instance export remains native-only. |
@@ -51,7 +52,6 @@ Status legend:
 | `tests/test_parallel_runtime.cc` | partial | `crates/fonttool-runtime` tests + `tests/rust_integration/runtime_wasm.rs` | Rust now covers requested/effective thread counts, mode resolution, idle diagnostics, and lowest-index failure ordering for the Rust-facing runtime/WASM crates. Native C ABI/export parity remains legacy-only. |
 | `tests/test_sfnt_subset.c` | partial | `tests/rust_integration/subset.rs` + future `fonttool-subset` tests | Rust now covers the explicit Phase 2 boundary for non-OTF subset execution. Native subset planning and rebuild invariants remain legacy-only until later phases add direct Rust coverage. |
 | `tests/test_subset_args.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + future `fonttool-cli` integration tests | Rust now covers the current parser and dispatch contract for missing values, duplicate or missing selection mode, unsupported flags, static OTF `--variation` rejection, OTF `--text` requirement, the non-OTF `--glyph-ids` contract, and the explicit deferred-boundary errors for Phase 2/3-owned execution paths. Remaining native-only cases are mostly legacy parser features that Rust does not support, including `--keep-gids`, `--unicodes`, and helper-level request initialization APIs. |
-| `tests/test_table_policy.c` | covered | `crates/fonttool-subset` tests | Rust now owns the supported table-policy classification matrix that the legacy test covered, with adjacent Rust tests also proving subset output drop behavior that reuses the same boundary. |
 | `tests/test_ttf_rebuilder.cc` | deferred | future `fonttool-glyf`/`fonttool-cff` tests | Rebuilder internals still live behind the legacy backend. |
 | `tests/test_ttf_rebuilder_header.c` | deferred | future `fonttool-glyf` tests | Same rebuild boundary as above. |
 
