@@ -22,7 +22,8 @@ make verify-decode
 make verify-roundtrip
 ```
 
-Fuzz smoke build:
+Fuzz smoke build (`fuzz/rust-toolchain.toml` pins nightly; invoke it through a
+rustup-managed `cargo` so the override is honored):
 
 ```bash
 cd fuzz
