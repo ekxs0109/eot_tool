@@ -71,9 +71,12 @@ commands unless a section explicitly says otherwise.
 
 ## Decode
 
-`fonttool decode <input.eot|input.fntdata> <output.ttf>` parses the EOT header,
-decodes the MTX payload, transparently removes PowerPoint-style XOR obfuscation
-when the `0x10000000` flag is set, rebuilds an SFNT, and writes a TTF.
+`fonttool decode <input.eot|input.fntdata> <output.ttf>` is currently supported
+for the Rust-owned decode slice where the embedded MTX payload decodes through
+block1 without requiring non-empty extra MTX blocks. Within that supported
+slice, it parses the EOT header, decodes the MTX payload, transparently removes
+PowerPoint-style XOR obfuscation when the `0x10000000` flag is set, rebuilds an
+SFNT, and writes a TTF.
 
 Reproducible manual check recorded on 2026-04-08:
 
@@ -240,6 +243,11 @@ The native cubic-to-quadratic conversion uses a conservative default tolerance.
 is intentionally not auto-relaxed on failure.
 
 ## Browser / WASM API
+
+This C buffer ABI is currently an archived/native compatibility surface. The
+Rust-facing runtime/WASM crates are the primary path for new Phase 1 work, but
+the `src/wasm_api.{h,cc}` exports still define the supported C interface until
+later retirement phases replace them.
 
 The browser-oriented buffer API is exported from `src/wasm_api.{h,cc}`:
 
