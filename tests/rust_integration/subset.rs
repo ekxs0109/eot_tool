@@ -1,17 +1,11 @@
+mod support;
+
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fonttool_sfnt::load_sfnt;
-
-const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
-
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("workspace root should exist")
+    support::workspace_root()
 }
 
 fn temp_eot() -> PathBuf {
@@ -26,104 +20,51 @@ fn temp_eot() -> PathBuf {
     ))
 }
 
-fn temp_ttf() -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time should move forward")
-        .as_nanos();
-
-    std::env::temp_dir().join(format!(
-        "fonttool-subset-decoded-{}-{unique}.ttf",
-        std::process::id()
-    ))
-}
-
-fn run_fonttool<I, S>(args: I) -> std::process::Output
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<std::ffi::OsStr>,
-{
-    Command::new(env!("CARGO_BIN_EXE_fonttool"))
-        .args(args)
-        .current_dir(workspace_root())
-        .output()
-        .expect("fonttool binary should launch")
-}
-
-fn maxp_num_glyphs(path: &Path) -> u16 {
-    let bytes = fs::read(path).expect("decoded subset output should be readable");
-    let sfnt = load_sfnt(&bytes).expect("decoded subset output should parse");
-    let maxp = sfnt.table(TAG_MAXP).expect("subset output should contain maxp");
-    u16::from_be_bytes([maxp.data[4], maxp.data[5]])
-}
-
 #[test]
-fn subset_keeps_requested_glyphs_and_updates_num_glyphs() {
+fn subset_non_otf_input_is_explicitly_phase2_owned_without_shellout() {
     let output_path = temp_eot();
-    let decoded_path = temp_ttf();
+    let isolated_cwd = std::env::temp_dir().join(format!(
+        "fonttool-subset-cwd-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos()
+    ));
+    fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
 
-    let output = run_fonttool([
-        "subset",
-        "testdata/wingdings3.eot",
-        output_path
-            .to_str()
-            .expect("temp path should be valid utf-8"),
-        "--glyph-ids",
-        "0,1,2",
-    ]);
+    let input_path = workspace_root().join("testdata/font1.fntdata");
+    let output = support::run_fonttool_in_dir(
+        [
+            "subset",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+            "--glyph-ids",
+            "0,1",
+        ],
+        &isolated_cwd,
+    );
 
-    assert!(
-        output.status.success(),
-        "expected subset to succeed, stderr: {}",
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "subset should fail with an explicit deferred-boundary error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let decode = run_fonttool([
-        "decode",
-        output_path
-            .to_str()
-            .expect("temp path should be valid utf-8"),
-        decoded_path
-            .to_str()
-            .expect("temp path should be valid utf-8"),
-    ]);
-
-    let decode = if decode.status.success() {
-        decode
-    } else {
-        Command::new(workspace_root().join("build/fonttool"))
-            .args([
-                "decode",
-                output_path
-                    .to_str()
-                    .expect("temp path should be valid utf-8"),
-                decoded_path
-                    .to_str()
-                    .expect("temp path should be valid utf-8"),
-            ])
-            .current_dir(workspace_root())
-            .output()
-            .expect("legacy fonttool decode should launch")
-    };
-
-    assert!(
-        decode.status.success(),
-        "expected decode of subset output to succeed, stderr: {}",
-        String::from_utf8_lossy(&decode.stderr)
-    );
-
-    assert_eq!(maxp_num_glyphs(&decoded_path), 3);
-
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("warning: unsupported HDMX in subset path; dropping table"),
-        "expected HDMX warning, stderr: {stderr}"
+        stderr.contains("subset execution for non-OTF input remains Phase 2-owned"),
+        "expected explicit Phase 2 boundary, stderr: {stderr}"
     );
     assert!(
-        stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
-        "expected VDMX warning, stderr: {stderr}"
+        !output_path.exists(),
+        "subset should not create an output while the path is deferred"
     );
 
     let _ = fs::remove_file(output_path);
-    let _ = fs::remove_file(decoded_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
 }

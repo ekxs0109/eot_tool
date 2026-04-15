@@ -15,8 +15,21 @@ fn python_verify_font_entrypoint_accepts_a_valid_font() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn swift_coretext_probe_accepts_static_cff_roundtrip_from_rust_harness() {
-    let roundtrip = support::encode_static_cff_to_roundtrip_ttf();
+fn swift_coretext_probe_accepts_supported_decode_output_from_rust_harness() {
+    let decoded_path = support::temp_ttf();
+    let decode = support::run_fonttool([
+        "decode",
+        "testdata/font1.fntdata",
+        decoded_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        decode.status.success(),
+        "expected Rust decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&decode.stderr)
+    );
 
     let output = Command::new("swift")
         .args([
@@ -24,8 +37,7 @@ fn swift_coretext_probe_accepts_static_cff_roundtrip_from_rust_harness() {
             "--package-path",
             "tests/macos-swift",
             "FonttoolCoreTextProbe",
-            roundtrip
-                .font_path()
+            decoded_path
                 .to_str()
                 .expect("temp path should be valid utf-8"),
         ])
@@ -43,4 +55,6 @@ fn swift_coretext_probe_accepts_static_cff_roundtrip_from_rust_harness() {
         "coretext font accepted",
         "unexpected Swift CoreText probe stdout"
     );
+
+    let _ = std::fs::remove_file(decoded_path);
 }

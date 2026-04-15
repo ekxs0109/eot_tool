@@ -4,15 +4,13 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fonttool_eot::parse_eot_header;
-use fonttool_sfnt::{load_sfnt, parse_sfnt, SFNT_VERSION_OTTO, SFNT_VERSION_TRUETYPE};
+use fonttool_sfnt::{load_sfnt, parse_sfnt, SFNT_VERSION_OTTO};
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
-const TAG_GLYF: u32 = u32::from_be_bytes(*b"glyf");
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
 const TAG_HHEA: u32 = u32::from_be_bytes(*b"hhea");
 const TAG_HMTX: u32 = u32::from_be_bytes(*b"hmtx");
-const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
 const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
 
@@ -28,9 +26,17 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    run_fonttool_in_dir(args, workspace_root())
+}
+
+fn run_fonttool_in_dir<I, S>(args: I, current_dir: impl AsRef<Path>) -> std::process::Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     Command::new(env!("CARGO_BIN_EXE_fonttool"))
         .args(args)
-        .current_dir(workspace_root())
+        .current_dir(current_dir.as_ref())
         .output()
         .expect("fonttool binary should launch")
 }
@@ -45,6 +51,12 @@ fn temp_path(stem: &str, extension: &str) -> PathBuf {
         "fonttool-cli-contract-{stem}-{}-{unique}.{extension}",
         std::process::id()
     ))
+}
+
+fn temp_dir(stem: &str) -> PathBuf {
+    let path = temp_path(stem, "dir");
+    fs::create_dir_all(&path).expect("temp dir should be creatable");
+    path
 }
 
 fn assert_sfnt_has_tables(path: &Path, tables: &[u32]) {
@@ -195,21 +207,64 @@ fn decode_real_fixture_creates_parseable_output_file() {
 }
 
 #[test]
-fn encode_then_decode_cff_static_otf_roundtrip_produces_required_tables() {
-    let encoded_path = temp_path("cff-static-roundtrip", "eot");
-    let decoded_path = temp_path("cff-static-roundtrip", "otf");
+fn decode_real_fixture_succeeds_outside_workspace_without_legacy_binary() {
+    let isolated_cwd = temp_dir("decode-no-shellout-cwd");
+    let output_path = temp_path("decode-no-shellout", "otf");
+    let input_path = workspace_root().join("testdata/font1.fntdata");
 
-    let encode_output = run_fonttool([
-        "encode",
-        "testdata/cff-static.otf",
-        encoded_path
-            .to_str()
-            .expect("temp path should be valid utf-8"),
-    ]);
+    let output = run_fonttool_in_dir(
+        [
+            "decode",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+        ],
+        &isolated_cwd,
+    );
+
+    assert!(
+        output.status.success(),
+        "expected decode to stay Rust-owned outside the workspace root, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output_path.is_file(),
+        "expected decode to create output file"
+    );
+    assert_sfnt_has_tables(
+        &output_path,
+        &[TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_NAME, TAG_CMAP],
+    );
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
+}
+
+#[test]
+fn encode_ttf_succeeds_outside_workspace_without_legacy_binary() {
+    let isolated_cwd = temp_dir("encode-no-shellout-cwd");
+    let encoded_path = temp_path("ttf-no-shellout", "eot");
+    let input_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+
+    let encode_output = run_fonttool_in_dir(
+        [
+            "encode",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            encoded_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+        ],
+        &isolated_cwd,
+    );
 
     assert!(
         encode_output.status.success(),
-        "expected CFF encode to succeed, stderr: {}",
+        "expected TrueType encode to stay Rust-owned outside the workspace root, stderr: {}",
         String::from_utf8_lossy(&encode_output.stderr)
     );
     assert!(
@@ -217,42 +272,48 @@ fn encode_then_decode_cff_static_otf_roundtrip_produces_required_tables() {
         "expected encode to create an EOT output file"
     );
 
-    let decode_output = run_fonttool([
-        "decode",
-        encoded_path
-            .to_str()
-            .expect("temp path should be valid utf-8"),
-        decoded_path
-            .to_str()
-            .expect("temp path should be valid utf-8"),
-    ]);
+    let _ = fs::remove_file(encoded_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
+}
 
-    assert!(
-        decode_output.status.success(),
-        "expected CFF roundtrip decode to succeed, stderr: {}",
-        String::from_utf8_lossy(&decode_output.stderr)
-    );
-    assert!(
-        decoded_path.is_file(),
-        "expected decode to create roundtrip output"
-    );
+#[test]
+fn encode_cff_static_otf_is_explicitly_phase3_owned() {
+    let isolated_cwd = temp_dir("cff-phase3-cwd");
+    let encoded_path = temp_path("cff-static-roundtrip", "eot");
+    let input_path = workspace_root().join("testdata/cff-static.otf");
 
-    let roundtrip_bytes = fs::read(&decoded_path).expect("roundtrip output should be readable");
-    let roundtrip_font = load_sfnt(&roundtrip_bytes).expect("roundtrip output should load as sfnt");
-    assert_eq!(
-        roundtrip_font.version_tag(),
-        SFNT_VERSION_TRUETYPE,
-        "expected current CFF roundtrip to decode as a TrueType sfnt"
-    );
-    assert_sfnt_has_tables(
-        &decoded_path,
-        &[
-            TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_NAME, TAG_CMAP, TAG_GLYF, TAG_LOCA,
+    let encode_output = run_fonttool_in_dir(
+        [
+            "encode",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            encoded_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
         ],
+        &isolated_cwd,
+    );
+
+    assert_eq!(
+        encode_output.status.code(),
+        Some(1),
+        "expected explicit Phase 3 boundary, stderr: {}",
+        String::from_utf8_lossy(&encode_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&encode_output.stderr)
+            .contains("OTF(CFF/CFF2) encode remains Phase 3-owned"),
+        "expected explicit Phase 3 boundary, stderr: {}",
+        String::from_utf8_lossy(&encode_output.stderr)
+    );
+    assert!(
+        !encoded_path.exists(),
+        "encode should not create output while the OTF chain is deferred"
     );
 
     let _ = fs::remove_file(encoded_path);
-    let _ = fs::remove_file(decoded_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
 }
 
 #[test]

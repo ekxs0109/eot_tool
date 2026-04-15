@@ -56,9 +56,17 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    run_fonttool_in_dir(args, &workspace_root())
+}
+
+pub fn run_fonttool_in_dir<I, S>(args: I, current_dir: &Path) -> Output
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     Command::new(env!("CARGO_BIN_EXE_fonttool"))
         .args(args)
-        .current_dir(workspace_root())
+        .current_dir(current_dir)
         .output()
         .expect("fonttool binary should launch")
 }
@@ -166,6 +174,33 @@ impl Drop for StaticCffRoundtrip {
 #[allow(dead_code)]
 pub fn encode_static_cff_to_roundtrip_ttf() -> StaticCffRoundtrip {
     encode_otf_to_roundtrip_ttf("testdata/cff-static.otf")
+}
+
+#[allow(dead_code)]
+pub fn encode_ttf_to_roundtrip_ttf(input_path: &str) -> StaticCffRoundtrip {
+    let output_path = temp_eot();
+    let decoded_path = temp_ttf();
+
+    let output = run_fonttool([
+        "encode",
+        input_path,
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected encode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    decode_with_legacy(&output_path, &decoded_path);
+
+    StaticCffRoundtrip {
+        eot_path: output_path,
+        roundtrip_path: decoded_path,
+    }
 }
 
 #[allow(dead_code)]

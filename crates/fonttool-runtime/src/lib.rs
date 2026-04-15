@@ -528,29 +528,25 @@ mod tests {
         let release_zero = Arc::clone(&allow_index_zero);
         let diagnostics = resolve_runtime_diagnostics(4, options);
 
-        let error = assert_runtime_error(run_indexed_tasks(
-            4,
-            options,
-            move |index| {
-                task_seen[index].store(1, Ordering::Relaxed);
+        let error = assert_runtime_error(run_indexed_tasks(4, options, move |index| {
+            task_seen[index].store(1, Ordering::Relaxed);
 
-                if index == 0 {
-                    if diagnostics.effective_threads > 1 {
-                        while !release_zero.load(Ordering::Acquire) {
-                            std::hint::spin_loop();
-                        }
+            if index == 0 {
+                if diagnostics.effective_threads > 1 {
+                    while !release_zero.load(Ordering::Acquire) {
+                        std::hint::spin_loop();
                     }
-                    return Err(ProbeError::CorruptData);
                 }
+                return Err(ProbeError::CorruptData);
+            }
 
-                if index == 3 {
-                    release_zero.store(true, Ordering::Release);
-                    return Err(ProbeError::InvalidPadding);
-                }
+            if index == 3 {
+                release_zero.store(true, Ordering::Release);
+                return Err(ProbeError::InvalidPadding);
+            }
 
-                Ok(())
-            },
-        ));
+            Ok(())
+        }));
 
         assert_eq!(error.index, 0);
         assert_eq!(error.error, ProbeError::CorruptData);
@@ -559,19 +555,15 @@ mod tests {
     }
 
     #[test]
-    fn converts_static_otf_through_runtime_bridge() {
-        let result = convert_otf_to_embedded_font(ConvertRequest {
+    fn rejects_static_otf_conversion_until_phase3() {
+        let error = convert_otf_to_embedded_font(ConvertRequest {
             input_path: &fixture("testdata/cff-static.otf"),
             output_kind: OutputKind::Eot,
             variation_axes: None,
         })
-        .expect("runtime bridge should encode static cff");
+        .expect_err("static CFF conversion should stay outside the Phase 1 runtime boundary");
 
-        assert!(
-            !result.data.is_empty(),
-            "runtime bridge should produce bytes"
-        );
-        assert_eq!(result.output_kind, OutputKind::Eot);
+        assert_eq!(error, RuntimeError::Cff(CffError::EncodeDeferredToPhase3));
     }
 
     #[test]

@@ -197,29 +197,25 @@ fn runtime_uses_lowest_failing_index_regardless_of_completion_order() {
     let release_zero = Arc::clone(&allow_index_zero);
     let diagnostics = runtime_probe(4, options.thread_override, options.requested_mode);
 
-    let error = assert_runtime_error(run_indexed_tasks(
-        4,
-        options,
-        move |index| {
-            task_seen[index].store(1, Ordering::Relaxed);
+    let error = assert_runtime_error(run_indexed_tasks(4, options, move |index| {
+        task_seen[index].store(1, Ordering::Relaxed);
 
-            if index == 0 {
-                if diagnostics.effective_threads > 1 {
-                    while !release_zero.load(Ordering::Acquire) {
-                        std::hint::spin_loop();
-                    }
+        if index == 0 {
+            if diagnostics.effective_threads > 1 {
+                while !release_zero.load(Ordering::Acquire) {
+                    std::hint::spin_loop();
                 }
-                return Err(ProbeError::CorruptData);
             }
+            return Err(ProbeError::CorruptData);
+        }
 
-            if index == 3 {
-                release_zero.store(true, Ordering::Release);
-                return Err(ProbeError::InvalidPadding);
-            }
+        if index == 3 {
+            release_zero.store(true, Ordering::Release);
+            return Err(ProbeError::InvalidPadding);
+        }
 
-            Ok(())
-        },
-    ));
+        Ok(())
+    }));
 
     assert_eq!(error.index, 0);
     assert_eq!(error.error, ProbeError::CorruptData);
@@ -228,39 +224,33 @@ fn runtime_uses_lowest_failing_index_regardless_of_completion_order() {
 }
 
 #[test]
-fn runtime_bridge_converts_static_cff_fixture() {
-    let result = convert_otf_to_embedded_font(ConvertRequest {
+fn runtime_bridge_rejects_static_cff_conversion_until_phase3() {
+    let error = convert_otf_to_embedded_font(ConvertRequest {
         input_path: &fixture("testdata/cff-static.otf"),
         output_kind: OutputKind::Eot,
         variation_axes: None,
     })
-    .expect("runtime bridge should convert static cff input");
+    .expect_err("static CFF conversion should stay outside the Phase 1 runtime boundary");
 
-    assert!(!result.data.is_empty(), "runtime bridge should emit bytes");
-    assert_eq!(result.output_kind, OutputKind::Eot);
-    assert!(result.diagnostics.requested_threads >= 1);
-    assert_eq!(result.diagnostics.effective_threads, 1);
-    assert_eq!(result.diagnostics.resolved_mode, "single");
-    assert_ne!(
-        result.diagnostics.fallback_reason.as_deref(),
-        Some("runtime scheduling diagnostics are not yet available in the Rust bridge")
+    assert_eq!(
+        error,
+        RuntimeError::Cff(fonttool_runtime::CffError::EncodeDeferredToPhase3)
     );
 }
 
 #[test]
-fn wasm_bridge_converts_static_cff_fixture() {
-    let result = wasm_convert_otf_to_embedded_font(ConvertRequest {
+fn wasm_bridge_rejects_static_cff_conversion_until_phase3() {
+    let error = wasm_convert_otf_to_embedded_font(ConvertRequest {
         input_path: &fixture("testdata/cff-static.otf"),
         output_kind: OutputKind::Fntdata,
         variation_axes: None,
     })
-    .expect("wasm bridge should convert static cff input");
+    .expect_err("static CFF conversion should stay outside the Phase 1 wasm boundary");
 
-    assert!(!result.data.is_empty(), "wasm bridge should emit bytes");
-    assert_eq!(result.output_kind, OutputKind::Fntdata);
-    assert!(result.diagnostics.requested_threads >= 1);
-    assert_eq!(result.diagnostics.effective_threads, 1);
-    assert_eq!(result.diagnostics.resolved_mode, "single");
+    assert_eq!(
+        error,
+        RuntimeError::Cff(fonttool_runtime::CffError::EncodeDeferredToPhase3)
+    );
 }
 
 #[test]

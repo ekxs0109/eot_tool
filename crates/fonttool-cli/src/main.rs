@@ -2,7 +2,6 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use fonttool_cff::{
     encode_otf_with_legacy_backend, inspect_otf_font, subset_otf_with_legacy_backend, CffError,
@@ -99,9 +98,22 @@ fn print_help() {
 fn decode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> Result<(), String> {
     let input_bytes = fs::read(input_path.as_ref())
         .map_err(|error| format!("failed to read {}: {error}", input_path.as_ref().display()))?;
+    let sfnt_bytes = decode_embedded_font_bytes(&input_bytes)?;
 
+    parse_sfnt(&sfnt_bytes).map_err(|error| format!("decoded SFNT is invalid: {error}"))?;
+    fs::write(output_path.as_ref(), &sfnt_bytes).map_err(|error| {
+        format!(
+            "failed to write {}: {error}",
+            output_path.as_ref().display()
+        )
+    })?;
+
+    Ok(())
+}
+
+fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
     let header =
-        parse_eot_header(&input_bytes).map_err(|error| format!("invalid EOT header: {error}"))?;
+        parse_eot_header(input_bytes).map_err(|error| format!("invalid EOT header: {error}"))?;
     let payload_start = header.header_length as usize;
     let payload_len = header.font_data_size as usize;
     let payload_end = payload_start
@@ -121,18 +133,7 @@ fn decode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     let container = parse_mtx_container(&payload_bytes)
         .map_err(|error| format!("invalid MTX container: {error}"))?;
     reject_unsupported_extra_blocks(&container)?;
-    let sfnt_bytes = decompress_lz(container.block1)
-        .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
-
-    parse_sfnt(&sfnt_bytes).map_err(|error| format!("decoded SFNT is invalid: {error}"))?;
-    fs::write(output_path.as_ref(), &sfnt_bytes).map_err(|error| {
-        format!(
-            "failed to write {}: {error}",
-            output_path.as_ref().display()
-        )
-    })?;
-
-    Ok(())
+    decompress_lz(container.block1).map_err(|error| format!("failed to decode MTX block1: {error}"))
 }
 
 fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> Result<(), String> {
@@ -199,10 +200,9 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
         return subset_otf_file(&request);
     }
 
-    let glyph_ids_csv = request
-        .glyph_ids
-        .as_deref()
-        .ok_or_else(|| "subset currently only supports --glyph-ids for non-OTF input".to_string())?;
+    let glyph_ids_csv = request.glyph_ids.as_deref().ok_or_else(|| {
+        "subset currently only supports --glyph-ids for non-OTF input".to_string()
+    })?;
     let glyph_request = GlyphIdRequest::parse_csv(glyph_ids_csv)
         .map_err(|error| format!("invalid subset arguments: {error}"))?;
 
@@ -278,7 +278,10 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
     Ok(request)
 }
 
-fn plan_subset_for_input(input_path: &Path, request: &GlyphIdRequest) -> Result<fonttool_subset::SubsetPlan, String> {
+fn plan_subset_for_input(
+    input_path: &Path,
+    request: &GlyphIdRequest,
+) -> Result<fonttool_subset::SubsetPlan, String> {
     let extension = input_path
         .extension()
         .and_then(|value| value.to_str())
@@ -291,26 +294,22 @@ fn plan_subset_for_input(input_path: &Path, request: &GlyphIdRequest) -> Result<
             load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?
         }
         Some("eot") | Some("fntdata") => {
-            let temp_output = temp_subset_decode_path();
-            let decode_status = std::process::Command::new("build/fonttool")
-                .arg("decode")
-                .arg(input_path)
-                .arg(&temp_output)
-                .output()
-                .map_err(|error| format!("failed to launch legacy decode backend: {error}"))?;
-            if !decode_status.status.success() {
-                return Err(format!(
-                    "failed to load subset input {}: {}",
-                    input_path.display(),
-                    String::from_utf8_lossy(&decode_status.stderr).trim()
-                ));
-            }
-            let sfnt_bytes = fs::read(&temp_output)
-                .map_err(|error| format!("failed to read decoded subset input: {error}"))?;
-            let _ = fs::remove_file(&temp_output);
+            let input_bytes = fs::read(input_path)
+                .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
+            let sfnt_bytes = decode_embedded_font_bytes(&input_bytes).map_err(|error| {
+                format!(
+                    "failed to load subset input {}: {error}",
+                    input_path.display()
+                )
+            })?;
             load_sfnt(&sfnt_bytes).map_err(|error| format!("invalid decoded SFNT: {error}"))?
         }
-        _ => return Err(format!("unsupported subset input path: {}", input_path.display())),
+        _ => {
+            return Err(format!(
+                "unsupported subset input path: {}",
+                input_path.display()
+            ))
+        }
     };
 
     plan_glyph_subset(&font, request, false).map_err(|error| error.to_string())
@@ -353,21 +352,6 @@ fn is_otf_path(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
         .is_some_and(|value| value.eq_ignore_ascii_case("otf"))
-}
-
-fn temp_subset_decode_path() -> String {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("time should move forward")
-        .as_nanos();
-
-    std::env::temp_dir()
-        .join(format!(
-            "fonttool-subset-plan-{}-{unique}.ttf",
-            std::process::id()
-        ))
-        .to_string_lossy()
-        .into_owned()
 }
 
 fn reject_unsupported_extra_blocks(

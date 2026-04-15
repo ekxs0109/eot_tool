@@ -1,7 +1,8 @@
 # eot_tool
 
 Standalone Rust-first font toolchain for MTX-compressed EOT decode/encode,
-HarfBuzz-backed subset, and native `OTF(CFF/CFF2)` conversion.
+with archived native compatibility paths for subset execution and
+`OTF(CFF/CFF2)` conversion.
 
 ## Rust-First Verification
 
@@ -43,9 +44,10 @@ build/venv/bin/python -m pip install -r tests/requirements.txt
 ```
 
 Python tooling is verification/reference-only. The Rust workspace primarily
-owns the migrated decode, encode, subset, OTF/CFF conversion, and
-Rust-facing runtime and WASM bridge slices, while a few adapter-backed paths
-still delegate to the archived native backend.
+owns the migrated decode, TrueType encode, and Rust-facing runtime/WASM
+diagnostics and contract slices. Subset execution and `OTF(CFF/CFF2)`
+conversion remain archived native compatibility paths until later rewrite
+phases.
 
 Stable verifier entrypoints:
 
@@ -103,13 +105,9 @@ When the output path ends in `.fntdata`, the tool also applies the PowerPoint
 - `EOT_TOOL_THREADS=1`: strict serial mode for debugging/regression checks
 - `EOT_TOOL_THREADS=<N>`: requests `N` worker threads
 
-`fonttool encode` also accepts `.otf` inputs:
-
-- static `OTF(CFF)` is converted to a TrueType-flavored intermediate SFNT, then
-  encoded through the existing MTX/EOT path
-- `OTF(CFF2)` is exported as a static instance before encode
-- variation semantics are not preserved in the output; the result is always a
-  static embedded font
+The Rust CLI currently supports TrueType input in the forward-supported
+boundary. `OTF(CFF/CFF2)` encode and subset commands shown below are archived
+compatibility flows that still require `./build/fonttool`.
 
 OTF/CFF parity check against a reproducible local `fonttools` save (fixture:
 `testdata/aipptfonts/香蕉Plus__20220301185701917366.otf`):
@@ -134,14 +132,14 @@ Converged runtime behavior:
 - `hdmx`: preserved on encode/decode, including shared trailing advance widths
 - `VDMX`: dropped on encode/subset with a warning on `stderr`
 
-Subset architecture is:
+Subset architecture for the archived native compatibility flow is:
 
 - `.eot` / `.fntdata`: `decode -> sfnt subset -> encode`
 - `.ttf`: `sfnt load -> subset -> encode`
 - `.otf`: `native CFF/CFF2 conversion -> subset -> encode`
 
-The subset rebuild is HarfBuzz-backed, then re-serialized through the existing C
-runtime. Extra-table behavior across the merged paths is:
+The archived subset rebuild is HarfBuzz-backed, then re-serialized through the
+existing C runtime. Extra-table behavior across the merged paths is:
 
 - `cvt`: retained when present in the decoded/subset SFNT
 - `hdmx`: preserved on encode/decode, but dropped during subset with a warning
@@ -266,9 +264,10 @@ cargo test --test runtime_wasm
 ```
 
 These Rust tests cover the staged `fonttool-runtime` / `fonttool-wasm` API
-surface and the adapter-backed conversion bridge. They do not yet replace the
-legacy native WASM buffer ABI checks, variable-font conversion success path, or
-the full parallel-runtime diagnostics behavior.
+surface, Rust-owned scheduling semantics, and the explicit unsupported boundary
+for deferred `OTF(CFF/CFF2)` conversion. They do not yet replace the legacy
+native WASM buffer ABI checks or the native-only variable-font conversion
+success path.
 
 The Makefile exposes explicit Emscripten build variants:
 
