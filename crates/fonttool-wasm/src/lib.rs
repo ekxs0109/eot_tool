@@ -26,8 +26,8 @@ pub fn wasm_convert_otf_to_embedded_font(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::{Path, PathBuf};
     use fonttool_runtime::OutputKind;
+    use std::path::{Path, PathBuf};
 
     fn fixture(path: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -48,8 +48,13 @@ mod tests {
     #[test]
     fn exposes_runtime_diagnostics() {
         let diagnostics = wasm_runtime_get_diagnostics();
-        assert!(matches!(diagnostics.resolved_mode.as_str(), "single" | "threaded"));
-        assert_eq!(
+        assert!(diagnostics.requested_threads >= 1);
+        assert_eq!(diagnostics.effective_threads, 0);
+        assert!(matches!(
+            diagnostics.resolved_mode.as_str(),
+            "single" | "threaded"
+        ));
+        assert_ne!(
             diagnostics.fallback_reason.as_deref(),
             Some("runtime scheduling diagnostics are not yet available in the Rust bridge")
         );
@@ -66,6 +71,9 @@ mod tests {
 
         assert!(!result.data.is_empty(), "wasm bridge should return bytes");
         assert_eq!(result.output_kind, OutputKind::Eot);
+        assert!(result.diagnostics.requested_threads >= 1);
+        assert_eq!(result.diagnostics.effective_threads, 1);
+        assert_eq!(result.diagnostics.resolved_mode, "single");
     }
 
     #[test]

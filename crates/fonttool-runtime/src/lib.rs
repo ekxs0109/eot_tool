@@ -1,7 +1,13 @@
 //! Runtime-facing abstractions shared by Rust-native and WASM entry points.
 
 use core::fmt;
+use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
+use std::thread;
 
 pub use fonttool_cff::CffError;
 
@@ -29,6 +35,27 @@ pub struct RuntimeDiagnostics {
     pub effective_threads: usize,
     pub resolved_mode: String,
     pub fallback_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RequestedRuntimeMode {
+    #[default]
+    Auto,
+    Single,
+    Threaded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RuntimeSchedulingOptions<'a> {
+    pub thread_override: Option<&'a str>,
+    pub requested_mode: RequestedRuntimeMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexedTaskFailure<E> {
+    pub index: usize,
+    pub error: E,
+    pub diagnostics: RuntimeDiagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +125,7 @@ impl From<CffError> for RuntimeError {
 
 #[must_use]
 pub fn runtime_thread_mode() -> RuntimeThreadMode {
-    if cfg!(target_feature = "atomics") {
+    if runtime_supports_threads() {
         RuntimeThreadMode::Pthreads
     } else {
         RuntimeThreadMode::SingleThread
@@ -107,32 +134,135 @@ pub fn runtime_thread_mode() -> RuntimeThreadMode {
 
 #[must_use]
 pub fn default_runtime_diagnostics() -> RuntimeDiagnostics {
-    RuntimeDiagnostics {
-        requested_threads: 0,
-        effective_threads: 0,
-        resolved_mode: match runtime_thread_mode() {
-            RuntimeThreadMode::SingleThread => "single".to_string(),
-            RuntimeThreadMode::Pthreads => "threaded".to_string(),
-        },
-        fallback_reason: Some(
-            "runtime scheduling diagnostics are not yet available in the Rust bridge"
-                .to_string(),
-        ),
+    resolve_runtime_diagnostics(0, RuntimeSchedulingOptions::default())
+}
+
+#[must_use]
+pub fn resolve_runtime_diagnostics(
+    task_count: usize,
+    options: RuntimeSchedulingOptions<'_>,
+) -> RuntimeDiagnostics {
+    let configured_threads = env::var("EOT_TOOL_THREADS").ok();
+    let mut requested_threads = options
+        .thread_override
+        .and_then(parse_threads_value)
+        .or_else(|| configured_threads.as_deref().and_then(parse_threads_value))
+        .unwrap_or_else(runtime_default_threads);
+    let mut effective_threads = requested_threads;
+    let mut resolved_mode = "threaded";
+    let mut fallback_reason = None;
+
+    if options.requested_mode == RequestedRuntimeMode::Single {
+        requested_threads = 1;
+        effective_threads = 1;
+        resolved_mode = "single";
+        fallback_reason = Some("requested-single".to_string());
+    } else if !runtime_supports_threads() {
+        effective_threads = 1;
+        resolved_mode = "single";
+        if requested_threads > 1 || options.requested_mode == RequestedRuntimeMode::Threaded {
+            fallback_reason = Some("threading-unavailable".to_string());
+        }
+    } else if requested_threads <= 1 {
+        effective_threads = 1;
+        resolved_mode = "single";
     }
+
+    if task_count == 0 {
+        effective_threads = 0;
+    } else {
+        if effective_threads > task_count {
+            effective_threads = task_count;
+            if effective_threads > 0
+                && requested_threads > effective_threads
+                && fallback_reason.is_none()
+            {
+                fallback_reason = Some("task-count-clamped".to_string());
+            }
+        }
+
+        resolved_mode = if effective_threads <= 1 {
+            "single"
+        } else {
+            "threaded"
+        };
+    }
+
+    RuntimeDiagnostics {
+        requested_threads,
+        effective_threads,
+        resolved_mode: resolved_mode.to_string(),
+        fallback_reason,
+    }
+}
+
+pub fn run_indexed_tasks<E, F>(
+    task_count: usize,
+    options: RuntimeSchedulingOptions<'_>,
+    task: F,
+) -> Result<RuntimeDiagnostics, IndexedTaskFailure<E>>
+where
+    F: Fn(usize) -> Result<(), E> + Sync,
+    E: Send,
+{
+    let diagnostics = resolve_runtime_diagnostics(task_count, options);
+    if task_count == 0 {
+        return Ok(diagnostics);
+    }
+
+    let effective_threads = diagnostics.effective_threads.max(1);
+    let statuses = (0..task_count)
+        .map(|_| Mutex::new(None))
+        .collect::<Vec<Mutex<Option<E>>>>();
+    let next_index = AtomicUsize::new(0);
+
+    if effective_threads == 1 || !runtime_supports_threads() {
+        run_worker(&next_index, task_count, &task, &statuses);
+    } else {
+        thread::scope(|scope| {
+            for _ in 1..effective_threads {
+                let statuses = &statuses;
+                let task = &task;
+                let next_index = &next_index;
+                scope.spawn(move || run_worker(next_index, task_count, task, statuses));
+            }
+            run_worker(&next_index, task_count, &task, &statuses);
+        });
+    }
+
+    for (index, status) in statuses.into_iter().enumerate() {
+        if let Some(error) = status
+            .into_inner()
+            .expect("task status mutex should not be poisoned")
+        {
+            return Err(IndexedTaskFailure {
+                index,
+                error,
+                diagnostics,
+            });
+        }
+    }
+
+    Ok(diagnostics)
 }
 
 pub fn convert_otf_to_embedded_font(
     request: ConvertRequest<'_>,
 ) -> Result<ConvertResult, RuntimeError> {
     let temp_output = temp_runtime_output_path(request.output_kind);
-    run_conversion_request(request, request.input_path, &temp_output)?;
+    let diagnostics = run_indexed_tasks(1, RuntimeSchedulingOptions::default(), |_| {
+        run_conversion_request(request, request.input_path, &temp_output)?;
+        Ok::<(), RuntimeError>(())
+    })
+    .map_err(|failure| failure.error)?;
+
     let data = std::fs::read(&temp_output)
         .map_err(|error| RuntimeError::Io(format!("failed to read runtime output: {error}")))?;
     let _ = std::fs::remove_file(&temp_output);
 
     Ok(ConvertResult {
         data,
-        diagnostics: default_runtime_diagnostics(),
+        diagnostics,
         output_kind: request.output_kind,
     })
 }
@@ -160,9 +290,7 @@ fn run_conversion_request(
             ));
         }
         if !kind.is_variable {
-            return Err(RuntimeError::Cff(
-                CffError::VariationRejectedForStaticInput,
-            ));
+            return Err(RuntimeError::Cff(CffError::VariationRejectedForStaticInput));
         }
         let _ = variation_axes;
         return Err(RuntimeError::Backend(
@@ -184,6 +312,44 @@ fn temp_runtime_output_path(output_kind: OutputKind) -> PathBuf {
         std::process::id(),
         output_kind.file_extension()
     ))
+}
+
+fn runtime_supports_threads() -> bool {
+    cfg!(not(target_arch = "wasm32")) || cfg!(target_feature = "atomics")
+}
+
+fn parse_threads_value(value: &str) -> Option<usize> {
+    value.parse::<usize>().ok().filter(|threads| *threads > 0)
+}
+
+fn runtime_default_threads() -> usize {
+    thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+}
+
+fn run_worker<E, F>(
+    next_index: &AtomicUsize,
+    task_count: usize,
+    task: &F,
+    statuses: &[Mutex<Option<E>>],
+) where
+    F: Fn(usize) -> Result<(), E> + Sync,
+    E: Send,
+{
+    loop {
+        let index = next_index.fetch_add(1, Ordering::Relaxed);
+        if index >= task_count {
+            return;
+        }
+
+        if let Err(error) = task(index) {
+            let mut slot = statuses[index]
+                .lock()
+                .expect("task status mutex should not be poisoned");
+            *slot = Some(error);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -211,7 +377,10 @@ mod tests {
         })
         .expect("runtime bridge should encode static cff");
 
-        assert!(!result.data.is_empty(), "runtime bridge should produce bytes");
+        assert!(
+            !result.data.is_empty(),
+            "runtime bridge should produce bytes"
+        );
         assert_eq!(result.output_kind, OutputKind::Eot);
     }
 
