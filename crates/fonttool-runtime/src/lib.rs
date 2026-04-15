@@ -33,6 +33,8 @@ impl RuntimeThreadMode {
 pub struct RuntimeDiagnostics {
     pub requested_threads: usize,
     pub effective_threads: usize,
+    // For idle/default diagnostics this reports the preferred execution mode the
+    // runtime would use once work is scheduled.
     pub resolved_mode: String,
     pub fallback_reason: Option<String>,
 }
@@ -134,7 +136,15 @@ pub fn runtime_thread_mode() -> RuntimeThreadMode {
 
 #[must_use]
 pub fn default_runtime_diagnostics() -> RuntimeDiagnostics {
-    resolve_runtime_diagnostics(0, RuntimeSchedulingOptions::default())
+    RuntimeDiagnostics {
+        requested_threads: resolve_requested_threads(RuntimeSchedulingOptions::default()),
+        effective_threads: 0,
+        resolved_mode: match runtime_thread_mode() {
+            RuntimeThreadMode::SingleThread => "single".to_string(),
+            RuntimeThreadMode::Pthreads => "threaded".to_string(),
+        },
+        fallback_reason: None,
+    }
 }
 
 #[must_use]
@@ -142,12 +152,7 @@ pub fn resolve_runtime_diagnostics(
     task_count: usize,
     options: RuntimeSchedulingOptions<'_>,
 ) -> RuntimeDiagnostics {
-    let configured_threads = env::var("EOT_TOOL_THREADS").ok();
-    let mut requested_threads = options
-        .thread_override
-        .and_then(parse_threads_value)
-        .or_else(|| configured_threads.as_deref().and_then(parse_threads_value))
-        .unwrap_or_else(runtime_default_threads);
+    let mut requested_threads = resolve_requested_threads(options);
     let mut effective_threads = requested_threads;
     let mut resolved_mode = "threaded";
     let mut fallback_reason = None;
@@ -196,6 +201,11 @@ pub fn resolve_runtime_diagnostics(
     }
 }
 
+/// Runs every scheduled task to completion and aggregates errors by index.
+///
+/// This scheduler does not stop when a task fails. Once work has been claimed,
+/// all claimed tasks are allowed to finish so the caller gets deterministic
+/// diagnostics and the failure returned is always the lowest failing index.
 pub fn run_indexed_tasks<E, F>(
     task_count: usize,
     options: RuntimeSchedulingOptions<'_>,
@@ -217,16 +227,16 @@ where
     let next_index = AtomicUsize::new(0);
 
     if effective_threads == 1 || !runtime_supports_threads() {
-        run_worker(&next_index, task_count, &task, &statuses);
+        drain_task_queue(&next_index, task_count, &task, &statuses);
     } else {
         thread::scope(|scope| {
             for _ in 1..effective_threads {
                 let statuses = &statuses;
                 let task = &task;
                 let next_index = &next_index;
-                scope.spawn(move || run_worker(next_index, task_count, task, statuses));
+                scope.spawn(move || drain_task_queue(next_index, task_count, task, statuses));
             }
-            run_worker(&next_index, task_count, &task, &statuses);
+            drain_task_queue(&next_index, task_count, &task, &statuses);
         });
     }
 
@@ -328,7 +338,16 @@ fn runtime_default_threads() -> usize {
         .unwrap_or(1)
 }
 
-fn run_worker<E, F>(
+fn resolve_requested_threads(options: RuntimeSchedulingOptions<'_>) -> usize {
+    let configured_threads = env::var("EOT_TOOL_THREADS").ok();
+    options
+        .thread_override
+        .and_then(parse_threads_value)
+        .or_else(|| configured_threads.as_deref().and_then(parse_threads_value))
+        .unwrap_or_else(runtime_default_threads)
+}
+
+fn drain_task_queue<E, F>(
     next_index: &AtomicUsize,
     task_count: usize,
     task: &F,
@@ -355,9 +374,25 @@ fn run_worker<E, F>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ProbeError {
+        CorruptData,
+        InvalidPadding,
+    }
 
     fn fixture(path: &str) -> PathBuf {
         workspace_root().join(path)
+    }
+
+    fn assert_runtime_error(
+        result: Result<RuntimeDiagnostics, IndexedTaskFailure<ProbeError>>,
+    ) -> IndexedTaskFailure<ProbeError> {
+        result.expect_err("runtime run should fail")
     }
 
     #[test]
@@ -366,6 +401,161 @@ mod tests {
             runtime_thread_mode().as_str(),
             "single-thread" | "pthreads"
         ));
+    }
+
+    #[test]
+    fn default_runtime_diagnostics_report_idle_preferred_mode() {
+        let diagnostics = default_runtime_diagnostics();
+        let expected_mode = match runtime_thread_mode() {
+            RuntimeThreadMode::SingleThread => "single",
+            RuntimeThreadMode::Pthreads => "threaded",
+        };
+
+        assert!(diagnostics.requested_threads >= 1);
+        assert_eq!(diagnostics.effective_threads, 0);
+        assert_eq!(diagnostics.resolved_mode, expected_mode);
+        assert_eq!(diagnostics.fallback_reason, None);
+    }
+
+    #[test]
+    fn reports_requested_and_effective_threads_after_task_clamp() {
+        let diagnostics = resolve_runtime_diagnostics(
+            3,
+            RuntimeSchedulingOptions {
+                thread_override: Some("8"),
+                requested_mode: RequestedRuntimeMode::Auto,
+            },
+        );
+
+        assert_eq!(diagnostics.requested_threads, 8);
+        assert_eq!(diagnostics.effective_threads, 3);
+        assert_eq!(diagnostics.resolved_mode, "threaded");
+        assert_eq!(
+            diagnostics.fallback_reason.as_deref(),
+            Some("task-count-clamped")
+        );
+    }
+
+    #[test]
+    fn invalid_override_falls_back_to_native_resolution() {
+        let fallback = resolve_runtime_diagnostics(
+            2,
+            RuntimeSchedulingOptions {
+                thread_override: None,
+                requested_mode: RequestedRuntimeMode::Auto,
+            },
+        );
+        let diagnostics = resolve_runtime_diagnostics(
+            2,
+            RuntimeSchedulingOptions {
+                thread_override: Some("invalid"),
+                requested_mode: RequestedRuntimeMode::Auto,
+            },
+        );
+
+        assert_eq!(diagnostics, fallback);
+    }
+
+    #[test]
+    fn requested_mode_transitions_between_single_and_threaded() {
+        let single = resolve_runtime_diagnostics(
+            4,
+            RuntimeSchedulingOptions {
+                thread_override: Some("8"),
+                requested_mode: RequestedRuntimeMode::Single,
+            },
+        );
+        assert_eq!(single.requested_threads, 1);
+        assert_eq!(single.effective_threads, 1);
+        assert_eq!(single.resolved_mode, "single");
+        assert_eq!(single.fallback_reason.as_deref(), Some("requested-single"));
+
+        let threaded = resolve_runtime_diagnostics(
+            4,
+            RuntimeSchedulingOptions {
+                thread_override: Some("8"),
+                requested_mode: RequestedRuntimeMode::Threaded,
+            },
+        );
+        assert_eq!(threaded.requested_threads, 8);
+        assert_eq!(threaded.effective_threads, 4);
+        assert_eq!(threaded.resolved_mode, "threaded");
+        assert_eq!(
+            threaded.fallback_reason.as_deref(),
+            Some("task-count-clamped")
+        );
+    }
+
+    #[test]
+    fn waits_for_all_started_tasks_before_reporting_error() {
+        let seen: Arc<Vec<AtomicUsize>> =
+            Arc::new((0..4).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>());
+        let task_seen = Arc::clone(&seen);
+
+        let error = assert_runtime_error(run_indexed_tasks(
+            4,
+            RuntimeSchedulingOptions {
+                thread_override: Some("4"),
+                requested_mode: RequestedRuntimeMode::Auto,
+            },
+            move |index| {
+                task_seen[index].store(1, Ordering::Relaxed);
+                if index == 2 {
+                    Err(ProbeError::CorruptData)
+                } else {
+                    Ok(())
+                }
+            },
+        ));
+
+        assert_eq!(error.index, 2);
+        assert_eq!(error.error, ProbeError::CorruptData);
+        for entry in &*seen {
+            assert_eq!(entry.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
+    fn uses_lowest_failing_index_regardless_of_completion_order() {
+        let options = RuntimeSchedulingOptions {
+            thread_override: Some("4"),
+            requested_mode: RequestedRuntimeMode::Auto,
+        };
+        let seen: Arc<Vec<AtomicUsize>> =
+            Arc::new((0..4).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>());
+        let allow_index_zero = Arc::new(AtomicBool::new(false));
+        let task_seen = Arc::clone(&seen);
+        let release_zero = Arc::clone(&allow_index_zero);
+        let diagnostics = resolve_runtime_diagnostics(4, options);
+
+        let error = assert_runtime_error(run_indexed_tasks(
+            4,
+            options,
+            move |index| {
+                task_seen[index].store(1, Ordering::Relaxed);
+
+                if index == 0 {
+                    if diagnostics.effective_threads > 1 {
+                        while !release_zero.load(Ordering::Acquire) {
+                            std::hint::spin_loop();
+                        }
+                    }
+                    return Err(ProbeError::CorruptData);
+                }
+
+                if index == 3 {
+                    release_zero.store(true, Ordering::Release);
+                    return Err(ProbeError::InvalidPadding);
+                }
+
+                Ok(())
+            },
+        ));
+
+        assert_eq!(error.index, 0);
+        assert_eq!(error.error, ProbeError::CorruptData);
+        assert_eq!(seen[0].load(Ordering::Relaxed), 1);
+        assert_eq!(seen[3].load(Ordering::Relaxed), 1);
     }
 
     #[test]

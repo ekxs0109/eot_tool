@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
@@ -63,21 +64,56 @@ fn runtime_mode_matches_supported_strings() {
 }
 
 #[test]
+fn default_runtime_diagnostics_keep_preferred_mode_for_idle_probe() {
+    const CHILD_ENV: &str = "FONTTOOL_IDLE_DIAGNOSTICS_CHILD";
+
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let diagnostics = default_runtime_diagnostics();
+        let expected_mode = match runtime_thread_mode() {
+            fonttool_runtime::RuntimeThreadMode::SingleThread => "single",
+            fonttool_runtime::RuntimeThreadMode::Pthreads => "threaded",
+        };
+
+        assert_eq!(diagnostics.effective_threads, 0);
+        assert_eq!(diagnostics.resolved_mode, expected_mode);
+        assert_eq!(diagnostics.fallback_reason, None);
+        return;
+    }
+
+    if runtime_thread_mode() == fonttool_runtime::RuntimeThreadMode::SingleThread {
+        return;
+    }
+
+    let output = Command::new(std::env::current_exe().expect("test binary should exist"))
+        .arg("--exact")
+        .arg("default_runtime_diagnostics_keep_preferred_mode_for_idle_probe")
+        .env(CHILD_ENV, "1")
+        .env("EOT_TOOL_THREADS", "1")
+        .output()
+        .expect("child test run should execute");
+
+    assert!(
+        output.status.success(),
+        "child stdout:\n{}\nchild stderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn runtime_and_wasm_default_diagnostics_stay_in_sync() {
     let runtime = default_runtime_diagnostics();
     let wasm = wasm_runtime_get_diagnostics();
+    let expected_mode = match runtime_thread_mode() {
+        fonttool_runtime::RuntimeThreadMode::SingleThread => "single",
+        fonttool_runtime::RuntimeThreadMode::Pthreads => "threaded",
+    };
 
     assert_eq!(runtime, wasm);
     assert!(runtime.requested_threads >= 1);
     assert_eq!(runtime.effective_threads, 0);
-    assert!(matches!(
-        runtime.resolved_mode.as_str(),
-        "single" | "threaded"
-    ));
-    assert_ne!(
-        runtime.fallback_reason.as_deref(),
-        Some("runtime scheduling diagnostics are not yet available in the Rust bridge")
-    );
+    assert_eq!(runtime.resolved_mode, expected_mode);
+    assert_eq!(runtime.fallback_reason, None);
 }
 
 #[test]
@@ -94,20 +130,11 @@ fn runtime_reports_requested_and_effective_threads_after_task_clamp() {
 }
 
 #[test]
-fn runtime_invalid_override_falls_back_to_native_resolution() {
+fn runtime_invalid_override_falls_back_to_default_resolution() {
+    let fallback = runtime_probe(2, None, RequestedRuntimeMode::Auto);
     let diagnostics = runtime_probe(2, Some("invalid"), RequestedRuntimeMode::Auto);
 
-    assert!(diagnostics.requested_threads >= 1);
-    assert!(diagnostics.effective_threads >= 1);
-    assert!(diagnostics.effective_threads <= 2);
-    assert!(matches!(
-        diagnostics.resolved_mode.as_str(),
-        "single" | "threaded"
-    ));
-    assert_ne!(
-        diagnostics.fallback_reason.as_deref(),
-        Some("runtime scheduling diagnostics are not yet available in the Rust bridge")
-    );
+    assert_eq!(diagnostics, fallback);
 }
 
 #[test]
@@ -159,24 +186,28 @@ fn runtime_waits_for_all_started_tasks_before_reporting_error() {
 
 #[test]
 fn runtime_uses_lowest_failing_index_regardless_of_completion_order() {
+    let options = RuntimeSchedulingOptions {
+        thread_override: Some("4"),
+        requested_mode: RequestedRuntimeMode::Auto,
+    };
     let seen: Arc<Vec<AtomicUsize>> =
         Arc::new((0..4).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>());
     let allow_index_zero = Arc::new(AtomicBool::new(false));
     let task_seen = Arc::clone(&seen);
     let release_zero = Arc::clone(&allow_index_zero);
+    let diagnostics = runtime_probe(4, options.thread_override, options.requested_mode);
 
     let error = assert_runtime_error(run_indexed_tasks(
         4,
-        RuntimeSchedulingOptions {
-            thread_override: Some("4"),
-            requested_mode: RequestedRuntimeMode::Auto,
-        },
+        options,
         move |index| {
             task_seen[index].store(1, Ordering::Relaxed);
 
             if index == 0 {
-                while !release_zero.load(Ordering::Acquire) {
-                    std::hint::spin_loop();
+                if diagnostics.effective_threads > 1 {
+                    while !release_zero.load(Ordering::Acquire) {
+                        std::hint::spin_loop();
+                    }
                 }
                 return Err(ProbeError::CorruptData);
             }
