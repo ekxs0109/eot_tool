@@ -32,6 +32,10 @@ pub fn temp_ttf() -> PathBuf {
     temp_path("otf-convert", "ttf")
 }
 
+pub fn temp_eot() -> PathBuf {
+    temp_path("otf-convert", "eot")
+}
+
 pub fn run_fonttool<I, S>(args: I) -> Output
 where
     I: IntoIterator<Item = S>,
@@ -89,12 +93,16 @@ impl Drop for StaticCffRoundtrip {
 }
 
 pub fn encode_static_cff_to_roundtrip_ttf() -> StaticCffRoundtrip {
-    let output_path = temp_path("otf-convert", "eot");
+    encode_otf_to_roundtrip_ttf("testdata/cff-static.otf")
+}
+
+pub fn encode_otf_to_roundtrip_ttf(input_path: &str) -> StaticCffRoundtrip {
+    let output_path = temp_eot();
     let decoded_path = temp_ttf();
 
     let output = run_fonttool([
         "encode",
-        "testdata/cff-static.otf",
+        input_path,
         output_path
             .to_str()
             .expect("temp path should be valid utf-8"),

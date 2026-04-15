@@ -17,9 +17,11 @@ Status legend:
 | `tests/test_decode_pipeline.c` | covered | `tests/rust_integration/decode.rs` | Rust decode CLI path is primary coverage now. |
 | `tests/test_encode_pipeline.c` | partial | `tests/rust_integration/encode.rs` | TrueType encode path is covered; native-only runtime-thread parity checks remain. |
 | `tests/test_eot_header.c` | covered | `crates/fonttool-eot/tests/eot_header.rs` | Header parsing and rejection behavior migrated. |
-| `tests/test_lzcomp.c` | partial | `crates/fonttool-mtx/tests/lz_decode.rs` | Core decode and invalid-stream handling migrated; encode-specific parity remains native. |
+| `tests/test_lzcomp.c` | partial | `crates/fonttool-mtx/tests/lz_decode.rs` | Rust now covers Java reference fixtures, additional truncated-stream shapes, and roundtrips through the current literal encoder; adaptive copy-encoding parity and additional legacy invalid-stream vectors still remain native-only. |
 | `tests/test_mtx_container.c` | covered | `crates/fonttool-mtx/tests/mtx_container.rs` | Container parsing and reject-invalid behavior migrated. |
+| `tests/test_sfnt_writer.c` | covered | `crates/fonttool-sfnt/tests/sfnt_serialize.rs` | Rust now covers directory structure, alignment/padding, sorting, search-range fields, OTTO preservation, checksum calculation, and `head` checksum-adjustment behavior. |
 | `tests/test_otf_convert.cc` | partial | `tests/rust_integration/otf_convert.rs` | Static CFF encode and variable CFF2 subset flow are covered; runtime-mode parity and error-order cases remain native. |
+| `tests/test_coretext_acceptance.c` | covered | `tests/rust_integration/validation.rs` + `tests/macos-swift/...` | macOS Rust validation now roundtrips `testdata/cff-static.otf` through the current CLI/adapter path and invokes the Swift CoreText probe on the produced TTF; exact legacy fixture parity remains archived-only. |
 | `tests/test_wasm_api.cc` | partial | `tests/rust_integration/runtime_wasm.rs` | Rust-facing runtime/WASM bridge shape is covered; native buffer ABI, variable-font conversion success, and legacy runtime diagnostics remain native-only. |
 
 ## Partially Covered Or Deferred
@@ -29,15 +31,13 @@ Status legend:
 | `tests/test_cff_reader.cc` | partial | `crates/fonttool-cff` tests | Rust OTF inspection exists, but detailed reader parity is still native. |
 | `tests/test_cff_variation.cc` | partial | `tests/rust_integration/otf_convert.rs` + future `fonttool-cff` tests | Variation rejection and instance export are only partially represented today. |
 | `tests/test_cli.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + `crates/fonttool-cli/tests/workspace_cli_smoke.rs` + existing integration tests | Rust now covers top-level help/no-command behavior, unknown command status, decode/encode missing-arg contract errors, and subset parser rejection cases (missing value, duplicate/missing selection mode, unsupported flag). Native-only gaps remain for legacy-specific success-message/fixture-parity CLI assertions. |
-| `tests/test_coretext_acceptance.c` | covered | `tests/rust_integration/validation.rs` + `tests/macos-swift/...` | macOS Rust validation now roundtrips `testdata/cff-static.otf` through the current CLI/adapter path and invokes the Swift CoreText probe on the produced TTF; exact legacy fixture parity remains archived-only. |
 | `tests/test_cu2qu.cc` | deferred | future `crates/fonttool-cff` or `fonttool-glyf` tests | Conversion internals not yet migrated into Rust ownership. |
 | `tests/test_cvt_codec.c` | deferred | future `fonttool-mtx` tests | `cvt` codec surface is not yet a Rust-owned public module. |
 | `tests/test_glyf_codec.c` | deferred | future `crates/fonttool-glyf` tests | Encode path exists, but detailed codec vectors are not yet ported. |
 | `tests/test_hdmx_codec.c` | deferred | future `fonttool-mtx`/integration tests | HDMX preservation/drop semantics still partly native-owned. |
-| `tests/test_otf_parity.cc` | partial | `tests/rust_integration/otf_convert.rs` + future parity helpers | OTF flow exists in Rust, but fonttools parity details remain native-only. |
+| `tests/test_otf_parity.cc` | partial | `tests/rust_integration/otf_convert.rs` + future parity helpers | Rust now covers static OTF roundtrip field checks for `post`, `hhea`, and serialized `head` metadata, but fonttools byte-parity and runtime-mode determinism checks remain native-only. |
 | `tests/test_parallel_runtime.cc` | deferred | future `crates/fonttool-runtime` tests | Current Rust runtime slice only exposes static mode/diagnostics defaults, not full task scheduling semantics. |
 | `tests/test_sfnt_subset.c` | partial | `tests/rust_integration/subset.rs` + future `fonttool-subset` tests | Rust subset planning is covered, but many native subset invariants remain. |
-| `tests/test_sfnt_writer.c` | deferred | future `crates/fonttool-sfnt` tests | Serialization coverage in Rust is still narrow. |
 | `tests/test_subset_args.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + future `fonttool-cli` integration tests | Core subset argument guardrails are now covered for current Rust parser contract; additional legacy edge-case parity remains to be migrated. |
 | `tests/test_table_policy.c` | deferred | future CLI/integration tests | Table retention policy is only indirectly covered right now. |
 | `tests/test_ttf_rebuilder.cc` | deferred | future `fonttool-glyf`/`fonttool-cff` tests | Rebuilder internals still live behind the legacy backend. |
