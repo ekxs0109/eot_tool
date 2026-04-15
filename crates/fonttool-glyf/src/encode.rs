@@ -387,28 +387,31 @@ fn split_push_code(instructions: &[u8]) -> Result<(usize, Vec<u8>, Vec<u8>), Gly
     let mut push_values = Vec::new();
 
     while i + 1 < instructions.len() {
-        let mut ix = i + 1;
         let instr = instructions[i];
-        let (count, value_size) = if instr == TT_NPUSHB || instr == TT_NPUSHW {
-            (usize::from(instructions[ix]), usize::from((instr & 1) + 1))
+        let (mut ix, count, value_size) = if instr == TT_NPUSHB || instr == TT_NPUSHW {
+            let count_index = i + 1;
+            (
+                count_index + 1,
+                usize::from(*instructions.get(count_index).ok_or(GlyfEncodeError::CorruptData)?),
+                usize::from((instr & 1) + 1),
+            )
         } else if (TT_PUSHB_BASE..0xC0).contains(&instr) {
             (
+                i + 1,
                 usize::from(1 + (instr & 7)),
                 usize::from(((instr & 8) >> 3) + 1),
             )
         } else {
             break;
         };
-
-        ix += 1;
         let payload_size = count
             .checked_mul(value_size)
             .ok_or(GlyfEncodeError::CorruptData)?;
-        if i.checked_add(payload_size)
+        if ix.checked_add(payload_size)
             .ok_or(GlyfEncodeError::CorruptData)?
             > instructions.len()
         {
-            break;
+            return Err(GlyfEncodeError::CorruptData);
         }
 
         for _ in 0..count {
@@ -621,4 +624,159 @@ fn read_u32_be(bytes: &[u8], offset: usize) -> Result<u32, GlyfEncodeError> {
         .get(offset..offset + 4)
         .ok_or(GlyfEncodeError::CorruptData)?;
     Ok(u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_triplet_reference(on_curve: bool, dx: i32, dy: i32) -> (u8, Vec<u8>) {
+        let abs_x = dx.unsigned_abs();
+        let abs_y = dy.unsigned_abs();
+        let on_curve_bit = if on_curve { 0 } else { 128 };
+        let x_sign_bit = if dx < 0 { 0 } else { 1 };
+        let y_sign_bit = if dy < 0 { 0 } else { 1 };
+        let xy_sign_bits = x_sign_bit + 2 * y_sign_bit;
+
+        if dx == 0 && abs_y < 1280 {
+            return (
+                (on_curve_bit + (((abs_y & 0xF00) >> 7) as i32) + y_sign_bit) as u8,
+                vec![(abs_y & 0xFF) as u8],
+            );
+        }
+        if dy == 0 && abs_x < 1280 {
+            return (
+                (on_curve_bit + 10 + (((abs_x & 0xF00) >> 7) as i32) + x_sign_bit) as u8,
+                vec![(abs_x & 0xFF) as u8],
+            );
+        }
+        if abs_x < 65 && abs_y < 65 {
+            return (
+                (on_curve_bit + 20 + ((abs_x as i32 - 1) & 0x30) + (((abs_y as i32 - 1) & 0x30) >> 2)
+                    + xy_sign_bits) as u8,
+                vec![((((abs_x - 1) as u8) & 0x0F) << 4) | (((abs_y - 1) as u8) & 0x0F)],
+            );
+        }
+        if abs_x < 769 && abs_y < 769 {
+            return (
+                (on_curve_bit + 84 + 12 * (((abs_x - 1) & 0x300) >> 8) as i32
+                    + (((abs_y - 1) & 0x300) >> 6) as i32
+                    + xy_sign_bits) as u8,
+                vec![((abs_x - 1) & 0xFF) as u8, ((abs_y - 1) & 0xFF) as u8],
+            );
+        }
+        if abs_x < 4096 && abs_y < 4096 {
+            return (
+                (on_curve_bit + 120 + xy_sign_bits) as u8,
+                vec![
+                    (abs_x >> 4) as u8,
+                    (((abs_x & 0x0F) as u8) << 4) | ((abs_y >> 8) as u8),
+                    (abs_y & 0xFF) as u8,
+                ],
+            );
+        }
+
+        (
+            (on_curve_bit + 124 + xy_sign_bits) as u8,
+            vec![
+                ((abs_x >> 8) & 0xFF) as u8,
+                (abs_x & 0xFF) as u8,
+                ((abs_y >> 8) & 0xFF) as u8,
+                (abs_y & 0xFF) as u8,
+            ],
+        )
+    }
+
+    #[test]
+    fn encode_255_ushort_examples_match_reference() {
+        let values = [0u16, 252, 253, 505, 506, 761, 762, 65535];
+
+        for value in values {
+            let encoded = encode_255_ushort(value).expect("encode should succeed");
+            let expected = if value < 253 {
+                vec![value as u8]
+            } else if value < 506 {
+                vec![255, (value - 253) as u8]
+            } else if value < 762 {
+                vec![254, (value - 506) as u8]
+            } else {
+                let mut out = vec![253];
+                out.extend_from_slice(&value.to_be_bytes());
+                out
+            };
+            assert_eq!(encoded, expected, "value {value}");
+        }
+    }
+
+    #[test]
+    fn encode_255_short_examples_match_reference() {
+        let values = [0i16, 249, 250, 499, 500, 749, 750, -1, -250, -500, -749, -750];
+
+        for value in values {
+            let encoded = encode_255_short(value).expect("encode should succeed");
+            let expected = if !(-749..=749).contains(&value) {
+                let mut out = vec![253];
+                out.extend_from_slice(&(value as u16).to_be_bytes());
+                out
+            } else {
+                let mut out = Vec::new();
+                let mut short_value = i32::from(value);
+                if short_value < 0 {
+                    out.push(250);
+                    short_value = -short_value;
+                }
+                if short_value >= 250 {
+                    short_value -= 250;
+                    if short_value >= 250 {
+                        short_value -= 250;
+                        out.push(254);
+                    } else {
+                        out.push(255);
+                    }
+                }
+                out.push(short_value as u8);
+                out
+            };
+            assert_eq!(encoded, expected, "value {value}");
+        }
+    }
+
+    #[test]
+    fn encode_triplet_examples_match_reference() {
+        let cases = [
+            (true, 0, 10),
+            (true, 10, 0),
+            (false, 5, -5),
+            (true, 300, 500),
+            (true, 1000, 2048),
+            (false, -5000, 6000),
+        ];
+
+        for (on_curve, dx, dy) in cases {
+            let actual = encode_triplet(on_curve, dx, dy).expect("triplet should encode");
+            let expected = write_triplet_reference(on_curve, dx, dy);
+            assert_eq!(actual, expected, "case ({on_curve}, {dx}, {dy})");
+        }
+    }
+
+    #[test]
+    fn split_push_code_examples_match_reference() {
+        let instructions = [0xB1, 11, 22, 0xB0, 11, 0xB0, 33, 0xB0, 11, 0x2B];
+
+        let (push_count, push_stream, code_stream) =
+            split_push_code(&instructions).expect("split should succeed");
+
+        assert_eq!(push_count, 5);
+        assert_eq!(push_stream, vec![11, 22, 251, 33]);
+        assert_eq!(code_stream, vec![0x2B]);
+    }
+
+    #[test]
+    fn split_push_code_truncated_leading_push_is_corrupt() {
+        let instructions = [0xB1, 11];
+
+        let err = split_push_code(&instructions).unwrap_err();
+
+        assert_eq!(err, GlyfEncodeError::CorruptData);
+    }
 }

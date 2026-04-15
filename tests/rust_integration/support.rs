@@ -5,10 +5,21 @@ use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let from_manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
-        .expect("workspace root should exist")
+        .expect("workspace root should exist");
+
+    if from_manifest.join("build/fonttool").exists() {
+        return from_manifest;
+    }
+
+    from_manifest
+        .parent()
+        .and_then(|path| path.parent())
+        .map(Path::to_path_buf)
+        .and_then(|path| path.canonicalize().ok())
+        .unwrap_or(from_manifest)
 }
 
 #[allow(dead_code)]
@@ -106,9 +117,22 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new(workspace_root().join("build/fonttool"))
+    let workspace = workspace_root();
+    let candidate_roots = std::iter::once(workspace.clone()).chain(
+        fs::read_dir(workspace.join(".worktrees"))
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok().map(|entry| entry.path())),
+    );
+    let legacy_fonttool = candidate_roots
+        .map(|root| root.join("build/fonttool"))
+        .find(|path| path.exists())
+        .unwrap_or_else(|| workspace.join("build/fonttool"));
+
+    Command::new(legacy_fonttool)
         .args(args)
-        .current_dir(workspace_root())
+        .current_dir(workspace)
         .output()
         .expect("legacy fonttool binary should launch")
 }

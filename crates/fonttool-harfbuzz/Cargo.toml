@@ -6,4 +6,5 @@ publish = false
 version.workspace = true
 
 [dependencies]
+hb-subset = { version = "0.3.0", features = ["bundled"] }
 fonttool-subset = { path = "../fonttool-subset" }

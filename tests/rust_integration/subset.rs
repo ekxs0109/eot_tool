@@ -4,8 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fonttool_eot::build_eot_file;
-use fonttool_mtx::{compress_lz_literals, pack_mtx_container};
+use fonttool_eot::{build_eot_file, parse_eot_header};
+use fonttool_mtx::parse_mtx_container;
 use fonttool_sfnt::{load_sfnt, serialize_sfnt};
 
 const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
@@ -257,7 +257,10 @@ fn assert_subset_rebuilds_core_tables(input_path: &Path, output_path: &Path) {
         "subset glyf table should be rebuilt smaller than the source"
     );
 
-    assert_eq!(glyph_length(&output_font, 0), glyph_length(&input_font, 0));
+    assert!(
+        glyph_length(&output_font, 0) > 0,
+        "subset glyph 0 should retain a .notdef outline"
+    );
     assert!(glyph_length(&output_font, 1) > 0, "subset glyph 1 should retain outline data");
     assert!(glyph_length(&output_font, 2) > 0, "subset glyph 2 should retain outline data");
     assert!(glyph_length(&output_font, 3) > 0, "subset glyph 3 should retain outline data");
@@ -295,7 +298,7 @@ fn build_subset_fixture_font(include_extra_tables: bool) -> fonttool_sfnt::Owned
 
 fn prepare_plain_subset_ttf_fixture() -> (PathBuf, TempCleanup) {
     let ttf_path = temp_derived_file("fixture", "ttf");
-    let font = build_subset_fixture_font(false);
+    let font = build_subset_fixture_font(true);
     fs::write(&ttf_path, serialize_sfnt(&font).expect("fixture font should serialize"))
         .expect("fixture ttf should be writable");
 
@@ -303,13 +306,32 @@ fn prepare_plain_subset_ttf_fixture() -> (PathBuf, TempCleanup) {
     (ttf_path, cleanup)
 }
 
-fn prepare_supported_subset_wrapper_fixture() -> (PathBuf, PathBuf, PathBuf, TempCleanup) {
+fn prepare_real_subset_wrapper_fixture() -> (PathBuf, PathBuf, PathBuf, TempCleanup) {
     let ttf_path = temp_derived_file("fixture", "ttf");
     let eot_path = temp_derived_file("fixture", "eot");
     let fntdata_path = temp_derived_file("fixture", "fntdata");
     let font = build_subset_fixture_font(true);
     let subset_bytes = serialize_sfnt(&font).expect("fixture font should serialize");
     fs::write(&ttf_path, &subset_bytes).expect("fixture ttf should be writable");
+
+    let encode = support::run_fonttool([
+        "encode",
+        ttf_path.to_str().expect("fixture path should be valid utf-8"),
+        eot_path.to_str().expect("fixture path should be valid utf-8"),
+    ]);
+    assert!(
+        encode.status.success(),
+        "expected Rust encode fixture to succeed, stderr: {}",
+        String::from_utf8_lossy(&encode.stderr)
+    );
+
+    let eot_bytes = fs::read(&eot_path).expect("fixture eot should be readable");
+    let header = parse_eot_header(&eot_bytes).expect("fixture header should parse");
+    let payload_start = header.header_length as usize;
+    let payload_end = payload_start + header.font_data_size as usize;
+    let payload = &eot_bytes[payload_start..payload_end];
+    let container = parse_mtx_container(payload).expect("fixture MTX should parse");
+    assert_eq!(container.num_blocks, 3, "fixture should use real multi-block MTX");
 
     let head = font
         .table(TAG_HEAD)
@@ -321,12 +343,9 @@ fn prepare_supported_subset_wrapper_fixture() -> (PathBuf, PathBuf, PathBuf, Tem
         .expect("fixture font should contain OS/2")
         .data
         .clone();
-    let block1 = compress_lz_literals(&subset_bytes).expect("fixture block1 should compress");
-    let mtx_payload = pack_mtx_container(&block1, None, None).expect("fixture MTX should pack");
-    let eot_bytes = build_eot_file(&head, &os2, &mtx_payload, false)
-        .expect("fixture EOT should build");
-    fs::write(&eot_path, eot_bytes).expect("fixture eot should be writable");
-    fs::copy(&eot_path, &fntdata_path).expect("fixture fntdata copy should be writable");
+    let fntdata_bytes = build_eot_file(&head, &os2, payload, true)
+        .expect("fixture fntdata should build");
+    fs::write(&fntdata_path, fntdata_bytes).expect("fixture fntdata should be writable");
 
     let cleanup = TempCleanup::new(vec![ttf_path.clone(), eot_path.clone(), fntdata_path.clone()]);
     (ttf_path, eot_path, fntdata_path, cleanup)
@@ -355,7 +374,7 @@ fn subset_wingdings3_eot_glyph_ids_rebuilds_core_tables_and_drops_warning_tables
     let output_path = temp_file("eot");
     let isolated_cwd = temp_file("cwd");
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
-    let (ttf_input_path, eot_input_path, _fntdata_path, _cleanup) = prepare_supported_subset_wrapper_fixture();
+    let (ttf_input_path, eot_input_path, _fntdata_path, _cleanup) = prepare_real_subset_wrapper_fixture();
 
     let output = run_subset_command(
         &[
@@ -381,8 +400,8 @@ fn subset_wingdings3_eot_glyph_ids_rebuilds_core_tables_and_drops_warning_tables
         "expected HDMX warning, stderr: {stderr}"
     );
     assert!(
-        stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
-        "expected VDMX warning, stderr: {stderr}"
+        !stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
+        "real Rust encode already drops VDMX before subset, stderr: {stderr}"
     );
     assert!(output_path.is_file(), "expected subset to create an output file");
 
@@ -400,7 +419,7 @@ fn subset_wingdings3_eot_glyph_ids_rebuilds_core_tables_and_drops_warning_tables
 
 #[test]
 fn subset_wingdings3_fntdata_glyph_ids_rebuilds_core_tables_and_drops_warning_tables() {
-    let (ttf_input_path, _eot_path, fntdata_path, _cleanup) = prepare_supported_subset_wrapper_fixture();
+    let (ttf_input_path, _eot_path, fntdata_path, _cleanup) = prepare_real_subset_wrapper_fixture();
     let output_path = temp_file("fntdata");
     let isolated_cwd = temp_file("cwd");
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
@@ -429,8 +448,8 @@ fn subset_wingdings3_fntdata_glyph_ids_rebuilds_core_tables_and_drops_warning_ta
         "expected HDMX warning, stderr: {stderr}"
     );
     assert!(
-        stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
-        "expected VDMX warning, stderr: {stderr}"
+        !stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
+        "real Rust encode already drops VDMX before subset, stderr: {stderr}"
     );
     assert!(output_path.is_file(), "expected subset to create an output file");
 
@@ -470,8 +489,14 @@ fn subset_opensans_ttf_glyph_ids_rebuilds_core_tables() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("warning: unsupported HDMX"), "stderr: {stderr}");
-    assert!(!stderr.contains("warning: unsupported VDMX"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("warning: unsupported HDMX in subset path; dropping table"),
+        "expected HDMX warning, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
+        "expected VDMX warning, stderr: {stderr}"
+    );
     assert!(output_path.is_file(), "expected subset to create an output file");
 
     let decoded_path = decode_subset_output(&output_path);

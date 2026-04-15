@@ -154,6 +154,12 @@ inputs with `--glyph-ids`, rebuilds the supported subset tables
 wrapped with the PPT XOR flag so the CLI can preserve the expected container
 shape.
 
+For `.eot` / `.fntdata` input, the Rust subset path now reconstructs a real
+SFNT from the current Rust-encoded multi-block MTX payload (`block1` +
+`block2` + `block3`) before handing the font to HarfBuzz. This support is
+specific to the subset input bridge; the standalone Rust `decode` command still
+keeps its narrower supported surface.
+
 Extra-table behavior across the supported non-OTF subset path is:
 
 - `cmap`: rebuilt for the selected glyph subset

@@ -497,6 +497,34 @@ fn subset_cff_bytes_with_ttf_extension_still_use_otf_boundary() {
 }
 
 #[test]
+fn subset_non_otf_with_variation_is_rejected_by_current_contract() {
+    let output_path = temp_path("subset-non-otf-variation", "eot");
+    let output = run_fonttool([
+        "subset",
+        "testdata/OpenSans-Regular.ttf",
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+        "--glyph-ids",
+        "0,35",
+        "--variation",
+        "wght=700",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("subset does not support --variation for non-OTF input"),
+        "expected non-OTF variation rejection, stderr: {stderr}"
+    );
+    assert!(
+        !output_path.exists(),
+        "subset should not create output for rejected non-OTF variation input"
+    );
+}
+
+#[test]
 fn subset_otf_without_text_is_rejected_by_current_contract() {
     let output = run_fonttool([
         "subset",

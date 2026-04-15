@@ -63,7 +63,7 @@ Phase 1 shared-support native files and shellout/deferred adapter callsites.
 | CLI `encode` for TrueType input to `.eot` | supported | rust | no | Rust owns the TTF encode path and current Rust tests cover structure, `VDMX` omission, `cvt` retention in block1, and a synthetic `hdmx` roundtrip probe. |
 | CLI `encode` PowerPoint-compatible `.fntdata` output and `0x10000000` flag semantics | unsupported | rust | yes | The archived native compatibility path still documents this workflow, but the current Rust CLI always calls `build_eot_file(..., false)`. Manual header probe on 2026-04-15 saw flags `0x4`, not `0x10000000`. |
 | CLI `encode` for `OTF(CFF/CFF2)` input | unsupported | rust | yes | Rust CLI now rejects this path with `OTF(CFF/CFF2) encode remains Phase 3-owned...` instead of shelling out through `fonttool-cff`. Archived native compatibility commands remain available via `./build/fonttool`. |
-| CLI `subset` for non-OTF input with `--glyph-ids` | supported | rust | no | Rust now owns this supported subset slice directly, including `.eot` / `.fntdata` wrappers, `maxp.numGlyphs` updates, and HDMX/VDMX warning drops when those tables are present. |
+| CLI `subset` for non-OTF input with `--glyph-ids` | supported | rust | no | Rust now owns this supported subset slice directly, including `.eot` / `.fntdata` wrappers, the current Rust-encoded MTX `block1` + `block2` + `block3` input bridge back to SFNT, HarfBuzz-backed subset execution, `maxp.numGlyphs` updates, and HDMX/VDMX warning drops when those tables are present. |
 | CLI `subset` for `OTF(CFF/CFF2)` input with `--text` and optional `--variation` | unsupported | rust | yes | Rust CLI validates the contract, then rejects the execution path with `OTF(CFF/CFF2) subset remains Phase 3-owned...` instead of shelling out through `fonttool-cff`. |
 | CLI `subset` for non-OTF input with `--text` | unsupported | rust | no | Current Rust contract explicitly rejects this path with `subset currently only supports --glyph-ids for non-OTF input`. |
 | CLI `subset --keep-gids` | unsupported | legacy | no | Still only covered in native tests (`tests/test_subset_args.c`, `tests/test_cli.c`). The Rust CLI does not accept the flag today. |
@@ -76,13 +76,13 @@ Phase 1 shared-support native files and shellout/deferred adapter callsites.
 | --- | --- | --- | --- | --- |
 | MTX container parsing plus LZ block1 decode for the supported Rust decode slice | supported | rust | no | Rust owns the current block1 decode path and rejects out-of-scope extra blocks. |
 | LZ adaptive copy-encoding parity and additional native invalid-stream vectors from `tests/test_lzcomp.c` | archive-only | legacy | no | Rust `fonttool-mtx` covers the literal encoder and migrated fixture set; remaining parity vectors are still native-only reference coverage. |
-| `cvt` preservation in current encode/decode flows | supported | mixed | yes | Rust encode preserves `cvt` bytes in block1, but full legacy-decodable roundtrip coverage for real fixtures still depends on native decode/parity paths. |
-| `HDMX` preservation on encode/decode | supported | mixed | yes | Rust encode coverage uses a synthetic `hdmx` font and native decode/parity helpers for roundtrip verification. |
+| `cvt` preservation in current encode/decode flows | supported | rust | no | Rust now owns the supported `cvt` codec helper surface (`cvt_encode` / `cvt_decode`) and current encode/decode preservation coverage for the supported path. |
+| `HDMX` preservation on encode/decode | supported | rust | no | Rust now owns the supported `hdmx` codec helper surface (`hdmx_encode` / `hdmx_decode`), including shared-width decode behavior and roundtrip coverage. |
 | `HDMX` behavior during subset (`warning` + drop) | supported | rust | no | Rust-owned non-OTF subset execution now emits the supported HDMX drop warning and removes the table from the subset output. |
 | `VDMX` behavior during Rust TrueType encode (`drop`) | supported | rust | yes | Rust encode tests cover VDMX omission from the current TrueType encode slice. Legacy warning text parity is still not part of the Rust contract. |
 | `VDMX` behavior during subset (`warning` + drop) | supported | rust | no | Rust-owned non-OTF subset execution now emits the supported VDMX drop warning and removes the table from the subset output. |
-| Native `cvt_codec` unit API (`tests/test_cvt_codec.c`) | archive-only | legacy | no | No Rust-owned public codec module exists yet; keep only as native reference coverage. |
-| Native `hdmx_codec` unit API (`tests/test_hdmx_codec.c`) | archive-only | legacy | no | Detailed codec vectors still live only in the native harness. |
+| Native `cvt_codec` unit API (`tests/test_cvt_codec.c`) | archive-only | legacy | no | The native unit API itself is legacy-only, but the supported codec behavior is now mirrored by Rust-owned `fonttool-mtx` helpers and tests. |
+| Native `hdmx_codec` unit API (`tests/test_hdmx_codec.c`) | archive-only | legacy | no | The native unit API itself is legacy-only, but the supported codec behavior is now mirrored by Rust-owned `fonttool-mtx` helpers and tests. |
 
 ## OTF, Runtime, And WASM Entry Points
 
