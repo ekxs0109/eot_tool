@@ -3,14 +3,12 @@ use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use fonttool_cff::{
-    inspect_otf_font, CffError,
-};
+use fonttool_cff::{inspect_otf_font, CffError};
 use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::encode_glyf;
 use fonttool_mtx::{compress_lz_literals, decompress_lz, pack_mtx_container, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
-use fonttool_subset::GlyphIdRequest;
+use fonttool_subset::{table_policy_for_tag, GlyphIdRequest, TablePolicy};
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
@@ -20,8 +18,6 @@ const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
 const TAG_GLYF: u32 = u32::from_be_bytes(*b"glyf");
 const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
-const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
-const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
 const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
 const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
 
@@ -155,7 +151,10 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     }
 
     if source_font.version_tag() != SFNT_VERSION_TRUETYPE {
-        return Err("encode currently only supports TrueType glyf fonts in the Rust-owned Phase 1 boundary".to_string());
+        return Err(
+            "encode currently only supports TrueType glyf fonts in the Rust-owned Phase 1 boundary"
+                .to_string(),
+        );
     }
 
     let head = table_bytes(&source_font, TAG_HEAD, "head")?;
@@ -193,12 +192,8 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     let encoded_eot = build_eot_file(head, os2, &mtx_payload, false)
         .map_err(|error| format!("failed to build EOT header: {error}"))?;
 
-    fs::write(output_path, encoded_eot).map_err(|error| {
-        format!(
-            "failed to write {}: {error}",
-            output_path.display()
-        )
-    })?;
+    fs::write(output_path, encoded_eot)
+        .map_err(|error| format!("failed to write {}: {error}", output_path.display()))?;
 
     Ok(())
 }
@@ -287,15 +282,22 @@ fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
         Some("eot") | Some("fntdata") => {
             let input_bytes = fs::read(input_path)
                 .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
-            decode_embedded_font_bytes(&input_bytes)
-                .map_err(|error| format!("failed to load subset input {}: {error}", input_path.display()))
+            decode_embedded_font_bytes(&input_bytes).map_err(|error| {
+                format!(
+                    "failed to load subset input {}: {error}",
+                    input_path.display()
+                )
+            })
         }
         _ => fs::read(input_path)
             .map_err(|error| format!("failed to read {}: {error}", input_path.display())),
     }
 }
 
-fn subset_otf_file(request: &SubsetCliRequest, kind: &fonttool_cff::CffFontKind) -> Result<(), String> {
+fn subset_otf_file(
+    request: &SubsetCliRequest,
+    kind: &fonttool_cff::CffFontKind,
+) -> Result<(), String> {
     let text = request
         .text
         .as_deref()
@@ -353,5 +355,9 @@ fn build_block1_font(
 }
 
 fn should_copy_block1_table(tag: u32) -> bool {
-    !matches!(tag, TAG_HEAD | TAG_GLYF | TAG_LOCA | TAG_DSIG | TAG_VDMX)
+    if matches!(tag, TAG_HEAD | TAG_GLYF | TAG_LOCA) {
+        return false;
+    }
+
+    table_policy_for_tag(tag) != TablePolicy::DropWithWarning
 }

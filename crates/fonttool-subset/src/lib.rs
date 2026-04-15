@@ -5,10 +5,35 @@ use core::fmt;
 use fonttool_sfnt::OwnedSfntFont;
 
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
+const TAG_CVT: u32 = u32::from_be_bytes(*b"cvt ");
 const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
 const TAG_HDMX: u32 = u32::from_be_bytes(*b"hdmx");
 const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
 const SUBSET_GID_NOT_INCLUDED: u16 = u16::MAX;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TablePolicy {
+    Keep,
+    Reencode,
+    DropWithWarning,
+}
+
+#[must_use]
+pub fn table_policy_for_tag(tag: u32) -> TablePolicy {
+    match tag {
+        TAG_DSIG | TAG_VDMX => TablePolicy::DropWithWarning,
+        TAG_CVT | TAG_HDMX => TablePolicy::Reencode,
+        _ => TablePolicy::Keep,
+    }
+}
+
+#[must_use]
+pub fn subset_table_policy_for_tag(tag: u32) -> TablePolicy {
+    match tag {
+        TAG_DSIG | TAG_HDMX | TAG_VDMX => TablePolicy::DropWithWarning,
+        _ => TablePolicy::Keep,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlyphIdRequest {
@@ -59,10 +84,7 @@ impl SubsetPlan {
 
     #[must_use]
     pub fn output_num_glyphs(&self) -> u16 {
-        self.included_glyph_ids
-            .len()
-            .try_into()
-            .unwrap_or(u16::MAX)
+        self.included_glyph_ids.len().try_into().unwrap_or(u16::MAX)
     }
 
     #[must_use]
@@ -156,17 +178,77 @@ pub fn plan_glyph_subset(
     })
 }
 
-pub fn apply_output_table_policy(
-    font: &mut OwnedSfntFont,
-    warnings: &mut SubsetWarnings,
-) {
-    if font.remove_table(TAG_DSIG).is_some() {
-        // No dedicated CLI warning for DSIG in this slice.
+pub fn apply_output_table_policy(font: &mut OwnedSfntFont, warnings: &mut SubsetWarnings) {
+    for tag in [TAG_DSIG, TAG_HDMX, TAG_VDMX] {
+        if subset_table_policy_for_tag(tag) != TablePolicy::DropWithWarning {
+            continue;
+        }
+
+        if font.remove_table(tag).is_none() {
+            continue;
+        }
+
+        match tag {
+            TAG_HDMX => warnings.dropped_hdmx = true,
+            TAG_VDMX => warnings.dropped_vdmx = true,
+            TAG_DSIG => {}
+            _ => unreachable!("subset output table policy only handles known tags"),
+        }
     }
-    if font.remove_table(TAG_HDMX).is_some() {
-        warnings.dropped_hdmx = true;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        apply_output_table_policy, subset_table_policy_for_tag, table_policy_for_tag,
+        SubsetWarnings, TablePolicy,
+    };
+    use fonttool_sfnt::{OwnedSfntFont, SFNT_VERSION_TRUETYPE};
+
+    const TAG_CVT: u32 = u32::from_be_bytes(*b"cvt ");
+    const TAG_HDMX: u32 = u32::from_be_bytes(*b"hdmx");
+    const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
+    const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
+
+    #[test]
+    fn table_policy_classifies_extra_tables() {
+        assert_eq!(table_policy_for_tag(TAG_CVT), TablePolicy::Reencode);
+        assert_eq!(table_policy_for_tag(TAG_HDMX), TablePolicy::Reencode);
+        assert_eq!(table_policy_for_tag(TAG_VDMX), TablePolicy::DropWithWarning);
     }
-    if font.remove_table(TAG_VDMX).is_some() {
-        warnings.dropped_vdmx = true;
+
+    #[test]
+    fn table_policy_keeps_other_tables() {
+        assert_eq!(table_policy_for_tag(TAG_NAME), TablePolicy::Keep);
+    }
+
+    #[test]
+    fn subset_table_policy_classifies_extra_tables() {
+        assert_eq!(subset_table_policy_for_tag(TAG_CVT), TablePolicy::Keep);
+        assert_eq!(
+            subset_table_policy_for_tag(TAG_HDMX),
+            TablePolicy::DropWithWarning
+        );
+        assert_eq!(
+            subset_table_policy_for_tag(TAG_VDMX),
+            TablePolicy::DropWithWarning
+        );
+    }
+
+    #[test]
+    fn apply_output_table_policy_drops_warning_tables_and_keeps_cvt() {
+        let mut font = OwnedSfntFont::new(SFNT_VERSION_TRUETYPE);
+        font.add_table(TAG_CVT, vec![0x00, 0x10]);
+        font.add_table(TAG_HDMX, vec![0x00, 0x01]);
+        font.add_table(TAG_VDMX, vec![0x00, 0x02]);
+
+        let mut warnings = SubsetWarnings::default();
+        apply_output_table_policy(&mut font, &mut warnings);
+
+        assert!(font.table(TAG_CVT).is_some(), "cvt should be retained");
+        assert!(font.table(TAG_HDMX).is_none(), "hdmx should be dropped");
+        assert!(font.table(TAG_VDMX).is_none(), "VDMX should be dropped");
+        assert!(warnings.dropped_hdmx, "hdmx drop should set a warning");
+        assert!(warnings.dropped_vdmx, "VDMX drop should set a warning");
     }
 }
