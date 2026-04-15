@@ -9,11 +9,21 @@ progress.
 Interpretation:
 
 - `supported`: a current workflow or API that the repository still presents as a
-  valid path today, even if it still delegates to legacy code.
+  valid path today, even if it still delegates to legacy code. This includes
+  retained verification and validation utilities that are still part of the
+  accepted repository workflow.
 - `unsupported`: a surface that the current Rust-first contract rejects,
   documents as not yet available, or fails to honor with the legacy semantics.
 - `archive-only`: retained for parity, reference, compatibility commands, or
   native-harness coverage only; not part of the forward supported boundary.
+
+Implementation-owner labels:
+
+- `rust`: the current behavior is implemented through Rust-owned code paths
+- `legacy`: the current behavior is still implemented only by the native code or
+  native-only tooling
+- `mixed`: Rust owns part of the user-facing surface, but execution still
+  depends on legacy implementation or legacy-backed verification
 
 Inputs used for this matrix:
 
