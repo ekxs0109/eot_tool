@@ -35,6 +35,11 @@ pub fn subset_table_policy_for_tag(tag: u32) -> TablePolicy {
     }
 }
 
+#[must_use]
+pub fn should_copy_encode_block1_table(tag: u32) -> bool {
+    !matches!(table_policy_for_tag(tag), TablePolicy::DropWithWarning)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlyphIdRequest {
     glyph_ids: Vec<u16>,
@@ -200,8 +205,8 @@ pub fn apply_output_table_policy(font: &mut OwnedSfntFont, warnings: &mut Subset
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_output_table_policy, subset_table_policy_for_tag, table_policy_for_tag,
-        SubsetWarnings, TablePolicy,
+        apply_output_table_policy, should_copy_encode_block1_table, subset_table_policy_for_tag,
+        table_policy_for_tag, SubsetWarnings, TablePolicy,
     };
     use fonttool_sfnt::{OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 
@@ -250,5 +255,13 @@ mod tests {
         assert!(font.table(TAG_VDMX).is_none(), "VDMX should be dropped");
         assert!(warnings.dropped_hdmx, "hdmx drop should set a warning");
         assert!(warnings.dropped_vdmx, "VDMX drop should set a warning");
+    }
+
+    #[test]
+    fn encode_block1_copy_policy_only_keeps_keep_tables() {
+        assert!(should_copy_encode_block1_table(TAG_NAME));
+        assert!(should_copy_encode_block1_table(TAG_CVT));
+        assert!(should_copy_encode_block1_table(TAG_HDMX));
+        assert!(!should_copy_encode_block1_table(TAG_VDMX));
     }
 }

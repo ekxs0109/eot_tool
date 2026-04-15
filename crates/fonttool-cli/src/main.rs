@@ -8,7 +8,7 @@ use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::encode_glyf;
 use fonttool_mtx::{compress_lz_literals, decompress_lz, pack_mtx_container, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
-use fonttool_subset::{table_policy_for_tag, GlyphIdRequest, TablePolicy};
+use fonttool_subset::{should_copy_encode_block1_table, GlyphIdRequest};
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
@@ -359,5 +359,5 @@ fn should_copy_block1_table(tag: u32) -> bool {
         return false;
     }
 
-    table_policy_for_tag(tag) != TablePolicy::DropWithWarning
+    should_copy_encode_block1_table(tag)
 }
