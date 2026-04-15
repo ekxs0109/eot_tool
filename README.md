@@ -1,25 +1,19 @@
 # eot_tool
 
-Standalone C/C++ utility for MTX-compressed EOT decode/encode, HarfBuzz-backed
-subset, and native `OTF(CFF/CFF2)` conversion.
+Standalone Rust-first font toolchain for MTX-compressed EOT decode/encode,
+HarfBuzz-backed subset, and native `OTF(CFF/CFF2)` conversion.
 
 ## Build
 
 ```bash
-make
+cargo test --workspace
+cargo run -p fonttool-cli --bin fonttool -- --help
 ```
 
 ## Test
 
 ```bash
-cargo test --workspace
-cargo test --test runtime_wasm
-make test
-make test TESTCASE=cli_help_prints_usage
-make test TESTCASE=eot_header_
-make test TESTCASE=roundtrip_open_sans_writes_decodeable_ttf
-make verify-decode
-make verify-roundtrip
+cargo run -p fonttool-cli --bin fonttool -- decode testdata/font1.fntdata build/out/font1.rust-smoke.otf
 ```
 
 Fuzz smoke build (`fuzz/rust-toolchain.toml` pins nightly; when Homebrew's Rust
@@ -30,10 +24,12 @@ cd fuzz
 PATH="$(brew --prefix rustup)/bin:$PATH" rustup run nightly cargo fuzz build
 ```
 
-Rust is the primary test harness for the migrated decode, encode, subset,
-OTF/CFF conversion, and Rust-facing runtime/WASM bridge slices. The legacy
-native harness is still required for the not-yet-migrated runtime scheduler,
-buffer ABI, CoreText acceptance, and several codec/parity details.
+Rust is the primary build and test path. The legacy native harness remains in
+tree for compatibility and reference coverage, but it is no longer the default
+entrypoint.
+
+See [legacy/README.md](legacy/README.md) for the archived native-harness
+notes.
 
 Migration tracking lives in `tests/rust-test-inventory.md`.
 
@@ -44,8 +40,9 @@ python3 -m venv build/venv
 build/venv/bin/python -m pip install -r tests/requirements.txt
 ```
 
-Python tooling is verification/reference-only. Runtime encode, subset, and the
-browser-facing conversion path remain pure native C/C++.
+Python tooling is verification/reference-only. The Rust workspace owns the
+migrated decode, encode, subset, OTF/CFF conversion, and Rust-facing runtime
+and WASM bridge slices.
 
 Stable verifier entrypoints:
 

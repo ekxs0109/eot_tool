@@ -29,6 +29,11 @@ CXXFLAGS += -I$(ROOT_DIR)/src $(HB_CFLAGS)
 CXXFLAGS += $(THREAD_FLAGS)
 LDFLAGS += $(THREAD_FLAGS)
 
+# Legacy native compatibility glue.
+# Rust workspace commands are the primary entrypoint; keep this file only for
+# historical native build/test coverage and transition-time verification.
+$(warning Makefile is deprecated compatibility glue. Prefer `cargo test --workspace` and `cargo run -p fonttool-cli --bin fonttool -- ...`.)
+
 FONTTOOL_BIN := $(BUILD_DIR)/fonttool
 TEST_BIN := $(BIN_DIR)/test_runner
 
