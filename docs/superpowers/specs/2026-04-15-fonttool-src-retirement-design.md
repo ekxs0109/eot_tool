@@ -51,9 +51,10 @@ through tests and validation.
 The replacement program should prioritize:
 
 1. Rust ownership of shared low-level behavior that influences many call sites
-2. Rust ownership of the full `OTF(CFF/CFF2)` conversion chain
-3. Rust ownership of the remaining native-facing entrypoints and adapters
-4. Final removal of `src/`, legacy Makefile build paths, and native harness
+2. Rust ownership of the remaining MTX/TrueType/subset/native-codec surfaces
+3. Rust ownership of the full `OTF(CFF/CFF2)` conversion chain
+4. Rust ownership of the remaining native-facing entrypoints and adapters
+5. Final removal of `src/`, legacy Makefile build paths, and native harness
    dependencies that are no longer needed
 
 ## Replacement Standard
@@ -62,11 +63,17 @@ Deleting `src/` is allowed only when all of the following are true:
 
 - production CLI behavior is implemented through Rust-owned code paths
 - runtime/WASM-facing behavior is implemented through Rust-owned code paths
+- no Rust production path shells out to `build/fonttool` or any other legacy
+  native binary to provide supported behavior
+- no Rust production or verification path depends on legacy-built WASM artifacts
+  or Emscripten outputs as the canonical implementation artifact
 - remaining native-only tests have either:
   - been migrated into Rust/Swift/Python verification, or
   - been explicitly archived because they only test removed historical helpers
 - `tests/rust-test-inventory.md` no longer lists production-relevant native
   implementation dependencies
+- the support matrix for currently supported behavior is explicitly satisfied
+  by Rust-owned implementations
 - repository build/test docs do not require `src/`
 - `cargo test --workspace` remains the primary verification command and passes
 
@@ -75,6 +82,25 @@ be deleted.
 
 ## Phase Plan
 
+### Phase 0: Define the Support Matrix
+
+Before further deletion work, create and maintain one explicit support matrix
+that classifies each legacy-tested behavior as one of:
+
+- supported and must be preserved during Rust replacement
+- intentionally unsupported in the current product surface
+- historical helper/API behavior that may be archived rather than migrated
+
+The support matrix should be derived from:
+
+- `tests/rust-test-inventory.md`
+- the current Rust CLI/runtime/WASM behavior
+- current Python and Swift validation entrypoints
+- current README-documented workflows
+
+This matrix becomes the source of truth for deletion decisions. If a behavior is
+not classified, it cannot be silently dropped.
+
 ### Phase 1: Replace Shared Native Support Boundaries
 
 Target the native code that currently shapes multiple higher-level paths:
@@ -82,6 +108,7 @@ Target the native code that currently shapes multiple higher-level paths:
 - `parallel_runtime`
 - `table_policy`
 - remaining encode/decode support boundaries that still assume native helpers
+- any runtime-facing glue that still shells out to legacy native binaries
 
 Why first:
 
@@ -95,7 +122,36 @@ Expected outcome:
 - Rust tests replace the remaining native runtime parity checks
 - legacy adapter boundaries no longer need native runtime state
 
-### Phase 2: Replace the OTF/CFF Conversion Chain
+### Phase 2: Replace Remaining MTX/TrueType/Subset Surfaces
+
+Target the remaining native-backed areas outside the OTF conversion chain that
+still appear in the migration inventory as partial/deferred:
+
+- `cvt_codec`
+- `hdmx_codec`
+- `glyf_codec`
+- remaining `lzcomp` / MTX parity surfaces
+- remaining `sfnt_subset`
+- remaining `subset_args`
+- any table-retention logic still effectively owned by `table_policy`
+
+Why before the OTF chain:
+
+- these surfaces still block full retirement of `src/`
+- they define the remaining TrueType/MTX/subset behavior boundaries
+- they are smaller than the OTF chain and remove ambiguity from the support
+  matrix before the most complex replacement phase
+
+Expected outcome:
+
+- Rust owns the remaining MTX/TrueType/subset semantics that are still treated
+  as supported behavior
+- native codec helpers in `src/` are no longer needed for supported encode,
+  decode, or subset paths
+- the migration inventory narrows to the OTF chain, remaining adapters, and
+  explicitly archived historical-only helpers
+
+### Phase 3: Replace the OTF/CFF Conversion Chain
 
 Target the remaining native `OTF(CFF/CFF2)` implementation path:
 
@@ -105,7 +161,7 @@ Target the remaining native `OTF(CFF/CFF2)` implementation path:
 - `tt_rebuilder`
 - `otf_convert`
 
-Why second:
+Why third:
 
 - this is the densest and highest-risk remaining native implementation
 - it currently blocks deletion of large parts of `src/`
@@ -118,14 +174,17 @@ Expected outcome:
 - Rust owns cubic-to-quadratic conversion and TrueType rebuild internals
 - Rust parity tests replace the remaining product-relevant native OTF tests
 
-### Phase 3: Replace Native Entrypoints and Delete `src/`
+### Phase 4: Replace Native Entrypoints and Delete `src/`
 
-Once Phases 1 and 2 are complete, replace the remaining entry and glue layers:
+Once Phases 1 through 3 are complete, replace the remaining entry and glue
+layers:
 
 - `subset_backend_harfbuzz` native glue, if still present
 - `wasm_api`
 - `main.c`
 - any remaining native bridge-only wrapper code
+- any crate-level shellout boundary that still invokes `build/fonttool`
+- any verification path that still requires legacy-built browser/WASM artifacts
 
 Then:
 
@@ -184,6 +243,7 @@ Rust-owned orchestration:
 - runtime entrypoints
 - WASM-facing conversion APIs
 - repository verification commands
+- subset orchestration and HarfBuzz adapter boundaries without native shellout
 
 This does not require removing Python or Swift validation. It requires those
 layers to validate Rust outputs instead of native outputs.
@@ -268,16 +328,18 @@ workspace verification.
 
 ## Recommended Execution Strategy
 
-The next implementation plan should be organized around the three phases above,
-with the first plan targeting Phase 1 only unless the work is split into
-multiple coordinated plans.
+The next implementation plan should be organized around the phased sequence
+above, with the first plan targeting Phase 0 and Phase 1 together unless the
+work is split into multiple coordinated plans.
 
 That plan should:
 
+- define and commit the support matrix that becomes the deletion source of truth
 - identify exactly which current crates need to absorb runtime/table-policy
   ownership
 - map each remaining native file in scope to a Rust destination
-- define the tests that must pass before Phase 1 is considered complete
+- define the tests that must pass before the Phase 0/1 slice is considered
+  complete
 - explicitly list the still-blocked native files that prevent `src/` deletion
 
 ## Acceptance for This Design
