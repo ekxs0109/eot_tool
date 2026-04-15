@@ -115,12 +115,14 @@ pub fn run_fonttools_parity(left: &Path, right: &Path) -> Output {
     ])
 }
 
+#[allow(dead_code)]
 pub struct StaticCffRoundtrip {
     eot_path: PathBuf,
     roundtrip_path: PathBuf,
 }
 
 impl StaticCffRoundtrip {
+    #[allow(dead_code)]
     pub fn font_path(&self) -> &Path {
         &self.roundtrip_path
     }
@@ -133,10 +135,12 @@ impl Drop for StaticCffRoundtrip {
     }
 }
 
+#[allow(dead_code)]
 pub fn encode_static_cff_to_roundtrip_ttf() -> StaticCffRoundtrip {
     encode_otf_to_roundtrip_ttf("testdata/cff-static.otf")
 }
 
+#[allow(dead_code)]
 pub fn encode_otf_to_roundtrip_ttf(input_path: &str) -> StaticCffRoundtrip {
     let output_path = temp_eot();
     let decoded_path = temp_ttf();

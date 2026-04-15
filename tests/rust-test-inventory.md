@@ -15,7 +15,7 @@ Status legend:
 | Legacy test file | Status | Rust destination | Notes |
 | --- | --- | --- | --- |
 | `tests/test_decode_pipeline.c` | covered | `tests/rust_integration/decode.rs` | Rust decode CLI path is primary coverage now. |
-| `tests/test_encode_pipeline.c` | partial | `tests/rust_integration/encode.rs` | TrueType encode path is covered; native-only runtime-thread parity checks remain. |
+| `tests/test_encode_pipeline.c` | partial | `tests/rust_integration/encode.rs` | Rust now covers the current TrueType encode structure, `VDMX` omission from block1 and legacy-decoded roundtrip output, `cvt` retention in encoded block1, and a minimal synthetic `hdmx` roundtrip probe. Remaining native-only or not-yet-supported areas are runtime-thread parity, `VDMX` warning parity, PPT-XOR encode behavior, and full legacy-decodable `cvt` roundtrip for real TTF fixtures. |
 | `tests/test_eot_header.c` | covered | `crates/fonttool-eot/tests/eot_header.rs` | Header parsing and rejection behavior migrated. |
 | `tests/test_lzcomp.c` | partial | `crates/fonttool-mtx/tests/lz_decode.rs` | Rust now covers Java reference fixtures, additional truncated-stream shapes, and roundtrips through the current literal encoder; adaptive copy-encoding parity and additional legacy invalid-stream vectors still remain native-only. |
 | `tests/test_mtx_container.c` | covered | `crates/fonttool-mtx/tests/mtx_container.rs` | Container parsing and reject-invalid behavior migrated. |
