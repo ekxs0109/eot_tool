@@ -202,6 +202,37 @@ pub fn apply_output_table_policy(font: &mut OwnedSfntFont, warnings: &mut Subset
     }
 }
 
+pub fn subset_owned_font(
+    mut font: OwnedSfntFont,
+    request: &GlyphIdRequest,
+) -> Result<(OwnedSfntFont, SubsetWarnings), SubsetError> {
+    let plan = plan_glyph_subset(&font, request, false)?;
+    let mut warnings = SubsetWarnings::default();
+
+    apply_output_table_policy(&mut font, &mut warnings);
+    update_maxp_num_glyphs(&mut font, plan.output_num_glyphs())?;
+
+    Ok((font, warnings))
+}
+
+fn update_maxp_num_glyphs(
+    font: &mut OwnedSfntFont,
+    num_glyphs: u16,
+) -> Result<(), SubsetError> {
+    let mut maxp = font
+        .remove_table(TAG_MAXP)
+        .ok_or(SubsetError::MissingMaxp)?
+        .data;
+
+    if maxp.len() < 6 {
+        return Err(SubsetError::TruncatedMaxp);
+    }
+
+    maxp[4..6].copy_from_slice(&num_glyphs.to_be_bytes());
+    font.add_table(TAG_MAXP, maxp);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

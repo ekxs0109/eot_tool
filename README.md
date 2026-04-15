@@ -141,22 +141,23 @@ Converged runtime behavior:
 - `hdmx`: preserved on encode/decode, including shared trailing advance widths
 - `VDMX`: dropped from the current Rust TrueType encode path
 
-Archived native compatibility behavior still covers warning parity for dropped
-`VDMX`/`HDMX` tables during the old subset/encode paths; those warnings are not
-part of the current Rust-owned Phase 1 contract.
-
-Subset architecture for the archived native compatibility flow is:
+Rust-owned subset support now covers the non-OTF glyph-id path:
 
 - `.eot` / `.fntdata`: `decode -> sfnt subset -> encode`
 - `.ttf`: `sfnt load -> subset -> encode`
 - `.otf`: `native CFF/CFF2 conversion -> subset -> encode`
 
-The archived subset rebuild is HarfBuzz-backed, then re-serialized through the
-existing C runtime. Extra-table behavior across the merged paths is:
+The supported Rust subset path now accepts `.eot`, `.fntdata`, and `.ttf`
+inputs with `--glyph-ids`, updates `maxp.numGlyphs`, and emits warnings when
+`HDMX` or `VDMX` are dropped from the subset output. `.fntdata` output stays
+wrapped with the PPT XOR flag so the CLI can preserve the expected container
+shape.
+
+Extra-table behavior across the supported non-OTF subset path is:
 
 - `cvt`: retained when present in the decoded/subset SFNT
-- `hdmx`: preserved on encode/decode, but dropped during subset with a warning
-- `VDMX`: dropped during encode/subset with a warning
+- `hdmx`: dropped during subset with a warning
+- `VDMX`: dropped during subset with a warning
 
 `--keep-gids` depends on HarfBuzz retain-gids support. The native test suite
 covers that behavior explicitly so unsupported builds fail instead of silently

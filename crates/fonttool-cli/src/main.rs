@@ -8,7 +8,7 @@ use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::encode_glyf;
 use fonttool_mtx::{compress_lz_literals, decompress_lz, pack_mtx_container, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
-use fonttool_subset::{should_copy_encode_block1_table, GlyphIdRequest};
+use fonttool_subset::{should_copy_encode_block1_table, subset_owned_font, GlyphIdRequest};
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
@@ -83,7 +83,7 @@ fn print_help() {
     println!("Commands:");
     println!("  encode <INPUT> <OUTPUT>  Encode a TrueType font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
-    println!("  subset <INPUT> <OUTPUT> ...  Validate subset arguments; execution beyond the current Rust-owned boundary is deferred");
+    println!("  subset <INPUT> <OUTPUT> ...  Subset supported non-OTF glyph-id inputs in Rust");
     println!();
     println!("Options:");
     println!("  -h, --help  Print help");
@@ -208,10 +208,31 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
     let glyph_ids_csv = request.glyph_ids.as_deref().ok_or_else(|| {
         "subset currently only supports --glyph-ids for non-OTF input".to_string()
     })?;
-    GlyphIdRequest::parse_csv(glyph_ids_csv)
+    let glyph_ids = GlyphIdRequest::parse_csv(glyph_ids_csv)
         .map_err(|error| format!("invalid subset arguments: {error}"))?;
+    let input_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+    let (subset_font, subset_warnings) =
+        subset_owned_font(input_font, &glyph_ids).map_err(|error| error.to_string())?;
+    let subset_bytes =
+        serialize_sfnt(&subset_font).map_err(|error| format!("failed to serialize subset: {error}"))?;
+    let block1 = compress_lz_literals(&subset_bytes)
+        .map_err(|error| format!("failed to compress subset block1: {error}"))?;
+    let mtx_payload = pack_mtx_container(&block1, None, None)
+        .map_err(|error| format!("failed to pack subset MTX container: {error}"))?;
+    let head = table_bytes(&subset_font, TAG_HEAD, "head")?;
+    let os2 = table_bytes(&subset_font, TAG_OS_2, "OS/2")?;
+    let encoded_output = build_eot_file(head, os2, &mtx_payload, is_fntdata_output(&request.output_path))
+        .map_err(|error| format!("failed to build subset EOT header: {error}"))?;
 
-    Err("subset execution for non-OTF input remains Phase 2-owned; use the archived native binary for compatibility flows".to_string())
+    fs::write(&request.output_path, encoded_output).map_err(|error| {
+        format!(
+            "failed to write {}: {error}",
+            request.output_path.display()
+        )
+    })?;
+
+    emit_subset_warnings(&subset_warnings);
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -282,7 +303,7 @@ fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
         Some("eot") | Some("fntdata") => {
             let input_bytes = fs::read(input_path)
                 .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
-            decode_embedded_font_bytes(&input_bytes).map_err(|error| {
+            load_subset_input_block1_bytes(&input_bytes).map_err(|error| {
                 format!(
                     "failed to load subset input {}: {error}",
                     input_path.display()
@@ -291,6 +312,46 @@ fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
         }
         _ => fs::read(input_path)
             .map_err(|error| format!("failed to read {}: {error}", input_path.display())),
+    }
+}
+
+fn load_subset_input_block1_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let header =
+        parse_eot_header(input_bytes).map_err(|error| format!("invalid EOT header: {error}"))?;
+    let payload_start = header.header_length as usize;
+    let payload_len = header.font_data_size as usize;
+    let payload_end = payload_start
+        .checked_add(payload_len)
+        .ok_or_else(|| "invalid EOT payload range".to_string())?;
+    let payload = input_bytes
+        .get(payload_start..payload_end)
+        .ok_or_else(|| "invalid EOT payload range".to_string())?;
+
+    let mut payload_bytes = payload.to_vec();
+    if header.flags & EOT_FLAG_PPT_XOR != 0 {
+        for byte in &mut payload_bytes {
+            *byte ^= 0x50;
+        }
+    }
+
+    let container = parse_mtx_container(&payload_bytes)
+        .map_err(|error| format!("invalid MTX container: {error}"))?;
+    decompress_lz(container.block1).map_err(|error| format!("failed to decode MTX block1: {error}"))
+}
+
+fn is_fntdata_output(output_path: &Path) -> bool {
+    output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("fntdata"))
+}
+
+fn emit_subset_warnings(subset_warnings: &fonttool_subset::SubsetWarnings) {
+    if subset_warnings.dropped_hdmx {
+        eprintln!("warning: unsupported HDMX in subset path; dropping table");
+    }
+    if subset_warnings.dropped_vdmx {
+        eprintln!("warning: unsupported VDMX in MTX encode/subset path; dropping table");
     }
 }
 
