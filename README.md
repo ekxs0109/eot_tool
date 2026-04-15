@@ -22,12 +22,12 @@ make verify-decode
 make verify-roundtrip
 ```
 
-Fuzz smoke build (`fuzz/rust-toolchain.toml` pins nightly; run it through
-`rustup` so the override is honored):
+Fuzz smoke build (`fuzz/rust-toolchain.toml` pins nightly; when Homebrew's Rust
+toolchain is ahead of `rustup` on `PATH`, prepend the rustup shims first):
 
 ```bash
 cd fuzz
-rustup run nightly cargo fuzz build
+PATH="$(brew --prefix rustup)/bin:$PATH" rustup run nightly cargo fuzz build
 ```
 
 Rust is the primary test harness for the migrated decode, encode, subset,
