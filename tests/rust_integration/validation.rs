@@ -1,24 +1,10 @@
 mod support;
 
-use std::path::PathBuf;
 use std::process::Command;
-
-fn validation_python() -> PathBuf {
-    let venv_python = support::workspace_root().join("build/venv/bin/python");
-    if venv_python.exists() {
-        venv_python
-    } else {
-        PathBuf::from("python3")
-    }
-}
 
 #[test]
 fn python_verify_font_entrypoint_accepts_a_valid_font() {
-    let output = Command::new(validation_python())
-        .args(["tests/verify_font.py", "testdata/OpenSans-Regular.ttf"])
-        .current_dir(support::workspace_root())
-        .output()
-        .expect("python3 should launch");
+    let output = support::run_python(["tests/verify_font.py", "testdata/OpenSans-Regular.ttf"]);
 
     assert!(
         output.status.success(),

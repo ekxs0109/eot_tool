@@ -11,6 +11,21 @@ pub fn workspace_root() -> PathBuf {
         .expect("workspace root should exist")
 }
 
+#[allow(dead_code)]
+pub fn otf_parity_fixture() -> PathBuf {
+    for relative in [
+        "testdata/aipptfonts/香蕉Plus__20220301185701917366.otf",
+        "testdata/20220301185701917366.otf",
+    ] {
+        let path = workspace_root().join(relative);
+        if path.exists() {
+            return path;
+        }
+    }
+
+    panic!("expected OTF parity fixture to exist in a known testdata location");
+}
+
 fn temp_path(label: &str, extension: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -54,9 +69,22 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new(workspace_root().join("build/venv/bin/python"))
+    let workspace = workspace_root();
+    let candidate_roots = std::iter::once(workspace.clone()).chain(
+        fs::read_dir(workspace.join(".worktrees"))
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok().map(|entry| entry.path())),
+    );
+    let python = candidate_roots
+        .map(|root| root.join("build/venv/bin/python"))
+        .find(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from("python3"));
+
+    Command::new(python)
         .args(args)
-        .current_dir(workspace_root())
+        .current_dir(workspace)
         .output()
         .expect("python binary should launch")
 }

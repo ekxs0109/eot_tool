@@ -63,8 +63,9 @@ fn encode_static_cff_input_to_eot() {
 
 #[test]
 fn roundtrip_otf_fixture_preserves_expected_post_and_hhea_fields() {
+    let fixture = support::otf_parity_fixture();
     let roundtrip = support::encode_otf_to_roundtrip_ttf(
-        "testdata/aipptfonts/\u{9999}\u{8549}Plus__20220301185701917366.otf",
+        fixture.to_str().expect("fixture path should be valid utf-8"),
     );
     let decoded_bytes = fs::read(roundtrip.font_path()).expect("decoded font should be readable");
     let sfnt = load_sfnt(&decoded_bytes).expect("decoded font should parse");
@@ -80,8 +81,9 @@ fn roundtrip_otf_fixture_preserves_expected_post_and_hhea_fields() {
 
 #[test]
 fn roundtrip_otf_fixture_writes_nonzero_head_checksum_and_timestamps() {
+    let fixture = support::otf_parity_fixture();
     let roundtrip = support::encode_otf_to_roundtrip_ttf(
-        "testdata/aipptfonts/\u{9999}\u{8549}Plus__20220301185701917366.otf",
+        fixture.to_str().expect("fixture path should be valid utf-8"),
     );
     let decoded_bytes = fs::read(roundtrip.font_path()).expect("decoded font should be readable");
     let sfnt = load_sfnt(&decoded_bytes).expect("decoded font should parse");
@@ -98,8 +100,9 @@ fn roundtrip_otf_fixture_writes_nonzero_head_checksum_and_timestamps() {
 
 #[test]
 fn roundtrip_otf_fixture_matches_fonttools_resave_except_for_head_serialization() {
+    let fixture = support::otf_parity_fixture();
     let roundtrip = support::encode_otf_to_roundtrip_ttf(
-        "testdata/aipptfonts/\u{9999}\u{8549}Plus__20220301185701917366.otf",
+        fixture.to_str().expect("fixture path should be valid utf-8"),
     );
     let fonttools_saved = support::temp_ttf();
     support::save_ttf_with_fonttools(roundtrip.font_path(), &fonttools_saved);
