@@ -28,8 +28,8 @@ Status legend:
 | --- | --- | --- | --- |
 | `tests/test_cff_reader.cc` | partial | `crates/fonttool-cff` tests | Rust OTF inspection exists, but detailed reader parity is still native. |
 | `tests/test_cff_variation.cc` | partial | `tests/rust_integration/otf_convert.rs` + future `fonttool-cff` tests | Variation rejection and instance export are only partially represented today. |
-| `tests/test_cli.c` | partial | `crates/fonttool-cli/tests/workspace_cli_smoke.rs` + existing integration tests | Major commands are covered, but many CLI stderr/exit-code cases still live only in native tests. |
-| `tests/test_coretext_acceptance.c` | deferred | `tests/macos-swift/...` | Plan Task 9 replaces this with a formal Swift/CoreText entrypoint. |
+| `tests/test_cli.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + `crates/fonttool-cli/tests/workspace_cli_smoke.rs` + existing integration tests | Rust now covers top-level help/no-command behavior, unknown command status, decode/encode missing-arg contract errors, and subset parser rejection cases (missing value, duplicate/missing selection mode, unsupported flag). Native-only gaps remain for legacy-specific success-message/fixture-parity CLI assertions. |
+| `tests/test_coretext_acceptance.c` | covered | `tests/rust_integration/validation.rs` + `tests/macos-swift/...` | macOS Rust validation now roundtrips `testdata/cff-static.otf` through the current CLI/adapter path and invokes the Swift CoreText probe on the produced TTF; exact legacy fixture parity remains archived-only. |
 | `tests/test_cu2qu.cc` | deferred | future `crates/fonttool-cff` or `fonttool-glyf` tests | Conversion internals not yet migrated into Rust ownership. |
 | `tests/test_cvt_codec.c` | deferred | future `fonttool-mtx` tests | `cvt` codec surface is not yet a Rust-owned public module. |
 | `tests/test_glyf_codec.c` | deferred | future `crates/fonttool-glyf` tests | Encode path exists, but detailed codec vectors are not yet ported. |
@@ -38,7 +38,7 @@ Status legend:
 | `tests/test_parallel_runtime.cc` | deferred | future `crates/fonttool-runtime` tests | Current Rust runtime slice only exposes static mode/diagnostics defaults, not full task scheduling semantics. |
 | `tests/test_sfnt_subset.c` | partial | `tests/rust_integration/subset.rs` + future `fonttool-subset` tests | Rust subset planning is covered, but many native subset invariants remain. |
 | `tests/test_sfnt_writer.c` | deferred | future `crates/fonttool-sfnt` tests | Serialization coverage in Rust is still narrow. |
-| `tests/test_subset_args.c` | deferred | future `fonttool-cli` integration tests | CLI argument validation is not yet fully mirrored in Rust integration tests. |
+| `tests/test_subset_args.c` | partial | `crates/fonttool-cli/tests/cli_contract.rs` + future `fonttool-cli` integration tests | Core subset argument guardrails are now covered for current Rust parser contract; additional legacy edge-case parity remains to be migrated. |
 | `tests/test_table_policy.c` | deferred | future CLI/integration tests | Table retention policy is only indirectly covered right now. |
 | `tests/test_ttf_rebuilder.cc` | deferred | future `fonttool-glyf`/`fonttool-cff` tests | Rebuilder internals still live behind the legacy backend. |
 | `tests/test_ttf_rebuilder_header.c` | deferred | future `fonttool-glyf` tests | Same rebuild boundary as above. |
@@ -53,7 +53,6 @@ Status legend:
 
 ## Recommended Next Migrations
 
-1. `tests/test_subset_args.c` into Rust CLI integration tests once Task 8 continues.
-2. `tests/test_cli.c` command/exit-code coverage for Rust CLI behavior.
-3. `tests/test_coretext_acceptance.c` into the formal Swift/CoreText probe from Task 9.
-4. `tests/test_parallel_runtime.cc` only after the Rust runtime owns real task scheduling semantics instead of a narrow bridge.
+1. Expand `tests/test_subset_args.c` parity in Rust for remaining legacy-only edge cases that are still relevant to the current parser.
+2. Continue `tests/test_cli.c` migration for any still-relevant success-output/diagnostic ordering checks not yet ported.
+3. `tests/test_parallel_runtime.cc` only after the Rust runtime owns real task scheduling semantics instead of a narrow bridge.

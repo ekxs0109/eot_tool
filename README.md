@@ -5,15 +5,17 @@ HarfBuzz-backed subset, and native `OTF(CFF/CFF2)` conversion.
 
 ## Rust-First Verification
 
-Use the Rust workspace first. On macOS, include the Swift validation step.
+Use the Rust workspace first. On macOS, `cargo test --workspace` includes the
+Swift/CoreText validation path through `tests/rust_integration/validation.rs`.
+The focused validation target remains useful when you only want that slice.
 
 ```bash
 cargo build --workspace
 cargo test --workspace
+cargo test -p fonttool-cli --test validation
 cargo run -p fonttool-cli --bin fonttool -- --help
 cargo run -p fonttool-cli --bin fonttool -- decode testdata/font1.fntdata build/out/font1.rust-smoke.otf
 build/venv/bin/python tests/verify_font.py testdata/OpenSans-Regular.ttf
-swift run --package-path tests/macos-swift FonttoolCoreTextProbe testdata/OpenSans-Regular.ttf
 ```
 
 Fuzz smoke build (`fuzz/rust-toolchain.toml` pins nightly; when Homebrew's Rust
@@ -358,7 +360,18 @@ composition or benchmark polish work.
 
 ## Swift CoreText Validation
 
-The repository-level CoreText probe now lives in `tests/macos-swift`:
+On macOS, the formal Rust-first CoreText acceptance check is:
+
+```bash
+cargo test -p fonttool-cli --test validation
+```
+
+That test roundtrips `testdata/cff-static.otf` through the current Rust CLI
+encode path, decodes via the current legacy adapter, and invokes the Swift
+probe in `tests/macos-swift` on the produced TTF.
+
+The repository-level Swift probe remains directly runnable for manual smoke
+checks:
 
 ```bash
 swift run --package-path tests/macos-swift FonttoolCoreTextProbe testdata/OpenSans-Regular.ttf
@@ -370,9 +383,8 @@ Expected output:
 coretext font accepted
 ```
 
-This is a first-class validation entrypoint for macOS acceptance. It complements
-the Rust and Python validation flow, while some legacy native acceptance
-coverage still remains in place for parity and reference checks.
+This complements the Python verifier entrypoint while keeping the Swift
+CoreText probe as a standalone manual diagnostic when needed.
 
 ## Fixtures
 
