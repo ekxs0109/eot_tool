@@ -7,7 +7,7 @@ use fonttool_cff::{inspect_otf_font, CffError};
 use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::{decode_glyf, encode_glyf};
 use fonttool_harfbuzz::subset_font_bytes;
-use fonttool_mtx::{compress_lz_literals, decompress_lz, pack_mtx_container, parse_mtx_container};
+use fonttool_mtx::{compress_lz, decompress_lz, pack_mtx_container, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
     apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
@@ -185,11 +185,11 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     let block1_font = build_block1_font(&source_font, &head, encoded_glyf.glyf_stream)?;
     let block1 = serialize_sfnt(&block1_font)
         .map_err(|error| format!("failed to serialize encoded SFNT: {error}"))?;
-    let block2 = compress_lz_literals(&encoded_glyf.push_stream)
+    let block2 = compress_lz(&encoded_glyf.push_stream)
         .map_err(|error| format!("failed to compress MTX block2: {error}"))?;
-    let block3 = compress_lz_literals(&encoded_glyf.code_stream)
+    let block3 = compress_lz(&encoded_glyf.code_stream)
         .map_err(|error| format!("failed to compress MTX block3: {error}"))?;
-    let block1 = compress_lz_literals(&block1)
+    let block1 = compress_lz(&block1)
         .map_err(|error| format!("failed to compress MTX block1: {error}"))?;
     let mtx_payload = pack_mtx_container(&block1, Some(&block2), Some(&block3))
         .map_err(|error| format!("failed to pack MTX container: {error}"))?;
@@ -231,7 +231,7 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
     apply_output_table_policy(&mut subset_font, &mut subset_warnings);
     let subset_bytes = serialize_sfnt(&subset_font)
         .map_err(|error| format!("failed to serialize subset: {error}"))?;
-    let block1 = compress_lz_literals(&subset_bytes)
+    let block1 = compress_lz(&subset_bytes)
         .map_err(|error| format!("failed to compress subset block1: {error}"))?;
     let mtx_payload = pack_mtx_container(&block1, None, None)
         .map_err(|error| format!("failed to pack subset MTX container: {error}"))?;

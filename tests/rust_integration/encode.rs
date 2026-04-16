@@ -209,6 +209,34 @@ fn encode_ttf_to_eot_roundtrips_required_tables() {
 }
 
 #[test]
+fn encode_truetype_sample_uses_non_regressing_mtx_compression() {
+    let source_path = support::workspace_root().join("build/pptx_case7/font1.decoded.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    run_encode(&source_path, &output_path);
+    assert!(output_path.exists(), "encoded file should exist");
+
+    let encoded_bytes = fs::read(&output_path).expect("encoded eot should be readable");
+    let header = parse_eot_header(&encoded_bytes).expect("encoded eot header should parse");
+    let payload_start = header.header_length as usize;
+    let payload_end = payload_start + header.font_data_size as usize;
+    let container =
+        parse_mtx_container(&encoded_bytes[payload_start..payload_end]).expect("mtx should parse");
+
+    let block1 = container.block1;
+    let block2 = container.block2.expect("block2 should exist");
+    let block3 = container.block3.expect("block3 should exist");
+
+    assert!(block1.len() > 0, "block1 should be present");
+    assert!(block2.len() > 0, "block2 should be present");
+    assert!(block3.len() > 0, "block3 should be present");
+    decompress_lz(block1).expect("block1 should decompress");
+    decompress_lz(block2).expect("block2 should decompress");
+    decompress_lz(block3).expect("block3 should decompress");
+}
+
+#[test]
 fn encode_ttf_excludes_vdmx_from_block1_and_roundtrip_output() {
     let source_path = support::temp_ttf();
     let output_path = support::temp_eot();
