@@ -7,7 +7,7 @@ use fonttool_cff::{inspect_otf_font, CffError};
 use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::{decode_glyf, encode_glyf};
 use fonttool_harfbuzz::subset_font_bytes;
-use fonttool_mtx::{compress_lz_literals, decompress_lz, pack_mtx_container, parse_mtx_container};
+use fonttool_mtx::{compress_lz, decompress_lz, pack_mtx_container, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
     apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
@@ -110,6 +110,10 @@ fn decode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
 }
 
 fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    decode_embedded_font_bytes_full(input_bytes)
+}
+
+fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
     let header =
         parse_eot_header(input_bytes).map_err(|error| format!("invalid EOT header: {error}"))?;
     let payload_start = header.header_length as usize;
@@ -130,8 +134,64 @@ fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
 
     let container = parse_mtx_container(&payload_bytes)
         .map_err(|error| format!("invalid MTX container: {error}"))?;
-    reject_unsupported_extra_blocks(&container)?;
-    decompress_lz(container.block1).map_err(|error| format!("failed to decode MTX block1: {error}"))
+    let block1 = decompress_lz(container.block1)
+        .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
+    let block2 = match container.block2 {
+        Some(block) => {
+            decompress_lz(block).map_err(|error| format!("failed to decode MTX block2: {error}"))?
+        }
+        None => Vec::new(),
+    };
+    let block3 = match container.block3 {
+        Some(block) => {
+            decompress_lz(block).map_err(|error| format!("failed to decode MTX block3: {error}"))?
+        }
+        None => Vec::new(),
+    };
+
+    let mut font = load_sfnt(&block1).map_err(|error| format!("invalid block1 SFNT: {error}"))?;
+    let needs_glyf_reconstruction = font.version_tag() == SFNT_VERSION_TRUETYPE
+        && font.table(TAG_GLYF).is_some()
+        && font
+            .table(TAG_LOCA)
+            .is_some_and(|table| table.data.is_empty());
+
+    if !needs_glyf_reconstruction && block2.is_empty() && block3.is_empty() {
+        return Ok(block1);
+    }
+    if !needs_glyf_reconstruction && (block2.is_empty() || block3.is_empty()) {
+        return Err(
+            "current Rust MTX decode requires both block2 and block3 when extra blocks are present"
+                .to_string(),
+        );
+    }
+
+    let head = table_bytes(&font, TAG_HEAD, "head")?;
+    let maxp = table_bytes(&font, TAG_MAXP, "maxp")?;
+    if head.len() < 52 {
+        return Err("head table is truncated".to_string());
+    }
+    if maxp.len() < 6 {
+        return Err("maxp table is truncated".to_string());
+    }
+
+    let index_to_loca_format = i16::from_be_bytes([head[50], head[51]]);
+    let num_glyphs = u16::from_be_bytes([maxp[4], maxp[5]]);
+    let glyf_stream = table_bytes(&font, TAG_GLYF, "glyf")?;
+    let decoded_glyf = decode_glyf(
+        glyf_stream,
+        &block2,
+        &block3,
+        index_to_loca_format,
+        num_glyphs,
+    )
+    .map_err(|error| format!("failed to reconstruct glyf/loca tables from MTX blocks: {error}"))?;
+    font.remove_table(TAG_GLYF);
+    font.remove_table(TAG_LOCA);
+    font.add_table(TAG_GLYF, decoded_glyf.glyf_data);
+    font.add_table(TAG_LOCA, decoded_glyf.loca_data);
+    serialize_sfnt(&font)
+        .map_err(|error| format!("failed to serialize reconstructed SFNT: {error}"))
 }
 
 fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> Result<(), String> {
@@ -185,12 +245,12 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     let block1_font = build_block1_font(&source_font, &head, encoded_glyf.glyf_stream)?;
     let block1 = serialize_sfnt(&block1_font)
         .map_err(|error| format!("failed to serialize encoded SFNT: {error}"))?;
-    let block2 = compress_lz_literals(&encoded_glyf.push_stream)
+    let block2 = compress_lz(&encoded_glyf.push_stream)
         .map_err(|error| format!("failed to compress MTX block2: {error}"))?;
-    let block3 = compress_lz_literals(&encoded_glyf.code_stream)
+    let block3 = compress_lz(&encoded_glyf.code_stream)
         .map_err(|error| format!("failed to compress MTX block3: {error}"))?;
-    let block1 = compress_lz_literals(&block1)
-        .map_err(|error| format!("failed to compress MTX block1: {error}"))?;
+    let block1 =
+        compress_lz(&block1).map_err(|error| format!("failed to compress MTX block1: {error}"))?;
     let mtx_payload = pack_mtx_container(&block1, Some(&block2), Some(&block3))
         .map_err(|error| format!("failed to pack MTX container: {error}"))?;
     let encoded_eot = build_eot_file(head, os2, &mtx_payload, false)
@@ -218,7 +278,8 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
     let glyph_ids = GlyphIdRequest::parse_csv(glyph_ids_csv)
         .map_err(|error| format!("invalid subset arguments: {error}"))?;
     let input_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
-    let plan = plan_glyph_subset(&input_font, &glyph_ids, false).map_err(|error| error.to_string())?;
+    let plan =
+        plan_glyph_subset(&input_font, &glyph_ids, false).map_err(|error| error.to_string())?;
     let mut harfbuzz_input = input_font.clone();
     let mut subset_warnings = SubsetWarnings::default();
     apply_output_table_policy(&mut harfbuzz_input, &mut subset_warnings);
@@ -226,26 +287,27 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
         .map_err(|error| format!("failed to serialize subset input: {error}"))?;
     let subset_bytes = subset_font_bytes(&harfbuzz_input_bytes, &plan)
         .map_err(|error| format!("failed to subset font with HarfBuzz: {error}"))?;
-    let mut subset_font =
-        load_sfnt(&subset_bytes).map_err(|error| format!("invalid HarfBuzz subset SFNT: {error}"))?;
+    let mut subset_font = load_sfnt(&subset_bytes)
+        .map_err(|error| format!("invalid HarfBuzz subset SFNT: {error}"))?;
     apply_output_table_policy(&mut subset_font, &mut subset_warnings);
     let subset_bytes = serialize_sfnt(&subset_font)
         .map_err(|error| format!("failed to serialize subset: {error}"))?;
-    let block1 = compress_lz_literals(&subset_bytes)
+    let block1 = compress_lz(&subset_bytes)
         .map_err(|error| format!("failed to compress subset block1: {error}"))?;
     let mtx_payload = pack_mtx_container(&block1, None, None)
         .map_err(|error| format!("failed to pack subset MTX container: {error}"))?;
     let head = table_bytes(&subset_font, TAG_HEAD, "head")?;
     let os2 = table_bytes(&subset_font, TAG_OS_2, "OS/2")?;
-    let encoded_output = build_eot_file(head, os2, &mtx_payload, is_fntdata_output(&request.output_path))
-        .map_err(|error| format!("failed to build subset EOT header: {error}"))?;
+    let encoded_output = build_eot_file(
+        head,
+        os2,
+        &mtx_payload,
+        is_fntdata_output(&request.output_path),
+    )
+    .map_err(|error| format!("failed to build subset EOT header: {error}"))?;
 
-    fs::write(&request.output_path, encoded_output).map_err(|error| {
-        format!(
-            "failed to write {}: {error}",
-            request.output_path.display()
-        )
-    })?;
+    fs::write(&request.output_path, encoded_output)
+        .map_err(|error| format!("failed to write {}: {error}", request.output_path.display()))?;
 
     emit_subset_warnings(&subset_warnings);
     Ok(())
@@ -332,121 +394,7 @@ fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
 }
 
 fn load_subset_input_sfnt_from_embedded_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let header =
-        parse_eot_header(input_bytes).map_err(|error| format!("invalid EOT header: {error}"))?;
-    let payload_start = header.header_length as usize;
-    let payload_len = header.font_data_size as usize;
-    let payload_end = payload_start
-        .checked_add(payload_len)
-        .ok_or_else(|| "invalid EOT payload range".to_string())?;
-    let payload = input_bytes
-        .get(payload_start..payload_end)
-        .ok_or_else(|| "invalid EOT payload range".to_string())?;
-
-    let mut payload_bytes = payload.to_vec();
-    if header.flags & EOT_FLAG_PPT_XOR != 0 {
-        for byte in &mut payload_bytes {
-            *byte ^= 0x50;
-        }
-    }
-
-    let container = parse_mtx_container(&payload_bytes)
-        .map_err(|error| format!("invalid MTX container: {error}"))?;
-    let block1 = decompress_lz(container.block1)
-        .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
-    let block2 = match container.block2 {
-        Some(block) => decompress_lz(block)
-            .map_err(|error| format!("failed to decode MTX block2: {error}"))?,
-        None => Vec::new(),
-    };
-    let block3 = match container.block3 {
-        Some(block) => decompress_lz(block)
-            .map_err(|error| format!("failed to decode MTX block3: {error}"))?,
-        None => Vec::new(),
-    };
-
-    if block2.is_empty() && block3.is_empty() {
-        return Ok(block1);
-    }
-    if block2.is_empty() || block3.is_empty() {
-        return Err(
-            "current Rust MTX subset input requires both block2 and block3 when extra blocks are present"
-                .to_string(),
-        );
-    }
-
-    let mut font = load_sfnt(&block1).map_err(|error| format!("invalid block1 SFNT: {error}"))?;
-    let head = table_bytes(&font, TAG_HEAD, "head")?;
-    let maxp = table_bytes(&font, TAG_MAXP, "maxp")?;
-    if head.len() < 52 {
-        return Err("head table is truncated".to_string());
-    }
-    if maxp.len() < 6 {
-        return Err("maxp table is truncated".to_string());
-    }
-
-    let index_to_loca_format = i16::from_be_bytes([head[50], head[51]]);
-    let num_glyphs = u16::from_be_bytes([maxp[4], maxp[5]]);
-    let glyf_stream = table_bytes(&font, TAG_GLYF, "glyf")?;
-    let decoded_glyf = decode_glyf(glyf_stream, &block2, &block3, index_to_loca_format, num_glyphs)
-        .map_err(|error| format!("failed to reconstruct glyf/loca tables from MTX blocks: {error}"))?;
-    font.remove_table(TAG_GLYF);
-    font.remove_table(TAG_LOCA);
-    font.add_table(TAG_GLYF, decoded_glyf.glyf_data);
-    font.add_table(TAG_LOCA, decoded_glyf.loca_data);
-    serialize_sfnt(&font).map_err(|error| format!("failed to serialize reconstructed SFNT: {error}"))
-}
-
-fn is_fntdata_output(output_path: &Path) -> bool {
-    output_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("fntdata"))
-}
-
-fn emit_subset_warnings(subset_warnings: &fonttool_subset::SubsetWarnings) {
-    if subset_warnings.dropped_hdmx {
-        eprintln!("warning: unsupported HDMX in subset path; dropping table");
-    }
-    if subset_warnings.dropped_vdmx {
-        eprintln!("warning: unsupported VDMX in MTX encode/subset path; dropping table");
-    }
-}
-
-fn subset_otf_file(
-    request: &SubsetCliRequest,
-    kind: &fonttool_cff::CffFontKind,
-) -> Result<(), String> {
-    let text = request
-        .text
-        .as_deref()
-        .ok_or_else(|| "subset currently requires --text for OTF input".to_string())?;
-    if request.variation_axes.is_some() && !kind.is_variable {
-        return Err(CffError::VariationRejectedForStaticInput.to_string());
-    }
-
-    let _ = text;
-    Err(CffError::SubsetDeferredToPhase3.to_string())
-}
-
-fn reject_unsupported_extra_blocks(
-    container: &fonttool_mtx::MtxContainer<'_>,
-) -> Result<(), String> {
-    for (index, block) in [container.block2, container.block3].into_iter().enumerate() {
-        let Some(block) = block else {
-            continue;
-        };
-
-        let decoded = decompress_lz(block)
-            .map_err(|error| format!("failed to decode MTX block{}: {error}", index + 2))?;
-        if !decoded.is_empty() {
-            return Err(
-                "non-empty extra MTX blocks are not supported in this decode slice".to_string(),
-            );
-        }
-    }
-
-    Ok(())
+    decode_embedded_font_bytes_full(input_bytes)
 }
 
 fn table_bytes<'a>(font: &'a OwnedSfntFont, tag: u32, name: &str) -> Result<&'a [u8], String> {
@@ -479,4 +427,36 @@ fn should_copy_block1_table(tag: u32) -> bool {
     }
 
     should_copy_encode_block1_table(tag)
+}
+
+fn is_fntdata_output(output_path: &Path) -> bool {
+    output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("fntdata"))
+}
+
+fn emit_subset_warnings(subset_warnings: &fonttool_subset::SubsetWarnings) {
+    if subset_warnings.dropped_hdmx {
+        eprintln!("warning: unsupported HDMX in subset path; dropping table");
+    }
+    if subset_warnings.dropped_vdmx {
+        eprintln!("warning: unsupported VDMX in MTX encode/subset path; dropping table");
+    }
+}
+
+fn subset_otf_file(
+    request: &SubsetCliRequest,
+    kind: &fonttool_cff::CffFontKind,
+) -> Result<(), String> {
+    let text = request
+        .text
+        .as_deref()
+        .ok_or_else(|| "subset currently requires --text for OTF input".to_string())?;
+    if request.variation_axes.is_some() && !kind.is_variable {
+        return Err(CffError::VariationRejectedForStaticInput.to_string());
+    }
+
+    let _ = text;
+    Err(CffError::SubsetDeferredToPhase3.to_string())
 }
