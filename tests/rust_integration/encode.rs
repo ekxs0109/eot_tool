@@ -210,6 +210,7 @@ fn encode_ttf_to_eot_roundtrips_required_tables() {
 
 #[test]
 fn encode_truetype_sample_uses_non_regressing_mtx_compression() {
+    // Tracked PPTX-derived fixture from the case 7 sample so this regression stays portable.
     let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
@@ -265,6 +266,29 @@ fn encode_truetype_sample_uses_non_regressing_mtx_compression() {
     assert!(
         actual_total_len <= literal_only_total_len,
         "combined MTX blocks should not exceed the literal-only baseline"
+    );
+}
+
+#[test]
+fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let output_path = support::temp_eot();
+    let decoded_path = support::temp_ttf();
+    let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
+
+    run_encode(&source_path, &output_path);
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
+
+    let roundtrip_bytes = fs::read(&decoded_path).expect("roundtrip font should be readable");
+    let roundtrip_font = load_sfnt(&roundtrip_bytes).expect("roundtrip font should parse");
+
+    assert!(
+        roundtrip_font.table(TAG_GLYF).is_some(),
+        "roundtrip should preserve glyf"
+    );
+    assert!(
+        roundtrip_font.table(TAG_LOCA).is_some(),
+        "roundtrip should preserve loca"
     );
 }
 

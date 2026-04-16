@@ -86,6 +86,12 @@ reconstruction, not for general decode.
 `fonttool encode <input.ttf> <output.eot>` emits an MTX-compressed EOT for the
 supported TrueType path.
 
+The Rust MTX encoder now emits backreference-capable LZ streams for all output
+blocks and falls back to literal-only output when that would be smaller. This
+improves compression relative to the earlier literal-only implementation, but it
+does not yet guarantee byte-for-byte or size parity with legacy or PowerPoint
+producers.
+
 ### Runtime Thread Control
 
 `EOT_TOOL_THREADS` controls Rust-owned encode/runtime parallelism.
