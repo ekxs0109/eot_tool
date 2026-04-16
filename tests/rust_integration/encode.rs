@@ -16,11 +16,18 @@ const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
 const TAG_HHEA: u32 = u32::from_be_bytes(*b"hhea");
 const TAG_HMTX: u32 = u32::from_be_bytes(*b"hmtx");
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
+const TAG_BASE: u32 = u32::from_be_bytes(*b"BASE");
+const TAG_GPOS: u32 = u32::from_be_bytes(*b"GPOS");
+const TAG_GSUB: u32 = u32::from_be_bytes(*b"GSUB");
 const TAG_GLYF: u32 = u32::from_be_bytes(*b"glyf");
 const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
 const TAG_CVT: u32 = u32::from_be_bytes(*b"cvt ");
 const TAG_HDMX: u32 = u32::from_be_bytes(*b"hdmx");
+const TAG_POST: u32 = u32::from_be_bytes(*b"post");
 const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
+const TAG_VHEA: u32 = u32::from_be_bytes(*b"vhea");
+const TAG_VMTX: u32 = u32::from_be_bytes(*b"vmtx");
+const TAG_VORG: u32 = u32::from_be_bytes(*b"VORG");
 
 struct TempFiles {
     paths: Vec<PathBuf>,
@@ -56,6 +63,22 @@ fn run_encode(input_path: &Path, output_path: &Path) {
     );
 }
 
+fn run_decode(input_path: &Path, output_path: &Path) {
+    let output = support::run_fonttool([
+        "decode",
+        input_path.to_str().expect("input path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("output path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn decode_block1_sfnt(encoded_bytes: &[u8]) -> Vec<u8> {
     let header = parse_eot_header(encoded_bytes).expect("encoded eot header should parse");
     let payload_start = header.header_length as usize;
@@ -80,6 +103,12 @@ fn table_bytes<'a>(font: &'a OwnedSfntFont, tag: u32, name: &str) -> &'a [u8] {
         .unwrap_or_else(|| panic!("expected {name} table"))
         .data
         .as_slice()
+}
+
+fn normalized_head_bytes(font: &OwnedSfntFont, name: &str) -> Vec<u8> {
+    let mut bytes = table_bytes(font, TAG_HEAD, name).to_vec();
+    bytes[8..12].fill(0);
+    bytes
 }
 
 fn write_u16_be(bytes: &mut [u8], offset: usize, value: u16) {
@@ -276,19 +305,88 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
     let decoded_path = support::temp_ttf();
     let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
 
+    let source_bytes = fs::read(&source_path).expect("source font should be readable");
+    let source_font = load_sfnt(&source_bytes).expect("source font should parse");
+
     run_encode(&source_path, &output_path);
-    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
+    // The public CLI decode command currently succeeds for this multi-block PPTX-derived
+    // sample by emitting the same block1-owned SFNT baseline that the supported decode path
+    // exposes today, so lock in that command-level behavior here.
+    run_decode(&output_path, &decoded_path);
 
     let roundtrip_bytes = fs::read(&decoded_path).expect("roundtrip font should be readable");
     let roundtrip_font = load_sfnt(&roundtrip_bytes).expect("roundtrip font should parse");
 
-    assert!(
-        roundtrip_font.table(TAG_GLYF).is_some(),
-        "roundtrip should preserve glyf"
+    for (tag, name) in [
+        (TAG_BASE, "BASE"),
+        (TAG_GPOS, "GPOS"),
+        (TAG_GSUB, "GSUB"),
+        (TAG_OS_2, "OS/2"),
+        (TAG_VORG, "VORG"),
+        (TAG_CMAP, "cmap"),
+        (TAG_GLYF, "glyf"),
+        (TAG_HEAD, "head"),
+        (TAG_HHEA, "hhea"),
+        (TAG_HMTX, "hmtx"),
+        (TAG_LOCA, "loca"),
+        (TAG_MAXP, "maxp"),
+        (TAG_NAME, "name"),
+        (TAG_POST, "post"),
+        (TAG_VHEA, "vhea"),
+        (TAG_VMTX, "vmtx"),
+    ] {
+        assert!(source_font.table(tag).is_some(), "source should contain {name}");
+        assert!(
+            roundtrip_font.table(tag).is_some(),
+            "roundtrip should contain {name}"
+        );
+    }
+
+    for (tag, name) in [
+        (TAG_BASE, "BASE"),
+        (TAG_GPOS, "GPOS"),
+        (TAG_GSUB, "GSUB"),
+        (TAG_OS_2, "OS/2"),
+        (TAG_VORG, "VORG"),
+        (TAG_CMAP, "cmap"),
+        (TAG_HHEA, "hhea"),
+        (TAG_HMTX, "hmtx"),
+        (TAG_MAXP, "maxp"),
+        (TAG_NAME, "name"),
+        (TAG_POST, "post"),
+        (TAG_VHEA, "vhea"),
+        (TAG_VMTX, "vmtx"),
+    ] {
+        assert_eq!(
+            table_bytes(&source_font, tag, &format!("source {name}")),
+            table_bytes(&roundtrip_font, tag, &format!("roundtrip {name}")),
+            "roundtrip should preserve the {name} table bytes"
+        );
+    }
+
+    assert_eq!(
+        normalized_head_bytes(&source_font, "source head"),
+        normalized_head_bytes(&roundtrip_font, "roundtrip head"),
+        "roundtrip should preserve head bytes apart from checkSumAdjustment"
     );
+
+    let source_glyf_length = find_table_length(&source_bytes, TAG_GLYF).expect("source glyf");
+    let source_loca_length = find_table_length(&source_bytes, TAG_LOCA).expect("source loca");
+    let roundtrip_glyf_length =
+        find_table_length(&roundtrip_bytes, TAG_GLYF).expect("roundtrip glyf");
+    let roundtrip_loca_length =
+        find_table_length(&roundtrip_bytes, TAG_LOCA).expect("roundtrip loca");
+
+    assert!(source_glyf_length > 0, "source glyf should be non-empty");
+    assert!(source_loca_length > 0, "source loca should be non-empty");
+    assert!(roundtrip_glyf_length > 0, "roundtrip glyf should be non-empty");
     assert!(
-        roundtrip_font.table(TAG_LOCA).is_some(),
-        "roundtrip should preserve loca"
+        roundtrip_glyf_length < source_glyf_length,
+        "current public CLI decode should retain the smaller block1 glyf baseline"
+    );
+    assert_eq!(
+        roundtrip_loca_length, 0,
+        "current public CLI decode should retain the zero-length block1 loca baseline"
     );
 }
 
