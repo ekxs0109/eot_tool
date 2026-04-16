@@ -157,3 +157,21 @@ fn backreference_encoder_never_returns_larger_output_than_literal_only() {
         "expected fallback to prevent regression on incompressible input"
     );
 }
+
+#[test]
+fn backreference_encoder_can_copy_from_preload_window() {
+    let input = [
+        0xFC, 0xFC, 0xFC, 0xFC, 0xFD, 0xFD, 0xFD, 0xFD, 0xFE, 0xFE, 0xFE, 0xFE, 0xFF, 0xFF, 0xFF,
+        0xFF,
+    ];
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+    assert!(
+        compressed.len() < literal_only.len(),
+        "expected preload-sourced backreference to beat literal-only output"
+    );
+}

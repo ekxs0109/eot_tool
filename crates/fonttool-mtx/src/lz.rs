@@ -571,10 +571,12 @@ fn compress_lz_backreferences(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError
     let mut sym_encoder = HuffmanEncoder::new(num_syms)?;
     let mut dist_encoder = HuffmanEncoder::new(1 << DIST_WIDTH)?;
     let mut len_encoder = HuffmanEncoder::new(1 << LEN_WIDTH)?;
+    let mut history = vec![0u8; PRELOAD_SIZE];
+    initialize_preload_buffer(&mut history);
 
     let mut pos = 0usize;
     while pos < bytes.len() {
-        let op = choose_encode_op(bytes, pos);
+        let op = choose_encode_op(bytes, pos, &history);
         write_encode_op(
             &mut writer,
             &mut sym_encoder,
@@ -583,7 +585,9 @@ fn compress_lz_backreferences(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError
             total_dist_ranges,
             op,
         )?;
-        pos += encode_op_advance(op);
+        let advance = encode_op_advance(op);
+        history.extend_from_slice(&bytes[pos..pos + advance]);
+        pos += advance;
     }
 
     Ok(writer.finish())
@@ -637,8 +641,8 @@ fn initialize_preload_buffer(buffer: &mut [u8]) {
     }
 }
 
-fn choose_encode_op(bytes: &[u8], pos: usize) -> EncodeOp {
-    if let Some((dist, len)) = find_best_copy(bytes, pos) {
+fn choose_encode_op(bytes: &[u8], pos: usize, history: &[u8]) -> EncodeOp {
+    if let Some((dist, len)) = find_best_copy(bytes, pos, history) {
         return EncodeOp::Copy { dist, len };
     }
 
@@ -659,17 +663,14 @@ fn matches_dup(bytes: &[u8], pos: usize, step: usize) -> bool {
     pos >= step && pos < bytes.len() && bytes[pos] == bytes[pos - step]
 }
 
-fn find_best_copy(bytes: &[u8], pos: usize) -> Option<(usize, usize)> {
-    if pos == 0 {
-        return None;
-    }
-
-    let max_dist = pos.min(max_supported_distance(bytes.len()));
+fn find_best_copy(bytes: &[u8], pos: usize, history: &[u8]) -> Option<(usize, usize)> {
+    let output_pos = PRELOAD_SIZE + pos;
+    let max_dist = output_pos.min(max_supported_distance(bytes.len()));
     let mut best: Option<(usize, usize)> = None;
 
     for dist in 1..=max_dist {
         let min_len = min_copy_length(dist);
-        let max_len = (bytes.len() - pos).min(pos - dist + 1);
+        let max_len = (bytes.len() - pos).min(output_pos - dist + 1);
         if max_len < min_len {
             continue;
         }
@@ -680,9 +681,9 @@ fn find_best_copy(bytes: &[u8], pos: usize) -> Option<(usize, usize)> {
         }
 
         for len in ((best_len + 1)..=max_len).rev() {
-            let copy_end = pos - dist;
+            let copy_end = output_pos - dist;
             let copy_start = copy_end + 1 - len;
-            if bytes[copy_start..copy_start + len] == bytes[pos..pos + len] {
+            if history[copy_start..copy_start + len] == bytes[pos..pos + len] {
                 best = Some((dist, len));
                 break;
             }
