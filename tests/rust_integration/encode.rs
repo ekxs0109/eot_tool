@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 
 use fonttool_eot::parse_eot_header;
 use fonttool_mtx::{compress_lz_literals, decompress_lz, parse_mtx_container};
-use fonttool_sfnt::{
-    load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE,
-};
+use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
 const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
@@ -50,7 +48,9 @@ impl Drop for TempFiles {
 fn run_encode(input_path: &Path, output_path: &Path) {
     let output = support::run_fonttool([
         "encode",
-        input_path.to_str().expect("input path should be valid utf-8"),
+        input_path
+            .to_str()
+            .expect("input path should be valid utf-8"),
         output_path
             .to_str()
             .expect("output path should be valid utf-8"),
@@ -66,7 +66,9 @@ fn run_encode(input_path: &Path, output_path: &Path) {
 fn run_decode(input_path: &Path, output_path: &Path) {
     let output = support::run_fonttool([
         "decode",
-        input_path.to_str().expect("input path should be valid utf-8"),
+        input_path
+            .to_str()
+            .expect("input path should be valid utf-8"),
         output_path
             .to_str()
             .expect("output path should be valid utf-8"),
@@ -109,6 +111,75 @@ fn normalized_head_bytes(font: &OwnedSfntFont, name: &str) -> Vec<u8> {
     let mut bytes = table_bytes(font, TAG_HEAD, name).to_vec();
     bytes[8..12].fill(0);
     bytes
+}
+
+fn assert_non_regressing_mtx_compression(source_path: &Path, require_non_empty_extra_blocks: bool) {
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    run_encode(source_path, &output_path);
+    assert!(output_path.exists(), "encoded file should exist");
+
+    let encoded_bytes = fs::read(&output_path).expect("encoded eot should be readable");
+    let header = parse_eot_header(&encoded_bytes).expect("encoded eot header should parse");
+    let payload_start = header.header_length as usize;
+    let payload_end = payload_start + header.font_data_size as usize;
+    let container =
+        parse_mtx_container(&encoded_bytes[payload_start..payload_end]).expect("mtx should parse");
+
+    let block1 = container.block1;
+    let block2 = container.block2.expect("block2 should exist");
+    let block3 = container.block3.expect("block3 should exist");
+
+    assert!(block1.len() > 0, "block1 should be present");
+    assert!(block2.len() > 0, "block2 should be present");
+    assert!(block3.len() > 0, "block3 should be present");
+
+    let block1_decoded = decompress_lz(block1).expect("block1 should decompress");
+    let block2_decoded = decompress_lz(block2).expect("block2 should decompress");
+    let block3_decoded = decompress_lz(block3).expect("block3 should decompress");
+
+    if require_non_empty_extra_blocks {
+        assert!(
+            !block2_decoded.is_empty(),
+            "block2 should decode to non-empty push data"
+        );
+        assert!(
+            !block3_decoded.is_empty(),
+            "block3 should decode to non-empty code data"
+        );
+    }
+
+    let literal_only_block1_len = compress_lz_literals(&block1_decoded)
+        .expect("block1 literal-only compression should succeed")
+        .len();
+    let literal_only_block2_len = compress_lz_literals(&block2_decoded)
+        .expect("block2 literal-only compression should succeed")
+        .len();
+    let literal_only_block3_len = compress_lz_literals(&block3_decoded)
+        .expect("block3 literal-only compression should succeed")
+        .len();
+
+    assert!(
+        block1.len() <= literal_only_block1_len,
+        "block1 should not exceed the literal-only baseline"
+    );
+    assert!(
+        block2.len() <= literal_only_block2_len,
+        "block2 should not exceed the literal-only baseline"
+    );
+    assert!(
+        block3.len() <= literal_only_block3_len,
+        "block3 should not exceed the literal-only baseline"
+    );
+
+    let actual_total_len = block1.len() + block2.len() + block3.len();
+    let literal_only_total_len =
+        literal_only_block1_len + literal_only_block2_len + literal_only_block3_len;
+    assert!(
+        actual_total_len <= literal_only_total_len,
+        "combined MTX blocks should not exceed the literal-only baseline"
+    );
 }
 
 fn write_u16_be(bytes: &mut [u8], offset: usize, value: u16) {
@@ -241,61 +312,13 @@ fn encode_ttf_to_eot_roundtrips_required_tables() {
 fn encode_truetype_sample_uses_non_regressing_mtx_compression() {
     // Tracked PPTX-derived fixture from the case 7 sample so this regression stays portable.
     let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
-    let output_path = support::temp_eot();
-    let _temps = TempFiles::new(vec![output_path.clone()]);
+    assert_non_regressing_mtx_compression(&source_path, false);
+}
 
-    run_encode(&source_path, &output_path);
-    assert!(output_path.exists(), "encoded file should exist");
-
-    let encoded_bytes = fs::read(&output_path).expect("encoded eot should be readable");
-    let header = parse_eot_header(&encoded_bytes).expect("encoded eot header should parse");
-    let payload_start = header.header_length as usize;
-    let payload_end = payload_start + header.font_data_size as usize;
-    let container =
-        parse_mtx_container(&encoded_bytes[payload_start..payload_end]).expect("mtx should parse");
-
-    let block1 = container.block1;
-    let block2 = container.block2.expect("block2 should exist");
-    let block3 = container.block3.expect("block3 should exist");
-
-    assert!(block1.len() > 0, "block1 should be present");
-    assert!(block2.len() > 0, "block2 should be present");
-    assert!(block3.len() > 0, "block3 should be present");
-
-    let block1_decoded = decompress_lz(block1).expect("block1 should decompress");
-    let block2_decoded = decompress_lz(block2).expect("block2 should decompress");
-    let block3_decoded = decompress_lz(block3).expect("block3 should decompress");
-
-    let literal_only_block1_len = compress_lz_literals(&block1_decoded)
-        .expect("block1 literal-only compression should succeed")
-        .len();
-    let literal_only_block2_len = compress_lz_literals(&block2_decoded)
-        .expect("block2 literal-only compression should succeed")
-        .len();
-    let literal_only_block3_len = compress_lz_literals(&block3_decoded)
-        .expect("block3 literal-only compression should succeed")
-        .len();
-
-    assert!(
-        block1.len() <= literal_only_block1_len,
-        "block1 should not exceed the literal-only baseline"
-    );
-    assert!(
-        block2.len() <= literal_only_block2_len,
-        "block2 should not exceed the literal-only baseline"
-    );
-    assert!(
-        block3.len() <= literal_only_block3_len,
-        "block3 should not exceed the literal-only baseline"
-    );
-
-    let actual_total_len = block1.len() + block2.len() + block3.len();
-    let literal_only_total_len =
-        literal_only_block1_len + literal_only_block2_len + literal_only_block3_len;
-    assert!(
-        actual_total_len <= literal_only_total_len,
-        "combined MTX blocks should not exceed the literal-only baseline"
-    );
+#[test]
+fn encode_truetype_with_non_empty_extra_blocks_uses_non_regressing_mtx_compression() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    assert_non_regressing_mtx_compression(&source_path, true);
 }
 
 #[test]
@@ -335,7 +358,10 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
         (TAG_VHEA, "vhea"),
         (TAG_VMTX, "vmtx"),
     ] {
-        assert!(source_font.table(tag).is_some(), "source should contain {name}");
+        assert!(
+            source_font.table(tag).is_some(),
+            "source should contain {name}"
+        );
         assert!(
             roundtrip_font.table(tag).is_some(),
             "roundtrip should contain {name}"
@@ -379,7 +405,10 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
 
     assert!(source_glyf_length > 0, "source glyf should be non-empty");
     assert!(source_loca_length > 0, "source loca should be non-empty");
-    assert!(roundtrip_glyf_length > 0, "roundtrip glyf should be non-empty");
+    assert!(
+        roundtrip_glyf_length > 0,
+        "roundtrip glyf should be non-empty"
+    );
     assert!(
         roundtrip_glyf_length < source_glyf_length,
         "current public CLI decode should retain the smaller block1 glyf baseline"

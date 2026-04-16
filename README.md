@@ -106,32 +106,42 @@ Current supported/unsupported encode boundaries:
 - TrueType input to `.fntdata`: unsupported
 - `OTF(CFF/CFF2)` input: unsupported
 
-Converged runtime behavior across the supported TrueType path:
+Current encode-output behavior and locked-in roundtrip baselines across the
+Rust-owned TrueType path:
 
-- `cvt`: preserved on encode/decode
-- `hdmx`: preserved on encode/decode, including shared trailing advance widths
+- `cvt`: preserved in the current Rust encode output and supported decode
+  baselines
+- `hdmx`: preserved in the current Rust encode output and Rust-owned roundtrip
+  coverage, including shared trailing advance widths
 - `VDMX`: dropped from the current Rust TrueType encode path
 
-Roundtrip verification example:
+Public roundtrip caveat:
+
+The public `fonttool decode` command still has the narrower supported boundary
+described in the decode section above. A generic `fonttool encode <ttf>`
+followed by `fonttool decode <eot>` is not yet a supported general-purpose
+roundtrip for outputs whose MTX payload requires non-empty extra blocks.
+
+The encode integration coverage currently locks in two narrower baselines:
+
+- compression non-regression for general TrueType encode output, including a
+  tracked sample with non-empty `block2` and `block3`
+- a specific PPTX-derived sample that the current CLI `decode` command can
+  decode into today's block1-shaped SFNT baseline
+
+Public smoke checks:
 
 ```bash
 cargo run -p fonttool-cli --bin fonttool -- \
   encode testdata/OpenSans-Regular.ttf build/out/OpenSans-Regular.eot
 cargo run -p fonttool-cli --bin fonttool -- \
-  decode build/out/OpenSans-Regular.eot build/out/OpenSans-Regular.roundtrip.ttf
-build/venv/bin/python tests/compare_fonts.py \
-  testdata/OpenSans-Regular.ttf \
-  build/out/OpenSans-Regular.roundtrip.ttf
+  decode testdata/font1.fntdata build/out/font1.rust-smoke.ttf
+build/venv/bin/python tests/verify_font.py build/out/font1.rust-smoke.ttf
 ```
 
-Expected verifier output:
-
-```text
-required tables match exactly
-```
-
-When `cvt` or `hdmx` exist on both fonts, the same verifier also checks that
-those preserved tables still match byte-for-byte.
+The PPTX-derived CLI roundtrip regression is covered in the Rust integration
+tests; it does not imply general multi-block reconstruction parity for arbitrary
+encode output yet.
 
 ## Subset
 
