@@ -1,4 +1,4 @@
-use fonttool_mtx::{compress_lz_literals, decompress_lz, LzDecompressError};
+use fonttool_mtx::{compress_lz, compress_lz_literals, decompress_lz, LzDecompressError};
 
 #[test]
 fn decodes_java_reference_literal_stream() {
@@ -90,4 +90,77 @@ fn literal_encoder_roundtrips_empty_data() {
     let decompressed = decompress_lz(&compressed).unwrap();
 
     assert!(decompressed.is_empty());
+}
+
+#[test]
+fn backreference_encoder_roundtrips_repeated_data() {
+    let input = *b"WingdingsWingdingsWingdingsWingdings";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+}
+
+#[test]
+fn backreference_encoder_beats_literal_only_on_repeated_data() {
+    let input = *b"WingdingsWingdingsWingdingsWingdings";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let literal_only =
+        compress_lz_literals(&input).expect("literal-only encoder should succeed");
+
+    assert!(
+        compressed.len() < literal_only.len(),
+        "expected backreference encoder to beat literal-only on repeated input"
+    );
+}
+
+#[test]
+fn backreference_encoder_roundtrips_dup2_friendly_data() {
+    let input = *b"ABABABABABABABAB";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+}
+
+#[test]
+fn backreference_encoder_roundtrips_dup4_friendly_data() {
+    let input = *b"ABCDABCDABCDABCDABCDABCD";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+}
+
+#[test]
+fn backreference_encoder_roundtrips_dup6_friendly_data() {
+    let input = *b"ABCDEFABCDEFABCDEFABCDEF";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+}
+
+#[test]
+fn backreference_encoder_never_returns_larger_output_than_literal_only() {
+    let input = [
+        0x00, 0x91, 0xA2, 0x13, 0x24, 0x35, 0x46, 0x57, 0x68, 0x79, 0x8A, 0x9B, 0xAC, 0xBD,
+        0xCE, 0xDF,
+    ];
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let literal_only =
+        compress_lz_literals(&input).expect("literal-only encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+    assert!(
+        compressed.len() <= literal_only.len(),
+        "expected fallback to prevent regression on incompressible input"
+    );
 }
