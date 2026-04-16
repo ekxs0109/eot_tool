@@ -542,7 +542,10 @@ pub fn decompress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
 #[must_use]
 pub fn compress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
     let literal_only = compress_lz_literals(bytes)?;
-    let backreferences = compress_lz_backreferences(bytes)?;
+    let backreferences = match compress_lz_backreferences(bytes) {
+        Ok(backreferences) => backreferences,
+        Err(_) => return Ok(literal_only),
+    };
 
     if backreferences.len() < literal_only.len() {
         Ok(backreferences)
