@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use fonttool_eot::parse_eot_header;
-use fonttool_mtx::{decompress_lz, parse_mtx_container};
+use fonttool_mtx::{compress_lz_literals, decompress_lz, parse_mtx_container};
 use fonttool_sfnt::{
     load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE,
 };
@@ -210,7 +210,7 @@ fn encode_ttf_to_eot_roundtrips_required_tables() {
 
 #[test]
 fn encode_truetype_sample_uses_non_regressing_mtx_compression() {
-    let source_path = support::workspace_root().join("build/pptx_case7/font1.decoded.ttf");
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -231,9 +231,41 @@ fn encode_truetype_sample_uses_non_regressing_mtx_compression() {
     assert!(block1.len() > 0, "block1 should be present");
     assert!(block2.len() > 0, "block2 should be present");
     assert!(block3.len() > 0, "block3 should be present");
-    decompress_lz(block1).expect("block1 should decompress");
-    decompress_lz(block2).expect("block2 should decompress");
-    decompress_lz(block3).expect("block3 should decompress");
+
+    let block1_decoded = decompress_lz(block1).expect("block1 should decompress");
+    let block2_decoded = decompress_lz(block2).expect("block2 should decompress");
+    let block3_decoded = decompress_lz(block3).expect("block3 should decompress");
+
+    let literal_only_block1_len = compress_lz_literals(&block1_decoded)
+        .expect("block1 literal-only compression should succeed")
+        .len();
+    let literal_only_block2_len = compress_lz_literals(&block2_decoded)
+        .expect("block2 literal-only compression should succeed")
+        .len();
+    let literal_only_block3_len = compress_lz_literals(&block3_decoded)
+        .expect("block3 literal-only compression should succeed")
+        .len();
+
+    assert!(
+        block1.len() <= literal_only_block1_len,
+        "block1 should not exceed the literal-only baseline"
+    );
+    assert!(
+        block2.len() <= literal_only_block2_len,
+        "block2 should not exceed the literal-only baseline"
+    );
+    assert!(
+        block3.len() <= literal_only_block3_len,
+        "block3 should not exceed the literal-only baseline"
+    );
+
+    let actual_total_len = block1.len() + block2.len() + block3.len();
+    let literal_only_total_len =
+        literal_only_block1_len + literal_only_block2_len + literal_only_block3_len;
+    assert!(
+        actual_total_len <= literal_only_total_len,
+        "combined MTX blocks should not exceed the literal-only baseline"
+    );
 }
 
 #[test]
