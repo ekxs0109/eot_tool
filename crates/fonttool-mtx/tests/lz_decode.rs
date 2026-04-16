@@ -31,11 +31,7 @@ fn rejects_truncated_stream() {
 
 #[test]
 fn rejects_additional_truncated_stream_shapes() {
-    for bytes in [
-        &[0x01][..],
-        &[0x01, 0x00][..],
-        &[0x01, 0x00, 0x05][..],
-    ] {
+    for bytes in [&[0x01][..], &[0x01, 0x00][..], &[0x01, 0x00, 0x05][..]] {
         let err = decompress_lz(bytes).unwrap_err();
         assert_eq!(err, LzDecompressError::Truncated);
     }
@@ -51,8 +47,7 @@ fn returns_empty_output_for_empty_stream_payload() {
 #[test]
 fn decodes_java_reference_word_copy_stream() {
     let compressed = [
-        0x00, 0x00, 0x0D, 0xB5, 0x3E, 0x40, 0xBD, 0x3B, 0x8A, 0x18, 0x60, 0xC3, 0x26, 0x20,
-        0x80,
+        0x00, 0x00, 0x0D, 0xB5, 0x3E, 0x40, 0xBD, 0x3B, 0x8A, 0x18, 0x60, 0xC3, 0x26, 0x20, 0x80,
     ];
     let expected = *b"WingdingsWingdingsWingdings";
 
@@ -64,8 +59,8 @@ fn decodes_java_reference_word_copy_stream() {
 #[test]
 fn literal_encoder_roundtrips_literal_data() {
     let input = [
-        0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31,
-        0x32, 0x33,
+        0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x20, 0x21, 0x22, 0x23, 0x30, 0x31, 0x32,
+        0x33,
     ];
 
     let compressed = compress_lz_literals(&input).unwrap();
@@ -107,8 +102,7 @@ fn backreference_encoder_beats_literal_only_on_repeated_data() {
     let input = *b"WingdingsWingdingsWingdingsWingdings";
 
     let compressed = compress_lz(&input).expect("backreference encoder should succeed");
-    let literal_only =
-        compress_lz_literals(&input).expect("literal-only encoder should succeed");
+    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
 
     assert!(
         compressed.len() < literal_only.len(),
@@ -149,13 +143,12 @@ fn backreference_encoder_roundtrips_dup6_friendly_data() {
 #[test]
 fn backreference_encoder_never_returns_larger_output_than_literal_only() {
     let input = [
-        0x00, 0x91, 0xA2, 0x13, 0x24, 0x35, 0x46, 0x57, 0x68, 0x79, 0x8A, 0x9B, 0xAC, 0xBD,
-        0xCE, 0xDF,
+        0x00, 0x91, 0xA2, 0x13, 0x24, 0x35, 0x46, 0x57, 0x68, 0x79, 0x8A, 0x9B, 0xAC, 0xBD, 0xCE,
+        0xDF,
     ];
 
     let compressed = compress_lz(&input).expect("backreference encoder should succeed");
-    let literal_only =
-        compress_lz_literals(&input).expect("literal-only encoder should succeed");
+    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
     let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
 
     assert_eq!(decompressed, input);

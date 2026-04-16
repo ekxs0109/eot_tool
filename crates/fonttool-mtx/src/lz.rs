@@ -34,6 +34,15 @@ impl fmt::Display for LzDecompressError {
 
 impl std::error::Error for LzDecompressError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EncodeOp {
+    Literal(u8),
+    Dup2,
+    Dup4,
+    Dup6,
+    Copy { dist: usize, len: usize },
+}
+
 #[derive(Debug, Clone)]
 struct BitWriter {
     bytes: Vec<u8>,
@@ -531,6 +540,56 @@ pub fn decompress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
 }
 
 #[must_use]
+pub fn compress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
+    let literal_only = compress_lz_literals(bytes)?;
+    let backreferences = compress_lz_backreferences(bytes)?;
+
+    if backreferences.len() < literal_only.len() {
+        Ok(backreferences)
+    } else {
+        Ok(literal_only)
+    }
+}
+
+fn compress_lz_backreferences(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
+    let mut writer = BitWriter::new();
+    writer.write_bit(false);
+    writer.write_bits(
+        u32::try_from(bytes.len()).map_err(|_| LzDecompressError::OutputTooLarge)?,
+        24,
+    );
+
+    if bytes.is_empty() {
+        return Ok(writer.finish());
+    }
+
+    let total_dist_ranges = num_dist_ranges(bytes.len());
+    let dup2 = 256 + (1 << LEN_WIDTH) * total_dist_ranges;
+    let dup4 = dup2 + 1;
+    let dup6 = dup4 + 1;
+    let num_syms = dup6 + 1;
+    let mut sym_encoder = HuffmanEncoder::new(num_syms)?;
+    let mut dist_encoder = HuffmanEncoder::new(1 << DIST_WIDTH)?;
+    let mut len_encoder = HuffmanEncoder::new(1 << LEN_WIDTH)?;
+
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        let op = choose_encode_op(bytes, pos);
+        write_encode_op(
+            &mut writer,
+            &mut sym_encoder,
+            &mut dist_encoder,
+            &mut len_encoder,
+            total_dist_ranges,
+            op,
+        )?;
+        pos += encode_op_advance(op);
+    }
+
+    Ok(writer.finish())
+}
+
+#[must_use]
 pub fn compress_lz_literals(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
     let mut writer = BitWriter::new();
     writer.write_bit(false);
@@ -578,6 +637,160 @@ fn initialize_preload_buffer(buffer: &mut [u8]) {
     }
 }
 
+fn choose_encode_op(bytes: &[u8], pos: usize) -> EncodeOp {
+    if let Some((dist, len)) = find_best_copy(bytes, pos) {
+        return EncodeOp::Copy { dist, len };
+    }
+
+    if matches_dup(bytes, pos, 2) {
+        return EncodeOp::Dup2;
+    }
+    if matches_dup(bytes, pos, 4) {
+        return EncodeOp::Dup4;
+    }
+    if matches_dup(bytes, pos, 6) {
+        return EncodeOp::Dup6;
+    }
+
+    EncodeOp::Literal(bytes[pos])
+}
+
+fn matches_dup(bytes: &[u8], pos: usize, step: usize) -> bool {
+    pos >= step && pos < bytes.len() && bytes[pos] == bytes[pos - step]
+}
+
+fn find_best_copy(bytes: &[u8], pos: usize) -> Option<(usize, usize)> {
+    if pos == 0 {
+        return None;
+    }
+
+    let max_dist = pos.min(max_supported_distance(bytes.len()));
+    let mut best: Option<(usize, usize)> = None;
+
+    for dist in 1..=max_dist {
+        let min_len = min_copy_length(dist);
+        let max_len = (bytes.len() - pos).min(pos - dist + 1);
+        if max_len < min_len {
+            continue;
+        }
+
+        let best_len = best.map_or(0, |(_, best_len)| best_len);
+        if max_len <= best_len {
+            continue;
+        }
+
+        for len in ((best_len + 1)..=max_len).rev() {
+            let copy_end = pos - dist;
+            let copy_start = copy_end + 1 - len;
+            if bytes[copy_start..copy_start + len] == bytes[pos..pos + len] {
+                best = Some((dist, len));
+                break;
+            }
+        }
+    }
+
+    best
+}
+
+fn encode_op_advance(op: EncodeOp) -> usize {
+    match op {
+        EncodeOp::Literal(_) | EncodeOp::Dup2 | EncodeOp::Dup4 | EncodeOp::Dup6 => 1,
+        EncodeOp::Copy { len, .. } => len,
+    }
+}
+
+fn write_encode_op(
+    writer: &mut BitWriter,
+    sym_encoder: &mut HuffmanEncoder,
+    dist_encoder: &mut HuffmanEncoder,
+    len_encoder: &mut HuffmanEncoder,
+    num_dist_ranges: usize,
+    op: EncodeOp,
+) -> Result<(), LzDecompressError> {
+    let dup2 = 256 + (1 << LEN_WIDTH) * num_dist_ranges;
+    let dup4 = dup2 + 1;
+    let dup6 = dup4 + 1;
+
+    match op {
+        EncodeOp::Literal(byte) => sym_encoder.write_symbol(writer, usize::from(byte))?,
+        EncodeOp::Dup2 => sym_encoder.write_symbol(writer, dup2)?,
+        EncodeOp::Dup4 => sym_encoder.write_symbol(writer, dup4)?,
+        EncodeOp::Dup6 => sym_encoder.write_symbol(writer, dup6)?,
+        EncodeOp::Copy { dist, len } => {
+            write_copy_op(writer, sym_encoder, dist_encoder, len_encoder, dist, len)?
+        }
+    }
+
+    Ok(())
+}
+
+fn write_copy_op(
+    writer: &mut BitWriter,
+    sym_encoder: &mut HuffmanEncoder,
+    dist_encoder: &mut HuffmanEncoder,
+    len_encoder: &mut HuffmanEncoder,
+    dist: usize,
+    len: usize,
+) -> Result<(), LzDecompressError> {
+    let dist_ranges = num_dist_ranges_for_distance(dist);
+    let encoded_len = if dist >= MAX_2BYTE_DIST {
+        len.checked_sub(LEN_MIN3 - LEN_MIN)
+            .ok_or(LzDecompressError::MalformedStream)?
+    } else {
+        len
+    };
+    let value = encoded_len
+        .checked_sub(LEN_MIN)
+        .ok_or(LzDecompressError::MalformedStream)?;
+    let group_count = value_group_count(value, BIT_RANGE);
+    let top_shift = BIT_RANGE * (group_count - 1);
+    let top_bits = (value >> top_shift) & ((1 << BIT_RANGE) - 1);
+    let symbol =
+        256 + (dist_ranges - 1) * (1 << LEN_WIDTH) + ((group_count > 1) as usize) * 4 + top_bits;
+
+    sym_encoder.write_symbol(writer, symbol)?;
+    write_length_bits(writer, len_encoder, value, group_count)?;
+    write_distance_bits(writer, dist_encoder, dist, dist_ranges)?;
+    Ok(())
+}
+
+fn write_length_bits(
+    writer: &mut BitWriter,
+    len_encoder: &mut HuffmanEncoder,
+    value: usize,
+    group_count: usize,
+) -> Result<(), LzDecompressError> {
+    if group_count <= 1 {
+        return Ok(());
+    }
+
+    for group_index in (0..(group_count - 1)).rev() {
+        let bits = (value >> (group_index * BIT_RANGE)) & ((1 << BIT_RANGE) - 1);
+        let symbol = ((group_index != 0) as usize) << (LEN_WIDTH - 1) | bits;
+        len_encoder.write_symbol(writer, symbol)?;
+    }
+
+    Ok(())
+}
+
+fn write_distance_bits(
+    writer: &mut BitWriter,
+    dist_encoder: &mut HuffmanEncoder,
+    dist: usize,
+    dist_ranges: usize,
+) -> Result<(), LzDecompressError> {
+    let value = dist
+        .checked_sub(DIST_MIN)
+        .ok_or(LzDecompressError::MalformedStream)?;
+
+    for group_index in (0..dist_ranges).rev() {
+        let bits = (value >> (group_index * DIST_WIDTH)) & ((1 << DIST_WIDTH) - 1);
+        dist_encoder.write_symbol(writer, bits)?;
+    }
+
+    Ok(())
+}
+
 fn num_dist_ranges(length: usize) -> usize {
     let mut ranges = 1usize;
     let mut dist_max = DIST_MIN + (1 << (DIST_WIDTH * ranges)) - 1;
@@ -588,6 +801,27 @@ fn num_dist_ranges(length: usize) -> usize {
     }
 
     ranges
+}
+
+fn max_supported_distance(total_len: usize) -> usize {
+    DIST_MIN + (1 << (DIST_WIDTH * num_dist_ranges(total_len))) - 1
+}
+
+fn min_copy_length(dist: usize) -> usize {
+    if dist >= MAX_2BYTE_DIST {
+        LEN_MIN3
+    } else {
+        LEN_MIN
+    }
+}
+
+fn num_dist_ranges_for_distance(dist: usize) -> usize {
+    let value = dist.saturating_sub(DIST_MIN);
+    value_group_count(value, DIST_WIDTH)
+}
+
+fn value_group_count(value: usize, bits_per_group: usize) -> usize {
+    bits_used(value).div_ceil(bits_per_group).max(1)
 }
 
 fn bits_used(x: usize) -> usize {

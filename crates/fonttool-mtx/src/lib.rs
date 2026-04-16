@@ -11,7 +11,7 @@ const MTX_PRELOAD_SIZE: usize = 7168;
 
 pub use cvt::{cvt_decode, cvt_encode, CvtCodecError};
 pub use hdmx::{hdmx_decode, hdmx_encode, HdmxCodecError};
-pub use lz::{compress_lz_literals, decompress_lz, LzDecompressError};
+pub use lz::{compress_lz, compress_lz_literals, decompress_lz, LzDecompressError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MtxContainerError {
