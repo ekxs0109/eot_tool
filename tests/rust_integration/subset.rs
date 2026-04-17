@@ -650,6 +650,35 @@ fn subset_can_emit_raw_sfnt_v2_output() {
 }
 
 #[test]
+fn subset_fntdata_output_defaults_to_xor_on() {
+    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = temp_file("fntdata");
+    let _cleanup = TempCleanup::new(vec![output_path.clone()]);
+
+    let output = run_subset_command(
+        &[
+            "subset",
+            source_path.to_str().unwrap(),
+            output_path.to_str().unwrap(),
+            "--glyph-ids",
+            "0,36,37,38",
+        ],
+        &workspace_root(),
+    );
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_ne!(header.flags & 0x1000_0000, 0);
+    let payload = read_embedded_payload_bytes(&bytes);
+    parse_mtx_container(&payload).expect("default fntdata payload should remain an XOR-decoded MTX container");
+}
+
+#[test]
 fn subset_supports_all_embedded_output_mode_combinations() {
     let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
     let cases = [

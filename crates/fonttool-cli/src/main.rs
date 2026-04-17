@@ -438,6 +438,7 @@ struct SubsetCliRequest {
     text: Option<String>,
     variation_axes: Option<String>,
     embedded_output: EmbeddedOutputOptions,
+    explicit_xor_mode: bool,
 }
 
 fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
@@ -452,6 +453,7 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
         text: None,
         variation_axes: None,
         embedded_output: EmbeddedOutputOptions::default(),
+        explicit_xor_mode: false,
     };
     let mut embedded_output_args = Vec::new();
 
@@ -483,6 +485,7 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
                 embedded_output_args.push(args[index + 1].clone());
             }
             "--xor" => {
+                request.explicit_xor_mode = true;
                 embedded_output_args.push(flag.clone());
                 embedded_output_args.push(args[index + 1].clone());
             }
@@ -503,6 +506,9 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
         let (embedded_output, _) =
             parse_embedded_output_args(&embedded_output_args, 0, &request.output_path)?;
         request.embedded_output = embedded_output;
+    }
+    if is_fntdata_output(&request.output_path) && !request.explicit_xor_mode {
+        request.embedded_output.xor_mode = EmbeddedXorMode::On;
     }
 
     Ok(request)
@@ -564,6 +570,13 @@ fn should_copy_block1_table(tag: u32) -> bool {
     }
 
     should_copy_encode_block1_table(tag)
+}
+
+fn is_fntdata_output(output_path: &Path) -> bool {
+    output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("fntdata"))
 }
 
 fn emit_subset_warnings(subset_warnings: &fonttool_subset::SubsetWarnings) {
