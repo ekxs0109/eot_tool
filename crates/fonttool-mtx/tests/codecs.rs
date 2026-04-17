@@ -1,11 +1,19 @@
 use fonttool_mtx::{cvt_decode, cvt_encode, hdmx_decode, hdmx_encode};
 
 fn read_u16_be(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_be_bytes(bytes[offset..offset + 2].try_into().expect("slice should fit"))
+    u16::from_be_bytes(
+        bytes[offset..offset + 2]
+            .try_into()
+            .expect("slice should fit"),
+    )
 }
 
 fn read_u32_be(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(bytes[offset..offset + 4].try_into().expect("slice should fit"))
+    u32::from_be_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("slice should fit"),
+    )
 }
 
 fn init_hhea(num_h_metrics: u16) -> [u8; 36] {
@@ -134,8 +142,8 @@ fn hdmx_encode_roundtrips_decoded_values() {
     let mut maxp = [0u8; 32];
     maxp[4..6].copy_from_slice(&1u16.to_be_bytes());
 
-    let encoded = hdmx_encode(&decoded, &hmtx, &hhea, &head, &maxp)
-        .expect("hdmx encode should succeed");
+    let encoded =
+        hdmx_encode(&decoded, &hmtx, &hhea, &head, &maxp).expect("hdmx encode should succeed");
     let roundtrip =
         hdmx_decode(&encoded, &hmtx, &hhea, &head, &maxp).expect("hdmx roundtrip should decode");
 

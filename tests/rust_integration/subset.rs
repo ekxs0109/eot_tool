@@ -77,11 +77,19 @@ fn read_font(path: &Path) -> fonttool_sfnt::OwnedSfntFont {
 }
 
 fn read_u16_be(bytes: &[u8], offset: usize) -> u16 {
-    u16::from_be_bytes(bytes[offset..offset + 2].try_into().expect("table should be long enough"))
+    u16::from_be_bytes(
+        bytes[offset..offset + 2]
+            .try_into()
+            .expect("table should be long enough"),
+    )
 }
 
 fn read_u32_be(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(bytes[offset..offset + 4].try_into().expect("table should be long enough"))
+    u32::from_be_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("table should be long enough"),
+    )
 }
 
 fn read_maxp_num_glyphs(font: &fonttool_sfnt::OwnedSfntFont) -> u16 {
@@ -181,11 +189,13 @@ fn cmap_lookup_gid(font: &fonttool_sfnt::OwnedSfntFont, codepoint: u32) -> u16 {
                 }
 
                 let id_delta = i16::from_be_bytes(
-                    subtable[id_deltas_offset + seg_index * 2..id_deltas_offset + seg_index * 2 + 2]
+                    subtable
+                        [id_deltas_offset + seg_index * 2..id_deltas_offset + seg_index * 2 + 2]
                         .try_into()
                         .expect("delta should exist"),
                 );
-                let id_range_offset = read_u16_be(subtable, id_range_offsets_offset + seg_index * 2);
+                let id_range_offset =
+                    read_u16_be(subtable, id_range_offsets_offset + seg_index * 2);
                 if id_range_offset == 0 {
                     return ((codepoint as i32 + id_delta as i32) & 0xFFFF) as u16;
                 }
@@ -193,7 +203,9 @@ fn cmap_lookup_gid(font: &fonttool_sfnt::OwnedSfntFont, codepoint: u32) -> u16 {
                 let id_range_pos = id_range_offsets_offset + seg_index * 2;
                 let glyph_index_pos = id_range_pos
                     + usize::from(id_range_offset)
-                    + usize::try_from(codepoint - u32::from(start_code)).expect("range width should fit") * 2;
+                    + usize::try_from(codepoint - u32::from(start_code))
+                        .expect("range width should fit")
+                        * 2;
                 if glyph_index_pos + 2 > length {
                     return 0;
                 }
@@ -219,7 +231,8 @@ fn cmap_lookup_gid(font: &fonttool_sfnt::OwnedSfntFont, codepoint: u32) -> u16 {
                     break;
                 }
                 if codepoint <= end_char {
-                    return (read_u32_be(subtable, group_offset + 8) + (codepoint - start_char)) as u16;
+                    return (read_u32_be(subtable, group_offset + 8) + (codepoint - start_char))
+                        as u16;
                 }
             }
             0
@@ -229,8 +242,14 @@ fn cmap_lookup_gid(font: &fonttool_sfnt::OwnedSfntFont, codepoint: u32) -> u16 {
 }
 
 fn assert_supported_subset_core_tables(font: &fonttool_sfnt::OwnedSfntFont) {
-    for tag in [TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_GLYF, TAG_LOCA, TAG_CMAP] {
-        assert!(font.table(tag).is_some(), "expected table {:08X} in subset output", tag);
+    for tag in [
+        TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_GLYF, TAG_LOCA, TAG_CMAP,
+    ] {
+        assert!(
+            font.table(tag).is_some(),
+            "expected table {:08X} in subset output",
+            tag
+        );
     }
 }
 
@@ -241,9 +260,20 @@ fn assert_subset_rebuilds_core_tables(input_path: &Path, output_path: &Path) {
     assert_supported_subset_core_tables(&output_font);
     assert_eq!(read_maxp_num_glyphs(&output_font), 4);
     assert_eq!(read_num_hmetrics(&output_font), 4);
-    assert_eq!(output_font.table(TAG_HMTX).expect("hmtx should exist").data.len(), 16);
     assert_eq!(
-        output_font.table(TAG_LOCA).expect("loca should exist").data.len(),
+        output_font
+            .table(TAG_HMTX)
+            .expect("hmtx should exist")
+            .data
+            .len(),
+        16
+    );
+    assert_eq!(
+        output_font
+            .table(TAG_LOCA)
+            .expect("loca should exist")
+            .data
+            .len(),
         match read_index_to_loca_format(&output_font) {
             0 => 10,
             1 => 20,
@@ -252,8 +282,16 @@ fn assert_subset_rebuilds_core_tables(input_path: &Path, output_path: &Path) {
     );
 
     assert!(
-        output_font.table(TAG_GLYF).expect("glyf should exist").data.len()
-            < input_font.table(TAG_GLYF).expect("input glyf should exist").data.len(),
+        output_font
+            .table(TAG_GLYF)
+            .expect("glyf should exist")
+            .data
+            .len()
+            < input_font
+                .table(TAG_GLYF)
+                .expect("input glyf should exist")
+                .data
+                .len(),
         "subset glyf table should be rebuilt smaller than the source"
     );
 
@@ -261,9 +299,18 @@ fn assert_subset_rebuilds_core_tables(input_path: &Path, output_path: &Path) {
         glyph_length(&output_font, 0) > 0,
         "subset glyph 0 should retain a .notdef outline"
     );
-    assert!(glyph_length(&output_font, 1) > 0, "subset glyph 1 should retain outline data");
-    assert!(glyph_length(&output_font, 2) > 0, "subset glyph 2 should retain outline data");
-    assert!(glyph_length(&output_font, 3) > 0, "subset glyph 3 should retain outline data");
+    assert!(
+        glyph_length(&output_font, 1) > 0,
+        "subset glyph 1 should retain outline data"
+    );
+    assert!(
+        glyph_length(&output_font, 2) > 0,
+        "subset glyph 2 should retain outline data"
+    );
+    assert!(
+        glyph_length(&output_font, 3) > 0,
+        "subset glyph 3 should retain outline data"
+    );
 
     assert_eq!(cmap_lookup_gid(&input_font, u32::from('A')), 36);
     assert_eq!(cmap_lookup_gid(&input_font, u32::from('B')), 37);
@@ -299,8 +346,11 @@ fn build_subset_fixture_font(include_extra_tables: bool) -> fonttool_sfnt::Owned
 fn prepare_plain_subset_ttf_fixture() -> (PathBuf, TempCleanup) {
     let ttf_path = temp_derived_file("fixture", "ttf");
     let font = build_subset_fixture_font(true);
-    fs::write(&ttf_path, serialize_sfnt(&font).expect("fixture font should serialize"))
-        .expect("fixture ttf should be writable");
+    fs::write(
+        &ttf_path,
+        serialize_sfnt(&font).expect("fixture font should serialize"),
+    )
+    .expect("fixture ttf should be writable");
 
     let cleanup = TempCleanup::new(vec![ttf_path.clone()]);
     (ttf_path, cleanup)
@@ -316,8 +366,12 @@ fn prepare_real_subset_wrapper_fixture() -> (PathBuf, PathBuf, PathBuf, TempClea
 
     let encode = support::run_fonttool([
         "encode",
-        ttf_path.to_str().expect("fixture path should be valid utf-8"),
-        eot_path.to_str().expect("fixture path should be valid utf-8"),
+        ttf_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
+        eot_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
     ]);
     assert!(
         encode.status.success(),
@@ -331,7 +385,10 @@ fn prepare_real_subset_wrapper_fixture() -> (PathBuf, PathBuf, PathBuf, TempClea
     let payload_end = payload_start + header.font_data_size as usize;
     let payload = &eot_bytes[payload_start..payload_end];
     let container = parse_mtx_container(payload).expect("fixture MTX should parse");
-    assert_eq!(container.num_blocks, 3, "fixture should use real multi-block MTX");
+    assert_eq!(
+        container.num_blocks, 3,
+        "fixture should use real multi-block MTX"
+    );
 
     let head = font
         .table(TAG_HEAD)
@@ -343,11 +400,15 @@ fn prepare_real_subset_wrapper_fixture() -> (PathBuf, PathBuf, PathBuf, TempClea
         .expect("fixture font should contain OS/2")
         .data
         .clone();
-    let fntdata_bytes = build_eot_file(&head, &os2, payload, true)
-        .expect("fixture fntdata should build");
+    let fntdata_bytes =
+        build_eot_file(&head, &os2, payload, true).expect("fixture fntdata should build");
     fs::write(&fntdata_path, fntdata_bytes).expect("fixture fntdata should be writable");
 
-    let cleanup = TempCleanup::new(vec![ttf_path.clone(), eot_path.clone(), fntdata_path.clone()]);
+    let cleanup = TempCleanup::new(vec![
+        ttf_path.clone(),
+        eot_path.clone(),
+        fntdata_path.clone(),
+    ]);
     (ttf_path, eot_path, fntdata_path, cleanup)
 }
 
@@ -374,7 +435,8 @@ fn subset_wingdings3_eot_glyph_ids_rebuilds_core_tables_and_drops_warning_tables
     let output_path = temp_file("eot");
     let isolated_cwd = temp_file("cwd");
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
-    let (ttf_input_path, eot_input_path, _fntdata_path, _cleanup) = prepare_real_subset_wrapper_fixture();
+    let (ttf_input_path, eot_input_path, _fntdata_path, _cleanup) =
+        prepare_real_subset_wrapper_fixture();
 
     let output = run_subset_command(
         &[
@@ -382,7 +444,9 @@ fn subset_wingdings3_eot_glyph_ids_rebuilds_core_tables_and_drops_warning_tables
             eot_input_path
                 .to_str()
                 .expect("fixture path should be valid utf-8"),
-            output_path.to_str().expect("temp path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
             "--glyph-ids",
             "0,36,37,38",
         ],
@@ -403,7 +467,10 @@ fn subset_wingdings3_eot_glyph_ids_rebuilds_core_tables_and_drops_warning_tables
         !stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
         "real Rust encode already drops VDMX before subset, stderr: {stderr}"
     );
-    assert!(output_path.is_file(), "expected subset to create an output file");
+    assert!(
+        output_path.is_file(),
+        "expected subset to create an output file"
+    );
 
     let decoded_path = decode_subset_output(&output_path);
     assert_subset_rebuilds_core_tables(&ttf_input_path, &decoded_path);
@@ -430,7 +497,9 @@ fn subset_wingdings3_fntdata_glyph_ids_rebuilds_core_tables_and_drops_warning_ta
             fntdata_path
                 .to_str()
                 .expect("temp path should be valid utf-8"),
-            output_path.to_str().expect("temp path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
             "--glyph-ids",
             "0,36,37,38",
         ],
@@ -451,7 +520,10 @@ fn subset_wingdings3_fntdata_glyph_ids_rebuilds_core_tables_and_drops_warning_ta
         !stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
         "real Rust encode already drops VDMX before subset, stderr: {stderr}"
     );
-    assert!(output_path.is_file(), "expected subset to create an output file");
+    assert!(
+        output_path.is_file(),
+        "expected subset to create an output file"
+    );
 
     let decoded_path = decode_subset_output(&output_path);
     assert_subset_rebuilds_core_tables(&ttf_input_path, &decoded_path);
@@ -475,8 +547,12 @@ fn subset_opensans_ttf_glyph_ids_rebuilds_core_tables() {
     let output = run_subset_command(
         &[
             "subset",
-            ttf_path.to_str().expect("fixture path should be valid utf-8"),
-            output_path.to_str().expect("temp path should be valid utf-8"),
+            ttf_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
             "--glyph-ids",
             "0,36,37,38",
         ],
@@ -497,13 +573,22 @@ fn subset_opensans_ttf_glyph_ids_rebuilds_core_tables() {
         stderr.contains("warning: unsupported VDMX in MTX encode/subset path; dropping table"),
         "expected VDMX warning, stderr: {stderr}"
     );
-    assert!(output_path.is_file(), "expected subset to create an output file");
+    assert!(
+        output_path.is_file(),
+        "expected subset to create an output file"
+    );
 
     let decoded_path = decode_subset_output(&output_path);
     assert_subset_rebuilds_core_tables(&ttf_path, &decoded_path);
     let font = read_font(&decoded_path);
-    assert!(font.table(TAG_HDMX).is_none(), "OpenSans output should not add hdmx");
-    assert!(font.table(TAG_VDMX).is_none(), "OpenSans output should not add VDMX");
+    assert!(
+        font.table(TAG_HDMX).is_none(),
+        "OpenSans output should not add hdmx"
+    );
+    assert!(
+        font.table(TAG_VDMX).is_none(),
+        "OpenSans output should not add VDMX"
+    );
 
     let _ = fs::remove_file(output_path);
     let _ = fs::remove_file(decoded_path);

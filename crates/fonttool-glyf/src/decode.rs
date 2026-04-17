@@ -145,7 +145,10 @@ pub fn decode_glyf(
         }
     }
 
-    if glyf_pos != glyf_stream.len() || push_pos != push_stream.len() || code_pos != code_stream.len() {
+    if glyf_pos != glyf_stream.len()
+        || push_pos != push_stream.len()
+        || code_pos != code_stream.len()
+    {
         return Err(GlyfDecodeError::CorruptData);
     }
 
@@ -183,7 +186,8 @@ fn decode_simple_glyph(
         return Err(GlyfDecodeError::CorruptData);
     }
 
-    let contour_count_usize = usize::try_from(contour_count).map_err(|_| GlyfDecodeError::CorruptData)?;
+    let contour_count_usize =
+        usize::try_from(contour_count).map_err(|_| GlyfDecodeError::CorruptData)?;
     let mut end_pts = Vec::with_capacity(contour_count_usize);
     let mut total_points = 0usize;
     for contour_index in 0..contour_count_usize {
@@ -200,9 +204,7 @@ fn decode_simple_glyph(
         if total_points > usize::from(u16::MAX) + 1 {
             return Err(GlyfDecodeError::CorruptData);
         }
-        end_pts.push(
-            u16::try_from(total_points - 1).map_err(|_| GlyfDecodeError::CorruptData)?,
-        );
+        end_pts.push(u16::try_from(total_points - 1).map_err(|_| GlyfDecodeError::CorruptData)?);
     }
 
     let mut points = vec![DecodedPoint::default(); total_points];
@@ -268,9 +270,8 @@ fn decode_simple_glyph(
     for end_pt in end_pts {
         glyf_writer.write_u16_be(end_pt);
     }
-    glyf_writer.write_u16_be(
-        u16::try_from(instructions.len()).map_err(|_| GlyfDecodeError::CorruptData)?,
-    );
+    glyf_writer
+        .write_u16_be(u16::try_from(instructions.len()).map_err(|_| GlyfDecodeError::CorruptData)?);
     glyf_writer.write_bytes(&instructions);
     if total_points > 0 {
         append_simple_points(glyf_writer, &points)?;
@@ -359,7 +360,9 @@ fn decode_push_values(
 ) -> Result<Vec<i16>, GlyfDecodeError> {
     let mut values = Vec::with_capacity(push_count);
     while values.len() < push_count {
-        let code = *push_stream.get(*push_pos).ok_or(GlyfDecodeError::CorruptData)?;
+        let code = *push_stream
+            .get(*push_pos)
+            .ok_or(GlyfDecodeError::CorruptData)?;
         if matches!(code, 251 | 252) {
             let expansion = if code == 251 { 3usize } else { 5usize };
             if values.len() < 2 || values.len() + expansion > push_count {
@@ -412,20 +415,30 @@ fn append_push_run(
         let chunk = &remaining[..chunk_len];
         if byte_sized {
             if chunk.len() <= 8 {
-                writer.write_u8(TT_PUSHB_BASE + u8::try_from(chunk.len() - 1).map_err(|_| GlyfDecodeError::CorruptData)?);
+                writer.write_u8(
+                    TT_PUSHB_BASE
+                        + u8::try_from(chunk.len() - 1)
+                            .map_err(|_| GlyfDecodeError::CorruptData)?,
+                );
             } else {
                 writer.write_u8(TT_NPUSHB);
-                writer.write_u8(u8::try_from(chunk.len()).map_err(|_| GlyfDecodeError::CorruptData)?);
+                writer
+                    .write_u8(u8::try_from(chunk.len()).map_err(|_| GlyfDecodeError::CorruptData)?);
             }
             for &value in chunk {
                 writer.write_u8(u8::try_from(value).map_err(|_| GlyfDecodeError::CorruptData)?);
             }
         } else {
             if chunk.len() <= 8 {
-                writer.write_u8(TT_PUSHW_BASE + u8::try_from(chunk.len() - 1).map_err(|_| GlyfDecodeError::CorruptData)?);
+                writer.write_u8(
+                    TT_PUSHW_BASE
+                        + u8::try_from(chunk.len() - 1)
+                            .map_err(|_| GlyfDecodeError::CorruptData)?,
+                );
             } else {
                 writer.write_u8(TT_NPUSHW);
-                writer.write_u8(u8::try_from(chunk.len()).map_err(|_| GlyfDecodeError::CorruptData)?);
+                writer
+                    .write_u8(u8::try_from(chunk.len()).map_err(|_| GlyfDecodeError::CorruptData)?);
             }
             for &value in chunk {
                 writer.write_i16_be(value);
@@ -526,25 +539,51 @@ fn decode_triplet(
     let on_curve = flag & 0x80 == 0;
     if triplet_code < 10 {
         let b0 = read_u8(payload_stream, payload_pos)?;
-        return Ok((0, with_sign(triplet_code, (i32::from(triplet_code & 0x0E) << 7) + i32::from(b0)), on_curve));
+        return Ok((
+            0,
+            with_sign(
+                triplet_code,
+                (i32::from(triplet_code & 0x0E) << 7) + i32::from(b0),
+            ),
+            on_curve,
+        ));
     }
     if triplet_code < 20 {
         let b0 = read_u8(payload_stream, payload_pos)?;
-        return Ok((with_sign(triplet_code, (i32::from((triplet_code - 10) & 0x0E) << 7) + i32::from(b0)), 0, on_curve));
+        return Ok((
+            with_sign(
+                triplet_code,
+                (i32::from((triplet_code - 10) & 0x0E) << 7) + i32::from(b0),
+            ),
+            0,
+            on_curve,
+        ));
     }
     if triplet_code < 84 {
         let b0 = read_u8(payload_stream, payload_pos)?;
         triplet_code -= 20;
-        let dx = with_sign(flag, 1 + i32::from(triplet_code & 0x30) + i32::from(b0 >> 4));
-        let dy = with_sign(flag >> 1, 1 + (i32::from(triplet_code & 0x0C) << 2) + i32::from(b0 & 0x0F));
+        let dx = with_sign(
+            flag,
+            1 + i32::from(triplet_code & 0x30) + i32::from(b0 >> 4),
+        );
+        let dy = with_sign(
+            flag >> 1,
+            1 + (i32::from(triplet_code & 0x0C) << 2) + i32::from(b0 & 0x0F),
+        );
         return Ok((dx, dy, on_curve));
     }
     if triplet_code < 120 {
         let b0 = read_u8(payload_stream, payload_pos)?;
         let b1 = read_u8(payload_stream, payload_pos)?;
         triplet_code -= 84;
-        let dx = with_sign(flag, 1 + (i32::from(triplet_code / 12) << 8) + i32::from(b0));
-        let dy = with_sign(flag >> 1, 1 + (i32::from((triplet_code % 12) >> 2) << 8) + i32::from(b1));
+        let dx = with_sign(
+            flag,
+            1 + (i32::from(triplet_code / 12) << 8) + i32::from(b0),
+        );
+        let dy = with_sign(
+            flag >> 1,
+            1 + (i32::from((triplet_code % 12) >> 2) << 8) + i32::from(b1),
+        );
         return Ok((dx, dy, on_curve));
     }
     if triplet_code < 124 {
@@ -574,7 +613,11 @@ fn with_sign(sign_bits: u8, value: i32) -> i32 {
 }
 
 fn composite_component_extra_bytes(flags: u16) -> usize {
-    let mut bytes = if flags & COMPOSITE_ARG_WORDS != 0 { 4 } else { 2 };
+    let mut bytes = if flags & COMPOSITE_ARG_WORDS != 0 {
+        4
+    } else {
+        2
+    };
     if flags & COMPOSITE_HAVE_SCALE != 0 {
         bytes += 2;
     } else if flags & COMPOSITE_HAVE_XY_SCALE != 0 {
@@ -596,12 +639,21 @@ fn write_loca_entry(
             if offset % 2 != 0 || offset / 2 > usize::from(u16::MAX) {
                 return Err(GlyfDecodeError::CorruptData);
             }
-            let start = glyph_id.checked_mul(2).ok_or(GlyfDecodeError::CorruptData)?;
-            loca[start..start + 2].copy_from_slice(&(u16::try_from(offset / 2).map_err(|_| GlyfDecodeError::CorruptData)?).to_be_bytes());
+            let start = glyph_id
+                .checked_mul(2)
+                .ok_or(GlyfDecodeError::CorruptData)?;
+            loca[start..start + 2].copy_from_slice(
+                &(u16::try_from(offset / 2).map_err(|_| GlyfDecodeError::CorruptData)?)
+                    .to_be_bytes(),
+            );
         }
         1 => {
-            let start = glyph_id.checked_mul(4).ok_or(GlyfDecodeError::CorruptData)?;
-            loca[start..start + 4].copy_from_slice(&(u32::try_from(offset).map_err(|_| GlyfDecodeError::CorruptData)?).to_be_bytes());
+            let start = glyph_id
+                .checked_mul(4)
+                .ok_or(GlyfDecodeError::CorruptData)?;
+            loca[start..start + 4].copy_from_slice(
+                &(u32::try_from(offset).map_err(|_| GlyfDecodeError::CorruptData)?).to_be_bytes(),
+            );
         }
         _ => return Err(GlyfDecodeError::CorruptData),
     }
@@ -652,7 +704,9 @@ fn read_u8(bytes: &[u8], pos: &mut usize) -> Result<u8, GlyfDecodeError> {
 fn read_u16_be(bytes: &[u8], pos: &mut usize) -> Result<u16, GlyfDecodeError> {
     let slice = slice(bytes, *pos, 2)?;
     *pos += 2;
-    Ok(u16::from_be_bytes(slice.try_into().expect("slice length should match")))
+    Ok(u16::from_be_bytes(
+        slice.try_into().expect("slice length should match"),
+    ))
 }
 
 fn read_i16_be(bytes: &[u8], pos: &mut usize) -> Result<i16, GlyfDecodeError> {
@@ -661,7 +715,12 @@ fn read_i16_be(bytes: &[u8], pos: &mut usize) -> Result<i16, GlyfDecodeError> {
 
 fn slice<'a>(bytes: &'a [u8], offset: usize, length: usize) -> Result<&'a [u8], GlyfDecodeError> {
     bytes
-        .get(offset..offset.checked_add(length).ok_or(GlyfDecodeError::CorruptData)?)
+        .get(
+            offset
+                ..offset
+                    .checked_add(length)
+                    .ok_or(GlyfDecodeError::CorruptData)?,
+        )
         .ok_or(GlyfDecodeError::CorruptData)
 }
 
@@ -748,13 +807,18 @@ mod tests {
             )
         } else if abs_x < 65 && abs_y < 65 {
             (
-                (on_curve_bit + 20 + ((abs_x as i32 - 1) & 0x30) + (((abs_y as i32 - 1) & 0x30) >> 2)
+                (on_curve_bit
+                    + 20
+                    + ((abs_x as i32 - 1) & 0x30)
+                    + (((abs_y as i32 - 1) & 0x30) >> 2)
                     + xy_sign_bits) as u8,
                 vec![((((abs_x - 1) as u8) & 0x0F) << 4) | (((abs_y - 1) as u8) & 0x0F)],
             )
         } else if abs_x < 769 && abs_y < 769 {
             (
-                (on_curve_bit + 84 + 12 * (((abs_x - 1) & 0x300) >> 8) as i32
+                (on_curve_bit
+                    + 84
+                    + 12 * (((abs_x - 1) & 0x300) >> 8) as i32
                     + (((abs_y - 1) & 0x300) >> 6) as i32
                     + xy_sign_bits) as u8,
                 vec![((abs_x - 1) & 0xFF) as u8, ((abs_y - 1) & 0xFF) as u8],
@@ -820,7 +884,9 @@ mod tests {
 
     #[test]
     fn read_255_short_examples_match_reference() {
-        let values = [0i16, 249, 250, 499, 500, 749, 750, -1, -250, -500, -749, -750];
+        let values = [
+            0i16, 249, 250, 499, 500, 749, 750, -1, -250, -500, -749, -750,
+        ];
 
         for value in values {
             let mut bytes = Vec::new();
@@ -839,11 +905,26 @@ mod tests {
 
         assert_eq!(decoded.glyf_data.len(), 20);
         assert_eq!(decoded.loca_data.len(), 4);
-        assert_eq!(u16::from_be_bytes([decoded.loca_data[0], decoded.loca_data[1]]), 0);
-        assert_eq!(u16::from_be_bytes([decoded.loca_data[2], decoded.loca_data[3]]), 10);
-        assert_eq!(u16::from_be_bytes([decoded.glyf_data[0], decoded.glyf_data[1]]), 1);
-        assert_eq!(u16::from_be_bytes([decoded.glyf_data[10], decoded.glyf_data[11]]), 2);
-        assert_eq!(u16::from_be_bytes([decoded.glyf_data[12], decoded.glyf_data[13]]), 0);
+        assert_eq!(
+            u16::from_be_bytes([decoded.loca_data[0], decoded.loca_data[1]]),
+            0
+        );
+        assert_eq!(
+            u16::from_be_bytes([decoded.loca_data[2], decoded.loca_data[3]]),
+            10
+        );
+        assert_eq!(
+            u16::from_be_bytes([decoded.glyf_data[0], decoded.glyf_data[1]]),
+            1
+        );
+        assert_eq!(
+            u16::from_be_bytes([decoded.glyf_data[10], decoded.glyf_data[11]]),
+            2
+        );
+        assert_eq!(
+            u16::from_be_bytes([decoded.glyf_data[12], decoded.glyf_data[13]]),
+            0
+        );
     }
 
     #[test]

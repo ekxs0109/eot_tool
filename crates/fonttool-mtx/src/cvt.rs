@@ -53,7 +53,9 @@ pub fn cvt_encode(decoded: &[u8]) -> Result<Vec<u8>, CvtCodecError> {
             if delta < 0 {
                 output.push(
                     CVT_NEG0
-                        .checked_add(u8::try_from(code_index).map_err(|_| CvtCodecError::CorruptData)?)
+                        .checked_add(
+                            u8::try_from(code_index).map_err(|_| CvtCodecError::CorruptData)?,
+                        )
                         .ok_or(CvtCodecError::CorruptData)?,
                 );
                 output.push(

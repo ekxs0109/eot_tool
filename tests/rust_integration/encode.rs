@@ -422,9 +422,8 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
     let source_font = load_sfnt(&source_bytes).expect("source font should parse");
 
     run_encode(&source_path, &output_path);
-    // The public CLI decode command currently succeeds for this multi-block PPTX-derived
-    // sample by emitting the same block1-owned SFNT baseline that the supported decode path
-    // exposes today, so lock in that command-level behavior here.
+    // The public CLI decode command should reconstruct a roundtrip-ready TrueType
+    // font from the multi-block PPTX-derived sample.
     run_decode(&output_path, &decoded_path);
 
     let roundtrip_bytes = fs::read(&decoded_path).expect("roundtrip font should be readable");
@@ -493,13 +492,13 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
     assert!(source_glyf_length > 0, "source glyf should be non-empty");
     assert!(source_loca_length > 0, "source loca should be non-empty");
     assert!(roundtrip_glyf_length > 0, "roundtrip glyf should be non-empty");
-    assert!(
-        roundtrip_glyf_length < source_glyf_length,
-        "current public CLI decode should retain the smaller block1 glyf baseline"
+    assert_eq!(
+        roundtrip_glyf_length, source_glyf_length,
+        "current public CLI decode should reconstruct the original glyf table length"
     );
     assert_eq!(
-        roundtrip_loca_length, 0,
-        "current public CLI decode should retain the zero-length block1 loca baseline"
+        roundtrip_loca_length, source_loca_length,
+        "current public CLI decode should reconstruct the original loca table length"
     );
 }
 

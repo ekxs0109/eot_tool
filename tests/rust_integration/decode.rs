@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fonttool_sfnt::{parse_sfnt, SFNT_VERSION_OTTO};
+use fonttool_sfnt::{load_sfnt, parse_sfnt, SFNT_VERSION_OTTO, SFNT_VERSION_TRUETYPE};
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -60,6 +60,32 @@ fn assert_otto_header_matches_fixture(path: &Path) {
     assert_eq!(sfnt.version_tag(), SFNT_VERSION_OTTO);
 }
 
+fn assert_truetype_roundtrip_ready(path: &Path) {
+    let bytes = fs::read(path).expect("decoded font should be readable");
+    assert!(
+        bytes.len() >= 4,
+        "decoded font should contain an sfnt version header"
+    );
+    assert_eq!(&bytes[..4], &SFNT_VERSION_TRUETYPE.to_be_bytes());
+
+    let font = load_sfnt(&bytes).expect("decoded font should load as sfnt");
+    let glyf = font
+        .table(u32::from_be_bytes(*b"glyf"))
+        .expect("decoded font should contain glyf");
+    let loca = font
+        .table(u32::from_be_bytes(*b"loca"))
+        .expect("decoded font should contain loca");
+
+    assert!(
+        !glyf.data.is_empty(),
+        "decoded TrueType fixture should expose real glyf bytes"
+    );
+    assert!(
+        !loca.data.is_empty(),
+        "decoded TrueType fixture should expose real loca bytes"
+    );
+}
+
 #[test]
 fn decode_font1_fntdata_writes_otto_sfnt() {
     let output_path = temp_out();
@@ -83,7 +109,46 @@ fn decode_font1_fntdata_writes_otto_sfnt() {
 }
 
 #[test]
-fn decode_rejects_non_empty_extra_mtx_blocks() {
+fn decode_pptx_fixture_fntdata_reconstructs_roundtrip_ready_truetype() {
+    let output_path = temp_out();
+    let reencoded_path = temp_in("eot");
+
+    let output = run_fonttool([
+        "decode",
+        "build/pptx_case7/ppt/fonts/font1.fntdata",
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_truetype_roundtrip_ready(&output_path);
+
+    let encode_output = run_fonttool([
+        "encode",
+        output_path
+            .to_str()
+            .expect("decoded path should be valid utf-8"),
+        reencoded_path
+            .to_str()
+            .expect("re-encoded path should be valid utf-8"),
+    ]);
+    assert!(
+        encode_output.status.success(),
+        "expected decoded TrueType fixture to re-encode, stderr: {}",
+        String::from_utf8_lossy(&encode_output.stderr)
+    );
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(reencoded_path);
+}
+
+#[test]
+fn decode_rejects_incomplete_extra_mtx_blocks_for_truetype_reconstruction() {
     let input_path = temp_in("fntdata");
     let output_path = temp_out();
     let fixture = build_fixture_with_non_empty_block3();
@@ -102,13 +167,13 @@ fn decode_rejects_non_empty_extra_mtx_blocks() {
 
     assert!(
         !output.status.success(),
-        "expected decode to fail for unsupported extra MTX blocks"
+        "expected decode to fail for incomplete TrueType reconstruction blocks"
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("non-empty extra MTX blocks are not supported"),
-        "expected unsupported-block error, stderr: {stderr}"
+        stderr.contains("current Rust MTX decode requires both block2 and block3"),
+        "expected incomplete-block error, stderr: {stderr}"
     );
 
     let _ = fs::remove_file(input_path);

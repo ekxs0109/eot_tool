@@ -164,7 +164,8 @@ pub fn decode_current_rust_encoded_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, 
         }
     }
 
-    let container = parse_mtx_container(&payload_bytes).map_err(RustDecodeError::InvalidContainer)?;
+    let container =
+        parse_mtx_container(&payload_bytes).map_err(RustDecodeError::InvalidContainer)?;
     let block1 = decode_lz_block(container.block1, "block1")?;
     let block2 = match container.block2 {
         Some(block) => decode_lz_block(block, "block2")?,
@@ -189,17 +190,27 @@ pub fn decode_current_rust_encoded_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, 
     let head = table_bytes(&font, TAG_HEAD, "head")?;
     let maxp = table_bytes(&font, TAG_MAXP, "maxp")?;
     if head.len() < 52 {
-        return Err(RustDecodeError::InvalidBlock("head table is truncated".to_string()));
+        return Err(RustDecodeError::InvalidBlock(
+            "head table is truncated".to_string(),
+        ));
     }
     if maxp.len() < 6 {
-        return Err(RustDecodeError::InvalidBlock("maxp table is truncated".to_string()));
+        return Err(RustDecodeError::InvalidBlock(
+            "maxp table is truncated".to_string(),
+        ));
     }
 
     let index_to_loca_format = i16::from_be_bytes([head[50], head[51]]);
     let num_glyphs = u16::from_be_bytes([maxp[4], maxp[5]]);
     let glyf_stream = table_bytes(&font, TAG_GLYF, "glyf")?;
-    let decoded_glyf = decode_glyf(glyf_stream, &block2, &block3, index_to_loca_format, num_glyphs)
-        .map_err(RustDecodeError::InvalidGlyf)?;
+    let decoded_glyf = decode_glyf(
+        glyf_stream,
+        &block2,
+        &block3,
+        index_to_loca_format,
+        num_glyphs,
+    )
+    .map_err(RustDecodeError::InvalidGlyf)?;
     font.remove_table(TAG_GLYF);
     font.remove_table(TAG_LOCA);
     font.add_table(TAG_GLYF, decoded_glyf.glyf_data);

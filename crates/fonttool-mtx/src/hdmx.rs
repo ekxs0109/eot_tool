@@ -51,11 +51,11 @@ pub fn hdmx_encode(
 
         for glyph in 0..num_glyphs {
             let advance_width = read_advance_width(hmtx, hhea, glyph)?;
-            let rounded_tt_aw =
-                (((64 * i32::from(ppem) * i32::from(advance_width)) + i32::from(units_per_em) / 2)
-                    / i32::from(units_per_em)
-                    + 32)
-                    / 64;
+            let rounded_tt_aw = (((64 * i32::from(ppem) * i32::from(advance_width))
+                + i32::from(units_per_em) / 2)
+                / i32::from(units_per_em)
+                + 32)
+                / 64;
             let surprise = i32::from(decoded[record_offset + 2 + glyph]) - rounded_tt_aw;
             write_magnitude_value(&mut mag, surprise)?;
         }
@@ -93,7 +93,11 @@ pub fn hdmx_decode(
     let units_per_em = read_u16_be(head, 18)?;
     let num_glyphs = usize::from(read_u16_be(maxp, 4)?);
     let mag_data_offset = 8usize
-        .checked_add(num_records.checked_mul(2).ok_or(HdmxCodecError::CorruptData)?)
+        .checked_add(
+            num_records
+                .checked_mul(2)
+                .ok_or(HdmxCodecError::CorruptData)?,
+        )
         .ok_or(HdmxCodecError::CorruptData)?;
     if mag_data_offset > encoded.len() || units_per_em == 0 {
         return Err(HdmxCodecError::CorruptData);
@@ -128,11 +132,11 @@ pub fn hdmx_decode(
 
         for glyph in 0..num_glyphs {
             let advance_width = read_advance_width(hmtx, hhea, glyph)?;
-            let rounded_tt_aw =
-                (((64 * i32::from(ppem) * i32::from(advance_width)) + i32::from(units_per_em) / 2)
-                    / i32::from(units_per_em)
-                    + 32)
-                    / 64;
+            let rounded_tt_aw = (((64 * i32::from(ppem) * i32::from(advance_width))
+                + i32::from(units_per_em) / 2)
+                / i32::from(units_per_em)
+                + 32)
+                / 64;
             let surprise = read_magnitude_value(encoded, &mut mag_pos)?;
             let width = (rounded_tt_aw + surprise).clamp(0, 255) as u8;
             output[record_offset + 2 + glyph] = width;
@@ -146,14 +150,18 @@ fn read_u16_be(bytes: &[u8], offset: usize) -> Result<u16, HdmxCodecError> {
     let slice = bytes
         .get(offset..offset + 2)
         .ok_or(HdmxCodecError::CorruptData)?;
-    Ok(u16::from_be_bytes(slice.try_into().expect("slice should fit")))
+    Ok(u16::from_be_bytes(
+        slice.try_into().expect("slice should fit"),
+    ))
 }
 
 fn read_u32_be(bytes: &[u8], offset: usize) -> Result<u32, HdmxCodecError> {
     let slice = bytes
         .get(offset..offset + 4)
         .ok_or(HdmxCodecError::CorruptData)?;
-    Ok(u32::from_be_bytes(slice.try_into().expect("slice should fit")))
+    Ok(u32::from_be_bytes(
+        slice.try_into().expect("slice should fit"),
+    ))
 }
 
 fn read_advance_width(hmtx: &[u8], hhea: &[u8], glyph: usize) -> Result<u16, HdmxCodecError> {

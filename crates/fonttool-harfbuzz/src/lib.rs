@@ -3,8 +3,8 @@
 use core::fmt;
 use std::path::Path;
 
-use hb_subset::{Blob, FontFace, SubsetInput};
 use fonttool_subset::{SubsetPlan, SubsetWarnings};
+use hb_subset::{Blob, FontFace, SubsetInput};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacySubsetRequest<'a> {
@@ -29,9 +29,7 @@ impl fmt::Display for HarfbuzzSubsetError {
             HarfbuzzSubsetError::SetupFailed => {
                 f.write_str("failed to initialize HarfBuzz subsetting input")
             }
-            HarfbuzzSubsetError::SubsetFailed => {
-                f.write_str("HarfBuzz could not subset this font")
-            }
+            HarfbuzzSubsetError::SubsetFailed => f.write_str("HarfBuzz could not subset this font"),
         }
     }
 }

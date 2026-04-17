@@ -58,10 +58,19 @@ fn rejects_truncated_directory() {
 
 #[test]
 fn rejects_out_of_bounds_table_range() {
-    let bytes = build_sfnt(0x0001_0000, &[(u32::from_be_bytes(*b"head"), 0, 32, 12)], 40);
+    let bytes = build_sfnt(
+        0x0001_0000,
+        &[(u32::from_be_bytes(*b"head"), 0, 32, 12)],
+        40,
+    );
 
     let err = parse_sfnt(&bytes).unwrap_err();
-    assert_eq!(err, ParseError::InvalidTableRange { tag: u32::from_be_bytes(*b"head") });
+    assert_eq!(
+        err,
+        ParseError::InvalidTableRange {
+            tag: u32::from_be_bytes(*b"head")
+        }
+    );
 }
 
 #[test]
@@ -69,5 +78,10 @@ fn rejects_table_offset_into_directory() {
     let bytes = build_sfnt(0x0001_0000, &[(u32::from_be_bytes(*b"head"), 0, 20, 4)], 64);
 
     let err = parse_sfnt(&bytes).unwrap_err();
-    assert_eq!(err, ParseError::InvalidTableRange { tag: u32::from_be_bytes(*b"head") });
+    assert_eq!(
+        err,
+        ParseError::InvalidTableRange {
+            tag: u32::from_be_bytes(*b"head")
+        }
+    );
 }

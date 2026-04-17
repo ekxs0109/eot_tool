@@ -60,7 +60,10 @@ impl<'a> ByteReader<'a> {
 
     pub fn read_bytes(&mut self, count: usize) -> Result<&'a [u8], ByteError> {
         let end = self.offset.checked_add(count).ok_or(ByteError::Truncated)?;
-        let slice = self.bytes.get(self.offset..end).ok_or(ByteError::Truncated)?;
+        let slice = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(ByteError::Truncated)?;
         self.offset = end;
         Ok(slice)
     }

@@ -233,10 +233,7 @@ pub fn subset_owned_font(
     Ok((output, warnings))
 }
 
-fn update_maxp_num_glyphs(
-    font: &mut OwnedSfntFont,
-    num_glyphs: u16,
-) -> Result<(), SubsetError> {
+fn update_maxp_num_glyphs(font: &mut OwnedSfntFont, num_glyphs: u16) -> Result<(), SubsetError> {
     let mut maxp = font
         .remove_table(TAG_MAXP)
         .ok_or(SubsetError::MissingMaxp)?
@@ -330,8 +327,8 @@ fn update_glyf_and_loca_tables(
         match index_to_loca_format {
             0 => {
                 let offset = usize::from(output_gid) * 2;
-                let loca_value = u16::try_from(glyf_data.len() / 2)
-                    .map_err(|_| SubsetError::TruncatedMaxp)?;
+                let loca_value =
+                    u16::try_from(glyf_data.len() / 2).map_err(|_| SubsetError::TruncatedMaxp)?;
                 loca[offset..offset + 2].copy_from_slice(&loca_value.to_be_bytes());
             }
             1 => {
@@ -355,8 +352,8 @@ fn update_glyf_and_loca_tables(
     match index_to_loca_format {
         0 => {
             let offset = usize::from(output_num_glyphs) * 2;
-            let loca_value = u16::try_from(glyf_data.len() / 2)
-                .map_err(|_| SubsetError::TruncatedMaxp)?;
+            let loca_value =
+                u16::try_from(glyf_data.len() / 2).map_err(|_| SubsetError::TruncatedMaxp)?;
             loca[offset..offset + 2].copy_from_slice(&loca_value.to_be_bytes());
         }
         1 => {
@@ -380,7 +377,11 @@ fn update_cmap_table(
     plan: &SubsetPlan,
     output: &mut OwnedSfntFont,
 ) -> Result<(), SubsetError> {
-    let cmap = input.table(TAG_CMAP).ok_or(SubsetError::MissingMaxp)?.data.as_slice();
+    let cmap = input
+        .table(TAG_CMAP)
+        .ok_or(SubsetError::MissingMaxp)?
+        .data
+        .as_slice();
     let entries = collect_cmap_entries(cmap, plan)?;
     let rebuilt = build_cmap_table(&entries);
     output.remove_table(TAG_CMAP);
@@ -449,7 +450,11 @@ fn read_num_hmetrics(font: &OwnedSfntFont) -> Result<u16, SubsetError> {
 }
 
 fn read_hmetric(font: &OwnedSfntFont, glyph_id: u16) -> Result<Hmetric, SubsetError> {
-    let hmtx = font.table(TAG_HMTX).ok_or(SubsetError::MissingMaxp)?.data.as_slice();
+    let hmtx = font
+        .table(TAG_HMTX)
+        .ok_or(SubsetError::MissingMaxp)?
+        .data
+        .as_slice();
     let num_glyphs = read_num_glyphs(font)?;
     let number_of_hmetrics = read_num_hmetrics(font)?;
     if glyph_id >= num_glyphs {
@@ -458,8 +463,8 @@ fn read_hmetric(font: &OwnedSfntFont, glyph_id: u16) -> Result<Hmetric, SubsetEr
     if number_of_hmetrics == 0 || number_of_hmetrics > num_glyphs {
         return Err(SubsetError::TruncatedMaxp);
     }
-    let hmtx_length = usize::from(number_of_hmetrics) * 4
-        + usize::from(num_glyphs - number_of_hmetrics) * 2;
+    let hmtx_length =
+        usize::from(number_of_hmetrics) * 4 + usize::from(num_glyphs - number_of_hmetrics) * 2;
     if hmtx.len() < hmtx_length {
         return Err(SubsetError::TruncatedMaxp);
     }
@@ -473,8 +478,8 @@ fn read_hmetric(font: &OwnedSfntFont, glyph_id: u16) -> Result<Hmetric, SubsetEr
         })
     } else {
         let last_hmetric = usize::from(number_of_hmetrics - 1) * 4;
-        let lsb_offset = usize::from(number_of_hmetrics) * 4
-            + usize::from(glyph_id - number_of_hmetrics) * 2;
+        let lsb_offset =
+            usize::from(number_of_hmetrics) * 4 + usize::from(glyph_id - number_of_hmetrics) * 2;
         Ok(Hmetric {
             advance_width: u16::from_be_bytes([hmtx[last_hmetric], hmtx[last_hmetric + 1]]),
             left_side_bearing: i16::from_be_bytes([hmtx[lsb_offset], hmtx[lsb_offset + 1]]),
@@ -483,8 +488,16 @@ fn read_hmetric(font: &OwnedSfntFont, glyph_id: u16) -> Result<Hmetric, SubsetEr
 }
 
 fn read_glyph_range(font: &OwnedSfntFont, glyph_id: u16) -> Result<(usize, usize), SubsetError> {
-    let loca = font.table(TAG_LOCA).ok_or(SubsetError::MissingMaxp)?.data.as_slice();
-    let glyf = font.table(TAG_GLYF).ok_or(SubsetError::MissingMaxp)?.data.as_slice();
+    let loca = font
+        .table(TAG_LOCA)
+        .ok_or(SubsetError::MissingMaxp)?
+        .data
+        .as_slice();
+    let glyf = font
+        .table(TAG_GLYF)
+        .ok_or(SubsetError::MissingMaxp)?
+        .data
+        .as_slice();
     let num_glyphs = read_num_glyphs(font)?;
     if glyph_id >= num_glyphs {
         return Err(SubsetError::GlyphIdOutOfRange(glyph_id));
@@ -508,8 +521,18 @@ fn read_glyph_range(font: &OwnedSfntFont, glyph_id: u16) -> Result<(usize, usize
             if offset + 8 > loca.len() {
                 return Err(SubsetError::TruncatedMaxp);
             }
-            let start = u32::from_be_bytes([loca[offset], loca[offset + 1], loca[offset + 2], loca[offset + 3]]) as usize;
-            let end = u32::from_be_bytes([loca[offset + 4], loca[offset + 5], loca[offset + 6], loca[offset + 7]]) as usize;
+            let start = u32::from_be_bytes([
+                loca[offset],
+                loca[offset + 1],
+                loca[offset + 2],
+                loca[offset + 3],
+            ]) as usize;
+            let end = u32::from_be_bytes([
+                loca[offset + 4],
+                loca[offset + 5],
+                loca[offset + 6],
+                loca[offset + 7],
+            ]) as usize;
             if end < start || end > glyf.len() {
                 return Err(SubsetError::TruncatedMaxp);
             }
@@ -552,7 +575,11 @@ fn renumber_glyph_data(glyph_data: &[u8], plan: &SubsetPlan) -> Result<Vec<u8>, 
         copy[position + 2..position + 4].copy_from_slice(&new_component_gid.to_be_bytes());
         position += 4;
 
-        position += if flags & GLYF_COMPOSITE_ARG_WORDS != 0 { 4 } else { 2 };
+        position += if flags & GLYF_COMPOSITE_ARG_WORDS != 0 {
+            4
+        } else {
+            2
+        };
         if flags & GLYF_COMPOSITE_HAVE_SCALE != 0 {
             position += 2;
         } else if flags & GLYF_COMPOSITE_HAVE_XY_SCALE != 0 {
@@ -573,7 +600,8 @@ fn renumber_glyph_data(glyph_data: &[u8], plan: &SubsetPlan) -> Result<Vec<u8>, 
         if position + 2 > copy.len() {
             return Err(SubsetError::TruncatedMaxp);
         }
-        let instruction_length = usize::from(u16::from_be_bytes([copy[position], copy[position + 1]]));
+        let instruction_length =
+            usize::from(u16::from_be_bytes([copy[position], copy[position + 1]]));
         position += 2 + instruction_length;
         if position > copy.len() {
             return Err(SubsetError::TruncatedMaxp);
@@ -667,8 +695,14 @@ fn collect_cmap_entries_format4(
     }
 
     for i in 0..seg_count {
-        let start_code = u16::from_be_bytes([cmap[start_codes_offset + i * 2], cmap[start_codes_offset + i * 2 + 1]]);
-        let end_code = u16::from_be_bytes([cmap[end_codes_offset + i * 2], cmap[end_codes_offset + i * 2 + 1]]);
+        let start_code = u16::from_be_bytes([
+            cmap[start_codes_offset + i * 2],
+            cmap[start_codes_offset + i * 2 + 1],
+        ]);
+        let end_code = u16::from_be_bytes([
+            cmap[end_codes_offset + i * 2],
+            cmap[end_codes_offset + i * 2 + 1],
+        ]);
         if start_code == 0xFFFF && end_code == 0xFFFF {
             break;
         }
@@ -710,7 +744,11 @@ fn collect_cmap_entries_format4(
                 && usize::from(glyph_id) < plan.old_to_new_gid().len()
                 && plan.old_to_new_gid()[usize::from(glyph_id)] != SUBSET_GID_NOT_INCLUDED
             {
-                append_cmap_entry(entries, codepoint, plan.old_to_new_gid()[usize::from(glyph_id)]);
+                append_cmap_entry(
+                    entries,
+                    codepoint,
+                    plan.old_to_new_gid()[usize::from(glyph_id)],
+                );
             }
 
             if codepoint == 0xFFFF {
@@ -731,8 +769,18 @@ fn collect_cmap_entries_format12(
     if offset + 16 > cmap.len() {
         return Err(SubsetError::TruncatedMaxp);
     }
-    let length = u32::from_be_bytes([cmap[offset + 4], cmap[offset + 5], cmap[offset + 6], cmap[offset + 7]]) as usize;
-    let num_groups = u32::from_be_bytes([cmap[offset + 12], cmap[offset + 13], cmap[offset + 14], cmap[offset + 15]]) as usize;
+    let length = u32::from_be_bytes([
+        cmap[offset + 4],
+        cmap[offset + 5],
+        cmap[offset + 6],
+        cmap[offset + 7],
+    ]) as usize;
+    let num_groups = u32::from_be_bytes([
+        cmap[offset + 12],
+        cmap[offset + 13],
+        cmap[offset + 14],
+        cmap[offset + 15],
+    ]) as usize;
     if offset + length > cmap.len() || length < 16 + num_groups * 12 {
         return Err(SubsetError::TruncatedMaxp);
     }
@@ -790,7 +838,10 @@ fn append_cmap_entry(entries: &mut Vec<CmapEntry>, codepoint: u32, glyph_id: u16
             return;
         }
     }
-    entries.push(CmapEntry { codepoint, glyph_id });
+    entries.push(CmapEntry {
+        codepoint,
+        glyph_id,
+    });
 }
 
 fn build_cmap_table(entries: &[CmapEntry]) -> Vec<u8> {
@@ -864,8 +915,16 @@ fn build_cmap_format4(entries: &[CmapEntry]) -> Vec<u8> {
     write_u16_be(&mut format4, 0, CMAP_FORMAT_4);
     write_u16_be(&mut format4, 2, u16::try_from(length).unwrap_or(u16::MAX));
     write_u16_be(&mut format4, 6, seg_count_x2);
-    write_u16_be(&mut format4, 8, u16::try_from(search_range).unwrap_or(u16::MAX));
-    write_u16_be(&mut format4, 10, u16::try_from(entry_selector).unwrap_or(u16::MAX));
+    write_u16_be(
+        &mut format4,
+        8,
+        u16::try_from(search_range).unwrap_or(u16::MAX),
+    );
+    write_u16_be(
+        &mut format4,
+        10,
+        u16::try_from(entry_selector).unwrap_or(u16::MAX),
+    );
     write_u16_be(
         &mut format4,
         12,
@@ -878,7 +937,11 @@ fn build_cmap_format4(entries: &[CmapEntry]) -> Vec<u8> {
             16 + usize::from(seg_count) * 2 + index * 2,
             segment.start_code,
         );
-        write_i16_be(&mut format4, 16 + usize::from(seg_count) * 4 + index * 2, segment.delta);
+        write_i16_be(
+            &mut format4,
+            16 + usize::from(seg_count) * 4 + index * 2,
+            segment.delta,
+        );
     }
     write_u16_be(&mut format4, 14 + segments.len() * 2, 0xFFFF);
     write_u16_be(
@@ -918,7 +981,11 @@ fn build_cmap_format12(entries: &[CmapEntry]) -> Vec<u8> {
     let mut format12 = vec![0; length];
     write_u16_be(&mut format12, 0, CMAP_FORMAT_12);
     write_u32_be(&mut format12, 4, u32::try_from(length).unwrap_or(u32::MAX));
-    write_u32_be(&mut format12, 12, u32::try_from(groups.len()).unwrap_or(u32::MAX));
+    write_u32_be(
+        &mut format12,
+        12,
+        u32::try_from(groups.len()).unwrap_or(u32::MAX),
+    );
     for (index, group) in groups.iter().enumerate() {
         let group_offset = 16 + index * 12;
         write_u32_be(&mut format12, group_offset, group.start_code);

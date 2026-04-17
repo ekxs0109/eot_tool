@@ -13,7 +13,10 @@ fn parses_eot_header_lengths_and_flags() {
     assert_eq!(header.version, 0x0002_0002);
     assert_eq!(header.magic_number, 0x504c);
     assert_eq!(header.header_length, 202);
-    assert_eq!(header.eot_size - header.font_data_size, header.header_length);
+    assert_eq!(
+        header.eot_size - header.font_data_size,
+        header.header_length
+    );
     assert!(header.flags & 0x4 != 0);
     assert_eq!(header.signature_size, 0);
     assert_eq!(header.eudc_font_size, 0);
@@ -61,12 +64,7 @@ fn parses_v20002_trailer_fields() {
     let mut bytes = [0u8; 512];
     let signature = [0xde, 0xad, 0xbe, 0xef];
     let eudc_font_data = [0x11, 0x22, 0x33];
-    let header_length = build_synthetic_v20002_header(
-        &mut bytes,
-        &signature,
-        &eudc_font_data,
-        5,
-    );
+    let header_length = build_synthetic_v20002_header(&mut bytes, &signature, &eudc_font_data, 5);
 
     let header = parse_eot_header(&bytes[..header_length + 5]).unwrap();
 

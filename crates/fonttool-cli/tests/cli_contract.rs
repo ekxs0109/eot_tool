@@ -472,8 +472,11 @@ fn subset_static_otf_with_variation_is_rejected_by_current_contract() {
 #[test]
 fn subset_cff_bytes_with_ttf_extension_still_use_otf_boundary() {
     let input_path = temp_path("cff-static-misnamed", "ttf");
-    fs::copy(workspace_root().join("testdata/cff-static.otf"), &input_path)
-        .expect("fixture copy should be writable");
+    fs::copy(
+        workspace_root().join("testdata/cff-static.otf"),
+        &input_path,
+    )
+    .expect("fixture copy should be writable");
 
     let output = run_fonttool([
         "subset",

@@ -78,10 +78,19 @@ fn serializes_basic_sfnt_structure_and_directory_contents() {
     let table_offset = read_u32_be(&bytes, entry_offset + 8) as usize;
 
     assert_eq!(read_u32_be(&bytes, entry_offset), TAG_TEST);
-    assert_eq!(read_u32_be(&bytes, entry_offset + 4), calc_checksum(&table_data));
-    assert_eq!(read_u32_be(&bytes, entry_offset + 12), table_data.len() as u32);
+    assert_eq!(
+        read_u32_be(&bytes, entry_offset + 4),
+        calc_checksum(&table_data)
+    );
+    assert_eq!(
+        read_u32_be(&bytes, entry_offset + 12),
+        table_data.len() as u32
+    );
     assert_eq!(table_offset, 28);
-    assert_eq!(&bytes[table_offset..table_offset + table_data.len()], table_data);
+    assert_eq!(
+        &bytes[table_offset..table_offset + table_data.len()],
+        table_data
+    );
 }
 
 #[test]
@@ -150,9 +159,9 @@ fn calculates_search_range_fields_for_five_tables() {
 #[test]
 fn preserves_otto_version_tag_through_parse_and_serialize() {
     let otto_font_bytes = [
-        0x4f, 0x54, 0x54, 0x4f, 0x00, 0x01, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x43, 0x46,
-        0x46, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x04,
-        0xde, 0xad, 0xbe, 0xef,
+        0x4f, 0x54, 0x54, 0x4f, 0x00, 0x01, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x43, 0x46, 0x46,
+        0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1c, 0x00, 0x00, 0x00, 0x04, 0xde, 0xad,
+        0xbe, 0xef,
     ];
 
     let font = load_sfnt(&otto_font_bytes).unwrap();
@@ -225,7 +234,10 @@ fn add_table_replaces_existing_tag_in_place() {
 
     assert_eq!(font.tables().len(), 2);
     assert_eq!(font.table(TAG_BBBB).unwrap().data, vec![0x10]);
-    assert_eq!(font.table(TAG_AAAA).unwrap().data, vec![0xf0, 0x0d, 0xbe, 0xef]);
+    assert_eq!(
+        font.table(TAG_AAAA).unwrap().data,
+        vec![0xf0, 0x0d, 0xbe, 0xef]
+    );
 }
 
 #[test]

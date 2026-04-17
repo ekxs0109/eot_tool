@@ -392,7 +392,11 @@ fn split_push_code(instructions: &[u8]) -> Result<(usize, Vec<u8>, Vec<u8>), Gly
             let count_index = i + 1;
             (
                 count_index + 1,
-                usize::from(*instructions.get(count_index).ok_or(GlyfEncodeError::CorruptData)?),
+                usize::from(
+                    *instructions
+                        .get(count_index)
+                        .ok_or(GlyfEncodeError::CorruptData)?,
+                ),
                 usize::from((instr & 1) + 1),
             )
         } else if (TT_PUSHB_BASE..0xC0).contains(&instr) {
@@ -407,7 +411,8 @@ fn split_push_code(instructions: &[u8]) -> Result<(usize, Vec<u8>, Vec<u8>), Gly
         let payload_size = count
             .checked_mul(value_size)
             .ok_or(GlyfEncodeError::CorruptData)?;
-        if ix.checked_add(payload_size)
+        if ix
+            .checked_add(payload_size)
             .ok_or(GlyfEncodeError::CorruptData)?
             > instructions.len()
         {
@@ -652,14 +657,19 @@ mod tests {
         }
         if abs_x < 65 && abs_y < 65 {
             return (
-                (on_curve_bit + 20 + ((abs_x as i32 - 1) & 0x30) + (((abs_y as i32 - 1) & 0x30) >> 2)
+                (on_curve_bit
+                    + 20
+                    + ((abs_x as i32 - 1) & 0x30)
+                    + (((abs_y as i32 - 1) & 0x30) >> 2)
                     + xy_sign_bits) as u8,
                 vec![((((abs_x - 1) as u8) & 0x0F) << 4) | (((abs_y - 1) as u8) & 0x0F)],
             );
         }
         if abs_x < 769 && abs_y < 769 {
             return (
-                (on_curve_bit + 84 + 12 * (((abs_x - 1) & 0x300) >> 8) as i32
+                (on_curve_bit
+                    + 84
+                    + 12 * (((abs_x - 1) & 0x300) >> 8) as i32
                     + (((abs_y - 1) & 0x300) >> 6) as i32
                     + xy_sign_bits) as u8,
                 vec![((abs_x - 1) & 0xFF) as u8, ((abs_y - 1) & 0xFF) as u8],
@@ -710,7 +720,9 @@ mod tests {
 
     #[test]
     fn encode_255_short_examples_match_reference() {
-        let values = [0i16, 249, 250, 499, 500, 749, 750, -1, -250, -500, -749, -750];
+        let values = [
+            0i16, 249, 250, 499, 500, 749, 750, -1, -250, -500, -749, -750,
+        ];
 
         for value in values {
             let encoded = encode_255_short(value).expect("encode should succeed");
