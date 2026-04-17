@@ -423,6 +423,68 @@ fn encode_can_emit_raw_sfnt_v2_payload() {
 }
 
 #[test]
+fn encode_can_emit_raw_sfnt_xor_v1_payload() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    let output = support::run_fonttool([
+        "encode",
+        source_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "sfnt",
+        "--xor",
+        "on",
+        "--eot-version",
+        "v1",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0001);
+    assert_ne!(header.flags & EOT_FLAG_PPT_XOR, 0);
+    parse_sfnt(&read_embedded_payload_bytes(&bytes))
+        .expect("raw xor payload should decode to a valid SFNT");
+}
+
+#[test]
+fn encode_can_emit_raw_sfnt_xor_v2_payload() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    let output = support::run_fonttool([
+        "encode",
+        source_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "sfnt",
+        "--xor",
+        "on",
+        "--eot-version",
+        "v2",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0002);
+    assert_ne!(header.flags & EOT_FLAG_PPT_XOR, 0);
+    parse_sfnt(&read_embedded_payload_bytes(&bytes))
+        .expect("raw xor payload should decode to a valid SFNT");
+}
+
+#[test]
 fn encode_can_emit_mtx_v1_payload() {
     let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
@@ -449,6 +511,66 @@ fn encode_can_emit_mtx_v1_payload() {
     assert_eq!(header.flags & EOT_FLAG_PPT_XOR, 0);
     let payload = read_embedded_payload_bytes(&bytes);
     parse_mtx_container(&payload).expect("payload should be a valid MTX container");
+}
+
+#[test]
+fn encode_can_emit_mtx_v2_payload() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    let output = support::run_fonttool([
+        "encode",
+        source_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "mtx",
+        "--eot-version",
+        "v2",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0002);
+    assert_eq!(header.flags & EOT_FLAG_PPT_XOR, 0);
+    let payload = read_embedded_payload_bytes(&bytes);
+    parse_mtx_container(&payload).expect("payload should be a valid MTX container");
+}
+
+#[test]
+fn encode_can_emit_mtx_xor_v1_payload() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    let output = support::run_fonttool([
+        "encode",
+        source_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "mtx",
+        "--xor",
+        "on",
+        "--eot-version",
+        "v1",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0001);
+    assert_ne!(header.flags & EOT_FLAG_PPT_XOR, 0);
+    let payload = read_embedded_payload_bytes(&bytes);
+    parse_mtx_container(&payload).expect("payload should be a valid XOR-decoded MTX container");
 }
 
 #[test]
