@@ -7,9 +7,8 @@ The native `src/` tree, Makefile, and `tests/test_*.c` / `tests/test_*.cc`
 harness were removed on 2026-04-15 after the supported repository contract was
 moved onto Rust-owned code and package scripts.
 
-Use `docs/superpowers/specs/2026-04-15-fonttool-support-matrix.md` as the
-authoritative support-boundary document. This file is the historical
-test-migration map.
+Use the repository `README.md` as the current support-boundary summary. This
+file is the historical test-migration map.
 
 Status legend:
 

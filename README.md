@@ -31,8 +31,6 @@ PATH="$(brew --prefix rustup)/bin:$PATH" rustup run nightly cargo fuzz build
 ```
 
 Migration tracking lives in `tests/rust-test-inventory.md`.
-The file-by-file ownership map for supported and explicitly deferred behavior
-lives in `docs/superpowers/specs/2026-04-15-fonttool-support-matrix.md`.
 
 Historical retirement notes live in [legacy/README.md](legacy/README.md).
 
@@ -106,6 +104,15 @@ Current supported/unsupported encode boundaries:
 - TrueType input to `.fntdata`: unsupported
 - `OTF(CFF/CFF2)` input: unsupported
 
+For `.eot` output, `fonttool encode` accepts embedded-output controls:
+
+- `--payload-format mtx|sfnt`
+- `--xor on|off`
+- `--eot-version v1|v2`
+
+Defaults remain `mtx + off + v2`. Passing these flags with `.ttf` output is a
+contract error.
+
 Current encode-output behavior and locked-in roundtrip baselines across the
 Rust-owned TrueType path:
 
@@ -172,6 +179,18 @@ Extra-table behavior across the supported non-OTF subset path is:
 
 The Rust CLI does not currently support `--text`, `--unicodes`, or
 `--keep-gids` for non-OTF input.
+
+For `.eot` / `.fntdata` output, `fonttool subset` accepts the same
+embedded-output controls:
+
+- `--payload-format mtx|sfnt`
+- `--xor on|off`
+- `--eot-version v1|v2`
+
+Defaults remain `mtx + off + v2` for `.eot`. `.fntdata` output keeps the
+PowerPoint-compatible XOR wrapper by default unless `--xor off` is passed
+explicitly. Passing embedded-output flags with `.ttf` output is a contract
+error.
 
 Subset verification example:
 

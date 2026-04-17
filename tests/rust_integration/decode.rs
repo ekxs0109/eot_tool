@@ -5,6 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use fonttool_sfnt::{load_sfnt, parse_sfnt, SFNT_VERSION_OTTO, SFNT_VERSION_TRUETYPE};
 
+const RAW_SFNT_HEADER_LENGTH: usize = 100;
+const EOT_FLAGS_RANGE: std::ops::Range<usize> = 12..16;
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -84,6 +87,15 @@ fn assert_truetype_roundtrip_ready(path: &Path) {
         !loca.data.is_empty(),
         "decoded TrueType fixture should expose real loca bytes"
     );
+}
+
+fn assert_truetype_output_matches_fixture(path: &Path, expected: &[u8]) {
+    let bytes = fs::read(path).expect("decoded font should be readable");
+    assert_eq!(
+        bytes, expected,
+        "raw-SFNT payload decode should reproduce the original TrueType bytes"
+    );
+    assert_truetype_roundtrip_ready(path);
 }
 
 #[test]
@@ -171,7 +183,44 @@ fn decode_raw_sfnt_payload_eot_writes_truetype_output() {
         "expected raw-sfnt EOT decode to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_truetype_roundtrip_ready(&output_path);
+    assert_truetype_output_matches_fixture(&output_path, &sfnt_bytes);
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
+fn decode_xor_raw_sfnt_payload_eot_writes_truetype_output() {
+    let input_path = temp_in("eot");
+    let output_path = temp_out();
+    let sfnt_bytes = fs::read(workspace_root().join("testdata/OpenSans-Regular.ttf"))
+        .expect("fixture sfnt should be readable");
+    let mut fixture = build_raw_sfnt_payload_eot(&sfnt_bytes);
+
+    fixture[EOT_FLAGS_RANGE].copy_from_slice(&0x1000_0000u32.to_le_bytes());
+    let payload_start = RAW_SFNT_HEADER_LENGTH;
+    for byte in &mut fixture[payload_start..] {
+        *byte ^= 0x50;
+    }
+
+    fs::write(&input_path, fixture).expect("synthetic xor raw-sfnt eot should be writable");
+
+    let output = run_fonttool([
+        "decode",
+        input_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected xor raw-sfnt EOT decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_truetype_output_matches_fixture(&output_path, &sfnt_bytes);
 
     let _ = fs::remove_file(input_path);
     let _ = fs::remove_file(output_path);
@@ -239,17 +288,16 @@ fn build_fixture_with_non_empty_block3() -> Vec<u8> {
 }
 
 fn build_raw_sfnt_payload_eot(sfnt_bytes: &[u8]) -> Vec<u8> {
-    const HEADER_LENGTH: usize = 100;
-    let eot_size = HEADER_LENGTH + sfnt_bytes.len();
+    let eot_size = RAW_SFNT_HEADER_LENGTH + sfnt_bytes.len();
     let mut bytes = vec![0u8; eot_size];
 
     bytes[0..4].copy_from_slice(&(eot_size as u32).to_le_bytes());
     bytes[4..8].copy_from_slice(&(sfnt_bytes.len() as u32).to_le_bytes());
     bytes[8..12].copy_from_slice(&0x0002_0001u32.to_le_bytes());
-    bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
+    bytes[EOT_FLAGS_RANGE].copy_from_slice(&0u32.to_le_bytes());
     bytes[28..32].copy_from_slice(&300u32.to_le_bytes());
     bytes[34..36].copy_from_slice(&0x504cu16.to_le_bytes());
-    bytes[HEADER_LENGTH..].copy_from_slice(sfnt_bytes);
+    bytes[RAW_SFNT_HEADER_LENGTH..].copy_from_slice(sfnt_bytes);
 
     bytes
 }
