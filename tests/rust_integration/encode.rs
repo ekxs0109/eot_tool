@@ -506,7 +506,7 @@ fn case7_original_embedded_font_report() -> support::EmbeddedFontReport {
     let path = support::workspace_root().join("build/pptx_case7/ppt/fonts/font1.fntdata");
     assert!(
         path.exists(),
-        "missing case7 baseline fixture at {}. expected tracked local PPT extraction output for the Task 1 parity test",
+        "missing case7 baseline fixture at {}. expected local/generated case7 extraction output for the Task 1 parity test; regenerate the PPT extraction artifacts before running this parity check",
         path.display()
     );
     support::inspect_embedded_font_file(&path)
@@ -528,19 +528,31 @@ fn encode_pptx_case7_block1_is_within_original_size_budget_on_this_branch() {
 
     assert_eq!(
         original.block2.decompressed_len, 0,
-        "tracked PPT sample should keep block2 empty"
+        "tracked PPT sample should keep block2 decoding to an empty stream"
     );
     assert_eq!(
         original.block3.decompressed_len, 0,
-        "tracked PPT sample should keep block3 empty"
+        "tracked PPT sample should keep block3 decoding to an empty stream"
+    );
+    assert_eq!(
+        regenerated.block2.compressed_len, original.block2.compressed_len,
+        "regenerated PPT sample should preserve the baseline block2 compressed empty-stream footprint: baseline compressed={}, regenerated compressed={}",
+        original.block2.compressed_len,
+        regenerated.block2.compressed_len
+    );
+    assert_eq!(
+        regenerated.block3.compressed_len, original.block3.compressed_len,
+        "regenerated PPT sample should preserve the baseline block3 compressed empty-stream footprint: baseline compressed={}, regenerated compressed={}",
+        original.block3.compressed_len,
+        regenerated.block3.compressed_len
     );
     assert_eq!(
         regenerated.block2.decompressed_len, 0,
-        "regenerated PPT sample should keep block2 empty"
+        "regenerated PPT sample should keep block2 decoding to an empty stream"
     );
     assert_eq!(
         regenerated.block3.decompressed_len, 0,
-        "regenerated PPT sample should keep block3 empty"
+        "regenerated PPT sample should keep block3 decoding to an empty stream"
     );
     assert!(
         regenerated.block1.decompressed_len <= original.block1.decompressed_len,
