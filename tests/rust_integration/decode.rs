@@ -149,11 +149,18 @@ fn decode_pptx_fixture_fntdata_reconstructs_roundtrip_ready_truetype() {
 
 #[test]
 fn decode_raw_sfnt_payload_eot_writes_truetype_output() {
+    let input_path = temp_in("eot");
     let output_path = temp_out();
+    let sfnt_bytes = fs::read(workspace_root().join("testdata/OpenSans-Regular.ttf"))
+        .expect("fixture sfnt should be readable");
+    let fixture = build_raw_sfnt_payload_eot(&sfnt_bytes);
+    fs::write(&input_path, fixture).expect("synthetic raw-sfnt eot should be writable");
 
     let output = run_fonttool([
         "decode",
-        "eFootballSans-Light.eot",
+        input_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
         output_path
             .to_str()
             .expect("temp path should be valid utf-8"),
@@ -166,6 +173,7 @@ fn decode_raw_sfnt_payload_eot_writes_truetype_output() {
     );
     assert_truetype_roundtrip_ready(&output_path);
 
+    let _ = fs::remove_file(input_path);
     let _ = fs::remove_file(output_path);
 }
 
@@ -226,6 +234,22 @@ fn build_fixture_with_non_empty_block3() -> Vec<u8> {
 
     bytes[0..4].copy_from_slice(&(new_eot_size as u32).to_le_bytes());
     bytes[4..8].copy_from_slice(&(new_font_data_size as u32).to_le_bytes());
+
+    bytes
+}
+
+fn build_raw_sfnt_payload_eot(sfnt_bytes: &[u8]) -> Vec<u8> {
+    const HEADER_LENGTH: usize = 100;
+    let eot_size = HEADER_LENGTH + sfnt_bytes.len();
+    let mut bytes = vec![0u8; eot_size];
+
+    bytes[0..4].copy_from_slice(&(eot_size as u32).to_le_bytes());
+    bytes[4..8].copy_from_slice(&(sfnt_bytes.len() as u32).to_le_bytes());
+    bytes[8..12].copy_from_slice(&0x0002_0001u32.to_le_bytes());
+    bytes[12..16].copy_from_slice(&0u32.to_le_bytes());
+    bytes[28..32].copy_from_slice(&300u32.to_le_bytes());
+    bytes[34..36].copy_from_slice(&0x504cu16.to_le_bytes());
+    bytes[HEADER_LENGTH..].copy_from_slice(sfnt_bytes);
 
     bytes
 }
