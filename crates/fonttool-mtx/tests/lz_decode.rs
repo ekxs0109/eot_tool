@@ -193,46 +193,48 @@ fn backreference_encoder_falls_back_to_literal_output_on_speculative_failure() {
 }
 
 #[test]
-fn backreference_encoder_prefers_copy_when_it_beats_two_literals() {
+fn backreference_encoder_matches_java_reference_length_on_banana_repeats() {
+    // Measured from sfntly_web LzcompCompress.compress.
+    const JAVA_REFERENCE_LEN: usize = 12;
     let input = *b"BANANABANANABANANA";
 
     let compressed = compress_lz(&input).expect("backreference encoder should succeed");
-    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
     let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
 
     assert_eq!(decompressed, input);
     assert!(
-        compressed.len() + 2 <= literal_only.len(),
-        "expected local copy decisions to materially beat literal-only output on BANANA repeats"
+        compressed.len() <= JAVA_REFERENCE_LEN,
+        "expected BANANA repeats to encode within the Java reference length target of {JAVA_REFERENCE_LEN} bytes, got {}",
+        compressed.len()
     );
 }
 
 #[test]
-fn backreference_encoder_uses_preload_matches_for_four_byte_runs() {
+fn backreference_encoder_matches_java_reference_length_on_preload_four_byte_runs() {
+    // Measured from sfntly_web LzcompCompress.compress.
+    const JAVA_REFERENCE_LEN: usize = 10;
     let input = [0xF8, 0xF8, 0xF8, 0xF8, 0xF9, 0xF9, 0xF9, 0xF9];
 
     let compressed = compress_lz(&input).expect("backreference encoder should succeed");
-    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
     let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
 
     assert_eq!(decompressed, input);
     assert!(
-        compressed.len() < literal_only.len(),
-        "expected preload-aware Java-style matching to beat literals on four-byte preload runs"
+        compressed.len() <= JAVA_REFERENCE_LEN,
+        "expected preload four-byte runs to encode within the Java reference length target of {JAVA_REFERENCE_LEN} bytes, got {}",
+        compressed.len()
     );
 }
 
 #[test]
-fn backreference_encoder_handles_overlapping_repeats_without_regressing() {
+fn backreference_encoder_matches_java_reference_length_on_overlapping_repeats() {
+    // Measured from sfntly_web LzcompCompress.compress; current Rust encoder already matches this case.
+    const JAVA_REFERENCE_LEN: usize = 12;
     let input = *b"abcabcabcdabcabcabcd";
 
     let compressed = compress_lz(&input).expect("backreference encoder should succeed");
-    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
     let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
 
     assert_eq!(decompressed, input);
-    assert!(
-        compressed.len() < literal_only.len(),
-        "expected overlapping repeats to benefit from Java-style local match decisions"
-    );
+    assert_eq!(compressed.len(), JAVA_REFERENCE_LEN);
 }
