@@ -189,8 +189,8 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
         .map_err(|error| format!("failed to compress MTX block2: {error}"))?;
     let block3 = compress_lz(&encoded_glyf.code_stream)
         .map_err(|error| format!("failed to compress MTX block3: {error}"))?;
-    let block1 =
-        compress_lz(&block1).map_err(|error| format!("failed to compress MTX block1: {error}"))?;
+    let block1 = compress_lz(&block1)
+        .map_err(|error| format!("failed to compress MTX block1: {error}"))?;
     let mtx_payload = pack_mtx_container(&block1, Some(&block2), Some(&block3))
         .map_err(|error| format!("failed to pack MTX container: {error}"))?;
     let encoded_eot = build_eot_file(head, os2, &mtx_payload, false)

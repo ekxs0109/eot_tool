@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use fonttool_eot::parse_eot_header;
 use fonttool_glyf::encode_glyf;
 use fonttool_harfbuzz::subset_font_bytes;
-use fonttool_mtx::{compress_lz, decompress_lz, parse_mtx_container};
+use fonttool_mtx::{compress_lz, compress_lz_literals, decompress_lz, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
     apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
@@ -20,11 +20,18 @@ const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
 const TAG_HHEA: u32 = u32::from_be_bytes(*b"hhea");
 const TAG_HMTX: u32 = u32::from_be_bytes(*b"hmtx");
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
+const TAG_BASE: u32 = u32::from_be_bytes(*b"BASE");
+const TAG_GPOS: u32 = u32::from_be_bytes(*b"GPOS");
+const TAG_GSUB: u32 = u32::from_be_bytes(*b"GSUB");
 const TAG_GLYF: u32 = u32::from_be_bytes(*b"glyf");
 const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
 const TAG_CVT: u32 = u32::from_be_bytes(*b"cvt ");
 const TAG_HDMX: u32 = u32::from_be_bytes(*b"hdmx");
+const TAG_POST: u32 = u32::from_be_bytes(*b"post");
 const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
+const TAG_VHEA: u32 = u32::from_be_bytes(*b"vhea");
+const TAG_VMTX: u32 = u32::from_be_bytes(*b"vmtx");
+const TAG_VORG: u32 = u32::from_be_bytes(*b"VORG");
 
 struct TempFiles {
     paths: Vec<PathBuf>,
@@ -58,6 +65,24 @@ fn run_encode(input_path: &Path, output_path: &Path) {
     assert!(
         output.status.success(),
         "expected encode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn run_decode(input_path: &Path, output_path: &Path) {
+    let output = support::run_fonttool([
+        "decode",
+        input_path
+            .to_str()
+            .expect("input path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("output path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected decode to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -115,6 +140,81 @@ fn build_expected_block1_font(
     block1_font.add_table(TAG_GLYF, encoded_glyf);
     block1_font.add_table(TAG_LOCA, Vec::new());
     block1_font
+}
+
+fn normalized_head_bytes(font: &OwnedSfntFont, name: &str) -> Vec<u8> {
+    let mut bytes = table_bytes(font, TAG_HEAD, name).to_vec();
+    bytes[8..12].fill(0);
+    bytes
+}
+
+fn assert_non_regressing_mtx_compression(source_path: &Path, require_non_empty_extra_blocks: bool) {
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    run_encode(source_path, &output_path);
+    assert!(output_path.exists(), "encoded file should exist");
+
+    let encoded_bytes = fs::read(&output_path).expect("encoded eot should be readable");
+    let header = parse_eot_header(&encoded_bytes).expect("encoded eot header should parse");
+    let payload_start = header.header_length as usize;
+    let payload_end = payload_start + header.font_data_size as usize;
+    let container =
+        parse_mtx_container(&encoded_bytes[payload_start..payload_end]).expect("mtx should parse");
+
+    let block1 = container.block1;
+    let block2 = container.block2.expect("block2 should exist");
+    let block3 = container.block3.expect("block3 should exist");
+
+    assert!(block1.len() > 0, "block1 should be present");
+    assert!(block2.len() > 0, "block2 should be present");
+    assert!(block3.len() > 0, "block3 should be present");
+
+    let block1_decoded = decompress_lz(block1).expect("block1 should decompress");
+    let block2_decoded = decompress_lz(block2).expect("block2 should decompress");
+    let block3_decoded = decompress_lz(block3).expect("block3 should decompress");
+
+    if require_non_empty_extra_blocks {
+        assert!(
+            !block2_decoded.is_empty(),
+            "block2 should decode to non-empty push data"
+        );
+        assert!(
+            !block3_decoded.is_empty(),
+            "block3 should decode to non-empty code data"
+        );
+    }
+
+    let literal_only_block1_len = compress_lz_literals(&block1_decoded)
+        .expect("block1 literal-only compression should succeed")
+        .len();
+    let literal_only_block2_len = compress_lz_literals(&block2_decoded)
+        .expect("block2 literal-only compression should succeed")
+        .len();
+    let literal_only_block3_len = compress_lz_literals(&block3_decoded)
+        .expect("block3 literal-only compression should succeed")
+        .len();
+
+    assert!(
+        block1.len() <= literal_only_block1_len,
+        "block1 should not exceed the literal-only baseline"
+    );
+    assert!(
+        block2.len() <= literal_only_block2_len,
+        "block2 should not exceed the literal-only baseline"
+    );
+    assert!(
+        block3.len() <= literal_only_block3_len,
+        "block3 should not exceed the literal-only baseline"
+    );
+
+    let actual_total_len = block1.len() + block2.len() + block3.len();
+    let literal_only_total_len =
+        literal_only_block1_len + literal_only_block2_len + literal_only_block3_len;
+    assert!(
+        actual_total_len <= literal_only_total_len,
+        "combined MTX blocks should not exceed the literal-only baseline"
+    );
 }
 
 fn write_u16_be(bytes: &mut [u8], offset: usize, value: u16) {
@@ -264,18 +364,18 @@ fn encode_ttf_uses_backreference_compressor_for_mtx_blocks() {
 
     let index_to_loca_format = i16::from_be_bytes([head[50], head[51]]);
     let num_glyphs = u16::from_be_bytes([maxp[4], maxp[5]]);
-    let encoded_glyf =
-        encode_glyf(glyf, loca, index_to_loca_format, num_glyphs).expect("glyf data should encode");
+    let encoded_glyf = encode_glyf(glyf, loca, index_to_loca_format, num_glyphs)
+        .expect("glyf data should encode");
     let expected_block1_font =
         build_expected_block1_font(&source_font, head, encoded_glyf.glyf_stream.clone());
     let expected_block1 =
         serialize_sfnt(&expected_block1_font).expect("block1 sfnt should serialize");
     let expected_block1_lz =
         compress_lz(&expected_block1).expect("block1 should compress with backreferences");
-    let expected_block2_lz =
-        compress_lz(&encoded_glyf.push_stream).expect("block2 should compress with backreferences");
-    let expected_block3_lz =
-        compress_lz(&encoded_glyf.code_stream).expect("block3 should compress with backreferences");
+    let expected_block2_lz = compress_lz(&encoded_glyf.push_stream)
+        .expect("block2 should compress with backreferences");
+    let expected_block3_lz = compress_lz(&encoded_glyf.code_stream)
+        .expect("block3 should compress with backreferences");
 
     run_encode(&source_path, &output_path);
 
@@ -300,31 +400,107 @@ fn encode_ttf_uses_backreference_compressor_for_mtx_blocks() {
 
 #[test]
 fn encode_truetype_sample_uses_non_regressing_mtx_compression() {
-    let source_path = support::workspace_root().join("build/pptx_case7/font1.decoded.ttf");
+    // Tracked PPTX-derived fixture from the case 7 sample so this regression stays portable.
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    assert_non_regressing_mtx_compression(&source_path, false);
+}
+
+#[test]
+fn encode_truetype_with_non_empty_extra_blocks_uses_non_regressing_mtx_compression() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    assert_non_regressing_mtx_compression(&source_path, true);
+}
+
+#[test]
+fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
-    let _temps = TempFiles::new(vec![output_path.clone()]);
+    let decoded_path = support::temp_ttf();
+    let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
+
+    let source_bytes = fs::read(&source_path).expect("source font should be readable");
+    let source_font = load_sfnt(&source_bytes).expect("source font should parse");
 
     run_encode(&source_path, &output_path);
+    // The public CLI decode command currently succeeds for this multi-block PPTX-derived
+    // sample by emitting the same block1-owned SFNT baseline that the supported decode path
+    // exposes today, so lock in that command-level behavior here.
+    run_decode(&output_path, &decoded_path);
 
-    assert!(output_path.exists(), "encoded file should be created");
+    let roundtrip_bytes = fs::read(&decoded_path).expect("roundtrip font should be readable");
+    let roundtrip_font = load_sfnt(&roundtrip_bytes).expect("roundtrip font should parse");
 
-    let encoded_bytes = fs::read(&output_path).expect("encoded eot should be readable");
-    let header = parse_eot_header(&encoded_bytes).expect("encoded eot header should parse");
-    let payload_start = header.header_length as usize;
-    let payload_end = payload_start + header.font_data_size as usize;
-    let container =
-        parse_mtx_container(&encoded_bytes[payload_start..payload_end]).expect("mtx should parse");
+    for (tag, name) in [
+        (TAG_BASE, "BASE"),
+        (TAG_GPOS, "GPOS"),
+        (TAG_GSUB, "GSUB"),
+        (TAG_OS_2, "OS/2"),
+        (TAG_VORG, "VORG"),
+        (TAG_CMAP, "cmap"),
+        (TAG_GLYF, "glyf"),
+        (TAG_HEAD, "head"),
+        (TAG_HHEA, "hhea"),
+        (TAG_HMTX, "hmtx"),
+        (TAG_LOCA, "loca"),
+        (TAG_MAXP, "maxp"),
+        (TAG_NAME, "name"),
+        (TAG_POST, "post"),
+        (TAG_VHEA, "vhea"),
+        (TAG_VMTX, "vmtx"),
+    ] {
+        assert!(source_font.table(tag).is_some(), "source should contain {name}");
+        assert!(
+            roundtrip_font.table(tag).is_some(),
+            "roundtrip should contain {name}"
+        );
+    }
 
-    let block1 = container.block1;
-    let block2 = container.block2.expect("block2 should exist");
-    let block3 = container.block3.expect("block3 should exist");
+    for (tag, name) in [
+        (TAG_BASE, "BASE"),
+        (TAG_GPOS, "GPOS"),
+        (TAG_GSUB, "GSUB"),
+        (TAG_OS_2, "OS/2"),
+        (TAG_VORG, "VORG"),
+        (TAG_CMAP, "cmap"),
+        (TAG_HHEA, "hhea"),
+        (TAG_HMTX, "hmtx"),
+        (TAG_MAXP, "maxp"),
+        (TAG_NAME, "name"),
+        (TAG_POST, "post"),
+        (TAG_VHEA, "vhea"),
+        (TAG_VMTX, "vmtx"),
+    ] {
+        assert_eq!(
+            table_bytes(&source_font, tag, &format!("source {name}")),
+            table_bytes(&roundtrip_font, tag, &format!("roundtrip {name}")),
+            "roundtrip should preserve the {name} table bytes"
+        );
+    }
 
-    assert!(block1.len() > 0, "block1 should be present");
-    assert!(block2.len() > 0, "block2 should be present");
-    assert!(block3.len() > 0, "block3 should be present");
-    let _ = decompress_lz(block1).expect("block1 should decode");
-    let _ = decompress_lz(block2).expect("block2 should decode");
-    let _ = decompress_lz(block3).expect("block3 should decode");
+    assert_eq!(
+        normalized_head_bytes(&source_font, "source head"),
+        normalized_head_bytes(&roundtrip_font, "roundtrip head"),
+        "roundtrip should preserve head bytes apart from checkSumAdjustment"
+    );
+
+    let source_glyf_length = find_table_length(&source_bytes, TAG_GLYF).expect("source glyf");
+    let source_loca_length = find_table_length(&source_bytes, TAG_LOCA).expect("source loca");
+    let roundtrip_glyf_length =
+        find_table_length(&roundtrip_bytes, TAG_GLYF).expect("roundtrip glyf");
+    let roundtrip_loca_length =
+        find_table_length(&roundtrip_bytes, TAG_LOCA).expect("roundtrip loca");
+
+    assert!(source_glyf_length > 0, "source glyf should be non-empty");
+    assert!(source_loca_length > 0, "source loca should be non-empty");
+    assert!(roundtrip_glyf_length > 0, "roundtrip glyf should be non-empty");
+    assert!(
+        roundtrip_glyf_length < source_glyf_length,
+        "current public CLI decode should retain the smaller block1 glyf baseline"
+    );
+    assert_eq!(
+        roundtrip_loca_length, 0,
+        "current public CLI decode should retain the zero-length block1 loca baseline"
+    );
 }
 
 #[test]
@@ -336,14 +512,15 @@ fn subset_output_uses_backreference_compressor_for_block1() {
     fs::write(&source_path, &input_bytes).expect("fixture font should be writable");
     let input_font = load_sfnt(&input_bytes).expect("source font should parse");
     let glyph_ids = GlyphIdRequest::parse_csv("0,36,37,38").expect("glyph ids should parse");
-    let plan = plan_glyph_subset(&input_font, &glyph_ids, false).expect("subset plan should build");
+    let plan =
+        plan_glyph_subset(&input_font, &glyph_ids, false).expect("subset plan should build");
     let mut harfbuzz_input = input_font.clone();
     let mut subset_warnings = SubsetWarnings::default();
     apply_output_table_policy(&mut harfbuzz_input, &mut subset_warnings);
     let harfbuzz_input_bytes =
         serialize_sfnt(&harfbuzz_input).expect("subset input sfnt should serialize");
-    let subset_bytes =
-        subset_font_bytes(&harfbuzz_input_bytes, &plan).expect("harfbuzz subset should succeed");
+    let subset_bytes = subset_font_bytes(&harfbuzz_input_bytes, &plan)
+        .expect("harfbuzz subset should succeed");
     let mut subset_font = load_sfnt(&subset_bytes).expect("subset font should parse");
     apply_output_table_policy(&mut subset_font, &mut subset_warnings);
     let subset_bytes = serialize_sfnt(&subset_font).expect("subset sfnt should serialize");
@@ -371,10 +548,7 @@ fn subset_output_uses_backreference_compressor_for_block1() {
     let encoded_bytes = fs::read(&output_path).expect("subset output should be readable");
     let container = read_mtx_container(&encoded_bytes);
 
-    assert_eq!(
-        container.num_blocks, 1,
-        "subset output should only emit block1"
-    );
+    assert_eq!(container.num_blocks, 1, "subset output should only emit block1");
     assert_eq!(
         container.block1, expected_block1,
         "subset output should use compress_lz for block1"
