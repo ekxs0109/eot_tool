@@ -1,4 +1,6 @@
-use fonttool_eot::{parse_eot_header, EotHeaderError};
+use fonttool_eot::{
+    build_eot_file, parse_eot_header, EotBuildOptions, EotHeaderError, EotVersion,
+};
 
 const FIXTURE_BYTES: &[u8] = include_bytes!("../../../testdata/wingdings3.eot");
 
@@ -74,6 +76,17 @@ fn parses_v20002_trailer_fields() {
     assert_eq!(header.eudc_flags, 0x99aa_bbcc);
 }
 
+#[test]
+fn build_v1_header_omits_v20002_trailer_fields() {
+    let bytes = build_synthetic_v1_header_with_payload(8);
+    let header = parse_eot_header(&bytes).unwrap();
+
+    assert_eq!(header.version, 0x0002_0001);
+    assert_eq!(header.signature_size, 0);
+    assert_eq!(header.eudc_font_size, 0);
+    assert_eq!(header.root_string_checksum, 0);
+}
+
 fn build_synthetic_v20002_header(
     dst: &mut [u8],
     signature: &[u8],
@@ -131,6 +144,71 @@ fn build_synthetic_v20002_header(
     write_u16_le(dst, 34, 0x504c);
 
     offset
+}
+
+fn build_synthetic_v1_header_with_payload(payload_size: usize) -> Vec<u8> {
+    let payload = vec![0x5a; payload_size];
+    build_eot_file(
+        &synthetic_head_table(),
+        &synthetic_os2_table(),
+        &synthetic_name_table(),
+        &payload,
+        EotBuildOptions {
+            version: EotVersion::V1,
+            apply_ppt_xor: false,
+        },
+    )
+    .expect("synthetic eot should build")
+}
+
+fn synthetic_head_table() -> Vec<u8> {
+    let mut bytes = vec![0u8; 12];
+    bytes[8..12].copy_from_slice(&0x1122_3344u32.to_be_bytes());
+    bytes
+}
+
+fn synthetic_os2_table() -> Vec<u8> {
+    vec![0u8; 86]
+}
+
+fn synthetic_name_table() -> Vec<u8> {
+    let records = [
+        (1u16, utf16be_ascii("Family")),
+        (2u16, utf16be_ascii("Regular")),
+        (5u16, utf16be_ascii("Version 1.0")),
+        (4u16, utf16be_ascii("Family Regular")),
+    ];
+    let storage_offset = 6 + records.len() * 12;
+    let mut bytes = vec![0u8; storage_offset];
+    bytes[0..2].copy_from_slice(&0u16.to_be_bytes());
+    bytes[2..4].copy_from_slice(&(records.len() as u16).to_be_bytes());
+    bytes[4..6].copy_from_slice(&(storage_offset as u16).to_be_bytes());
+
+    let mut string_offset = 0usize;
+    for (index, (name_id, value)) in records.iter().enumerate() {
+        let record_offset = 6 + index * 12;
+        bytes[record_offset..record_offset + 2].copy_from_slice(&3u16.to_be_bytes());
+        bytes[record_offset + 2..record_offset + 4].copy_from_slice(&1u16.to_be_bytes());
+        bytes[record_offset + 4..record_offset + 6].copy_from_slice(&0x0409u16.to_be_bytes());
+        bytes[record_offset + 6..record_offset + 8].copy_from_slice(&name_id.to_be_bytes());
+        bytes[record_offset + 8..record_offset + 10]
+            .copy_from_slice(&(value.len() as u16).to_be_bytes());
+        bytes[record_offset + 10..record_offset + 12]
+            .copy_from_slice(&(string_offset as u16).to_be_bytes());
+        bytes.extend_from_slice(value);
+        string_offset += value.len();
+    }
+
+    bytes
+}
+
+fn utf16be_ascii(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(text.len() * 2);
+    for byte in text.bytes() {
+        bytes.push(0);
+        bytes.push(byte);
+    }
+    bytes
 }
 
 fn write_u16_le(dst: &mut [u8], offset: usize, value: u16) {

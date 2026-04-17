@@ -4,6 +4,7 @@ use core::convert::TryFrom;
 use core::fmt;
 
 pub const EOT_FIXED_HEADER_SIZE: usize = 82;
+const EOT_VERSION_20001: u32 = 0x0002_0001;
 const EOT_VERSION_20002: u32 = 0x0002_0002;
 const EOT_MAGIC_NUMBER: u16 = 0x504c;
 const EOT_FLAG_COMPRESSED: u32 = 0x0000_0004;
@@ -59,6 +60,40 @@ impl fmt::Display for EotEncodeError {
 
 impl std::error::Error for EotEncodeError {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EotVersion {
+    V1,
+    V2,
+}
+
+impl EotVersion {
+    fn raw(self) -> u32 {
+        match self {
+            Self::V1 => EOT_VERSION_20001,
+            Self::V2 => EOT_VERSION_20002,
+        }
+    }
+
+    fn includes_v20002_trailer(self) -> bool {
+        matches!(self, Self::V2)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EotBuildOptions {
+    pub version: EotVersion,
+    pub apply_ppt_xor: bool,
+}
+
+impl From<bool> for EotBuildOptions {
+    fn from(apply_ppt_xor: bool) -> Self {
+        Self {
+            version: EotVersion::V2,
+            apply_ppt_xor,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EotHeader<'a> {
     pub eot_size: u32,
@@ -100,16 +135,17 @@ pub fn build_eot_file(
     head_table: &[u8],
     os2_table: &[u8],
     name_table: &[u8],
-    mtx_payload: &[u8],
-    apply_ppt_xor: bool,
+    payload: &[u8],
+    options: impl Into<EotBuildOptions>,
 ) -> Result<Vec<u8>, EotEncodeError> {
+    let options = options.into();
     let family_name = extract_name_utf16le(name_table, NAME_ID_FAMILY);
     let style_name = extract_name_utf16le(name_table, NAME_ID_STYLE);
     let version_name = extract_name_utf16le(name_table, NAME_ID_VERSION);
     let full_name = extract_name_utf16le(name_table, NAME_ID_FULL);
 
-    let mut payload = mtx_payload.to_vec();
-    if apply_ppt_xor {
+    let mut payload = payload.to_vec();
+    if options.apply_ppt_xor {
         for byte in &mut payload {
             *byte ^= 0x50;
         }
@@ -125,7 +161,13 @@ pub fn build_eot_file(
         .and_then(|value| value.checked_add(2 + full_name.len()))
         .and_then(|value| value.checked_add(2))
         .and_then(|value| value.checked_add(2))
-        .and_then(|value| value.checked_add(20))
+        .and_then(|value| {
+            if options.version.includes_v20002_trailer() {
+                value.checked_add(20)
+            } else {
+                Some(value)
+            }
+        })
         .ok_or(EotEncodeError::PayloadTooLarge)?;
     let total_size = header_len
         .checked_add(payload.len())
@@ -140,10 +182,15 @@ pub fn build_eot_file(
         &mut output,
         u32::try_from(payload.len()).map_err(|_| EotEncodeError::PayloadTooLarge)?,
     );
-    push_u32_le(&mut output, EOT_VERSION_20002);
+    push_u32_le(&mut output, options.version.raw());
     push_u32_le(
         &mut output,
-        EOT_FLAG_COMPRESSED | if apply_ppt_xor { EOT_FLAG_PPT_XOR } else { 0 },
+        EOT_FLAG_COMPRESSED
+            | if options.apply_ppt_xor {
+                EOT_FLAG_PPT_XOR
+            } else {
+                0
+            },
     );
 
     if os2_table.len() >= 42 {
@@ -231,12 +278,15 @@ pub fn build_eot_file(
     push_length_prefixed_bytes(&mut output, &full_name)?;
     push_u16_le(&mut output, 0);
     push_u16_le(&mut output, 0);
-    push_u32_le(&mut output, EOT_ROOT_STRING_XOR_KEY);
-    push_u32_le(&mut output, 0);
-    push_u16_le(&mut output, 0);
-    push_u16_le(&mut output, 0);
-    push_u32_le(&mut output, 0);
-    push_u32_le(&mut output, 0);
+
+    if options.version.includes_v20002_trailer() {
+        push_u32_le(&mut output, EOT_ROOT_STRING_XOR_KEY);
+        push_u32_le(&mut output, 0);
+        push_u16_le(&mut output, 0);
+        push_u16_le(&mut output, 0);
+        push_u32_le(&mut output, 0);
+        push_u32_le(&mut output, 0);
+    }
 
     output.extend_from_slice(&payload);
     Ok(output)
