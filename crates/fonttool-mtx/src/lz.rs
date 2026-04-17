@@ -785,9 +785,8 @@ fn choose_copy_candidate(
     let literal_cost = context.sym_encoder.write_symbol_cost(usize::from(bytes[0]));
 
     if bytes.len() > 1 {
-        let mut next_finder = finder.clone();
-        next_finder.extend(&bytes[..1]);
-        if let Some(next) = find_best_candidate(&bytes[1..], &next_finder, context) {
+        if let Some(next) = find_best_candidate_with_prefix(&bytes[1..], finder, &bytes[..1], context)
+        {
             if next.gain >= first.gain
                 && first.cost_per_byte
                     > (next.cost_per_byte * next.len + literal_cost) / (next.len + 1)
@@ -798,14 +797,15 @@ fn choose_copy_candidate(
     }
 
     if first.len > 3 && bytes.len() > first.len {
-        let mut after_finder = finder.clone();
-        after_finder.extend(&bytes[..first.len]);
-        if let Some(after) = find_best_candidate(&bytes[first.len..], &after_finder, context) {
-            let mut shortened_finder = finder.clone();
-            shortened_finder.extend(&bytes[..first.len - 1]);
-            if let Some(shortened) =
-                find_best_candidate(&bytes[first.len - 1..], &shortened_finder, context)
-            {
+        if let Some(after) =
+            find_best_candidate_with_prefix(&bytes[first.len..], finder, &bytes[..first.len], context)
+        {
+            if let Some(shortened) = find_best_candidate_with_prefix(
+                &bytes[first.len - 1..],
+                finder,
+                &bytes[..first.len - 1],
+                context,
+            ) {
                 let current_cost =
                     first.cost_per_byte * first.len + after.cost_per_byte * after.len;
                 let shortened_dist = first.dist + 1;
@@ -832,11 +832,21 @@ fn find_best_candidate(
     finder: &MatchFinder,
     context: &DecisionContext<'_>,
 ) -> Option<CopyCandidate> {
+    find_best_candidate_with_prefix(bytes, finder, &[], context)
+}
+
+fn find_best_candidate_with_prefix(
+    bytes: &[u8],
+    finder: &MatchFinder,
+    prefix: &[u8],
+    context: &DecisionContext<'_>,
+) -> Option<CopyCandidate> {
     if bytes.len() < 2 {
         return None;
     }
 
-    let current_index = finder.history.len();
+    let base_len = finder.history.len();
+    let current_index = base_len + prefix.len();
     let key = ((usize::from(bytes[0]) << 8) | usize::from(bytes[1])) & 0xFFFF;
     let mut node = finder.heads[key];
     let mut visited = 0usize;
@@ -852,46 +862,104 @@ fn find_best_candidate(
             break;
         }
 
-        let max_len = raw_dist.min(bytes.len());
-        if max_len < LEN_MIN {
-            node = finder.nodes[node_index].next;
-            continue;
-        }
-
-        let mut matched = 2usize;
-        while matched < max_len && finder.history[candidate_index + matched] == bytes[matched] {
-            matched += 1;
-        }
-
-        let dist = raw_dist - matched + 1;
-        let min_len = min_copy_length(dist);
-        if matched >= min_len {
-            let literal_cost =
-                literal_run_cost(bytes, 0, matched, context.sym_encoder, &mut literal_cache);
-            let copy_cost = copy_symbol_cost(
-                dist,
-                matched,
-                context.sym_encoder,
-                context.dist_encoder,
-                context.len_encoder,
-            );
-            if literal_cost > copy_cost {
-                let candidate = CopyCandidate {
-                    dist,
-                    len: matched,
-                    gain: literal_cost - copy_cost,
-                    cost_per_byte: copy_cost / matched,
-                };
-                if best.as_ref().is_none_or(|old| candidate.gain > old.gain) {
-                    best = Some(candidate);
-                }
-            }
-        }
-
+        consider_virtual_candidate(
+            bytes,
+            finder,
+            prefix,
+            context,
+            &mut literal_cache,
+            current_index,
+            candidate_index,
+            &mut best,
+        );
         node = finder.nodes[node_index].next;
     }
 
+    if !prefix.is_empty() {
+        for candidate_index in base_len.saturating_sub(1)..current_index.saturating_sub(1) {
+            if virtual_hash_key(finder, prefix, candidate_index) != key {
+                continue;
+            }
+            consider_virtual_candidate(
+                bytes,
+                finder,
+                prefix,
+                context,
+                &mut literal_cache,
+                current_index,
+                candidate_index,
+                &mut best,
+            );
+        }
+    }
+
     best
+}
+
+fn consider_virtual_candidate(
+    bytes: &[u8],
+    finder: &MatchFinder,
+    prefix: &[u8],
+    context: &DecisionContext<'_>,
+    literal_cache: &mut [usize; MAX_LITERAL_COST_CACHE + 1],
+    current_index: usize,
+    candidate_index: usize,
+    best: &mut Option<CopyCandidate>,
+) {
+    let raw_dist = current_index - candidate_index;
+    let max_len = raw_dist.min(bytes.len());
+    if max_len < LEN_MIN {
+        return;
+    }
+
+    let mut matched = 2usize;
+    while matched < max_len
+        && virtual_history_byte(finder, prefix, candidate_index + matched) == bytes[matched]
+    {
+        matched += 1;
+    }
+
+    let dist = raw_dist - matched + 1;
+    let min_len = min_copy_length(dist);
+    if matched < min_len {
+        return;
+    }
+
+    let literal_cost = literal_run_cost(bytes, 0, matched, context.sym_encoder, literal_cache);
+    let copy_cost = copy_symbol_cost(
+        dist,
+        matched,
+        context.sym_encoder,
+        context.dist_encoder,
+        context.len_encoder,
+    );
+    if literal_cost <= copy_cost {
+        return;
+    }
+
+    let candidate = CopyCandidate {
+        dist,
+        len: matched,
+        gain: literal_cost - copy_cost,
+        cost_per_byte: copy_cost / matched,
+    };
+    if best.as_ref().is_none_or(|old| candidate.gain > old.gain) {
+        *best = Some(candidate);
+    }
+}
+
+fn virtual_history_byte(finder: &MatchFinder, prefix: &[u8], index: usize) -> u8 {
+    if index < finder.history.len() {
+        finder.history[index]
+    } else {
+        prefix[index - finder.history.len()]
+    }
+}
+
+fn virtual_hash_key(finder: &MatchFinder, prefix: &[u8], index: usize) -> usize {
+    ((usize::from(virtual_history_byte(finder, prefix, index)) << 8)
+        | usize::from(virtual_history_byte(finder, prefix, index + 1)))
+        & 0xFFFF
 }
 
 fn literal_run_cost(
