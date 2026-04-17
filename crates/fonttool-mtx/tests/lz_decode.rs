@@ -191,3 +191,48 @@ fn backreference_encoder_falls_back_to_literal_output_on_speculative_failure() {
         assert_eq!(decompressed, input);
     }
 }
+
+#[test]
+fn backreference_encoder_prefers_copy_when_it_beats_two_literals() {
+    let input = *b"BANANABANANABANANA";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+    assert!(
+        compressed.len() + 2 <= literal_only.len(),
+        "expected local copy decisions to materially beat literal-only output on BANANA repeats"
+    );
+}
+
+#[test]
+fn backreference_encoder_uses_preload_matches_for_four_byte_runs() {
+    let input = [0xF8, 0xF8, 0xF8, 0xF8, 0xF9, 0xF9, 0xF9, 0xF9];
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+    assert!(
+        compressed.len() < literal_only.len(),
+        "expected preload-aware Java-style matching to beat literals on four-byte preload runs"
+    );
+}
+
+#[test]
+fn backreference_encoder_handles_overlapping_repeats_without_regressing() {
+    let input = *b"abcabcabcdabcabcabcd";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let literal_only = compress_lz_literals(&input).expect("literal-only encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+    assert!(
+        compressed.len() < literal_only.len(),
+        "expected overlapping repeats to benefit from Java-style local match decisions"
+    );
+}
