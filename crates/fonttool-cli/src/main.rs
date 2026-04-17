@@ -124,8 +124,9 @@ fn parse_embedded_output_args(
     args: &[String],
     start_index: usize,
     output_path: &Path,
-) -> Result<EmbeddedOutputOptions, String> {
+) -> Result<(EmbeddedOutputOptions, bool), String> {
     let mut options = EmbeddedOutputOptions::default();
+    let mut saw_embedded_output_flag = false;
     let mut index = start_index;
 
     while index < args.len() {
@@ -133,6 +134,7 @@ fn parse_embedded_output_args(
         if index + 1 >= args.len() {
             return Err("embedded output flag is missing a value".to_string());
         }
+        saw_embedded_output_flag = true;
 
         match flag.as_str() {
             "--payload-format" => {
@@ -150,11 +152,11 @@ fn parse_embedded_output_args(
         index += 2;
     }
 
-    if options.has_non_default_values() && !embedded_output_allowed(output_path) {
+    if saw_embedded_output_flag && !embedded_output_allowed(output_path) {
         return Err("embedded output options only apply to .eot or .fntdata output".to_string());
     }
 
-    Ok(options)
+    Ok((options, saw_embedded_output_flag))
 }
 
 fn handle_encode_args(args: Vec<String>) -> Result<EncodeCliRequest, String> {
@@ -163,7 +165,7 @@ fn handle_encode_args(args: Vec<String>) -> Result<EncodeCliRequest, String> {
     }
 
     let output_path: PathBuf = args[1].clone().into();
-    let embedded_output = parse_embedded_output_args(&args, 2, &output_path)?;
+    let (embedded_output, _) = parse_embedded_output_args(&args, 2, &output_path)?;
 
     Ok(EncodeCliRequest {
         input_path: args[0].clone().into(),
@@ -452,6 +454,7 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
         variation_axes: None,
         embedded_output: EmbeddedOutputOptions::default(),
     };
+    let mut saw_embedded_output_flag = false;
 
     let mut index = 2usize;
     while index < args.len() {
@@ -477,12 +480,15 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
                 request.variation_axes = Some(args[index + 1].clone());
             }
             "--payload-format" => {
+                saw_embedded_output_flag = true;
                 request.embedded_output.payload_format = parse_payload_format(&args[index + 1])?;
             }
             "--xor" => {
+                saw_embedded_output_flag = true;
                 request.embedded_output.xor_mode = parse_xor_mode(&args[index + 1])?;
             }
             "--eot-version" => {
+                saw_embedded_output_flag = true;
                 request.embedded_output.eot_version = parse_eot_version(&args[index + 1])?;
             }
             _ => return Err(format!("unsupported subset flag `{flag}`")),
@@ -494,9 +500,7 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
     if request.glyph_ids.is_none() && request.text.is_none() {
         return Err("subset requires either --glyph-ids or --text".to_string());
     }
-    if request.embedded_output.has_non_default_values()
-        && !embedded_output_allowed(&request.output_path)
-    {
+    if saw_embedded_output_flag && !embedded_output_allowed(&request.output_path) {
         return Err("embedded output options only apply to .eot or .fntdata output".to_string());
     }
 

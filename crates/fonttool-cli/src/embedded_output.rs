@@ -35,12 +35,6 @@ impl Default for EmbeddedOutputOptions {
     }
 }
 
-impl EmbeddedOutputOptions {
-    pub fn has_non_default_values(self) -> bool {
-        self != Self::default()
-    }
-}
-
 pub fn embedded_output_allowed(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
