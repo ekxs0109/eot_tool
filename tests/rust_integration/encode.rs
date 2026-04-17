@@ -301,6 +301,10 @@ fn synthetic_font_with_vdmx() -> Vec<u8> {
     serialize_sfnt(&font).expect("synthetic font should serialize")
 }
 
+fn case7_original_font_path() -> PathBuf {
+    support::workspace_root().join("build/pptx_case7/ppt/fonts/font1.fntdata")
+}
+
 #[test]
 fn encode_ttf_to_eot_roundtrips_required_tables() {
     let output_path = support::temp_eot();
@@ -499,6 +503,43 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
     assert_eq!(
         roundtrip_loca_length, source_loca_length,
         "current public CLI decode should reconstruct the original loca table length"
+    );
+}
+
+#[test]
+fn encode_pptx_case7_block1_stays_within_original_size_budget() {
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    run_encode(&source_path, &output_path);
+
+    let original = support::inspect_embedded_font_file(&case7_original_font_path());
+    let regenerated = support::inspect_embedded_font_file(&output_path);
+
+    assert_eq!(
+        original.block2.decompressed_len, 0,
+        "tracked PPT sample should keep block2 empty"
+    );
+    assert_eq!(
+        original.block3.decompressed_len, 0,
+        "tracked PPT sample should keep block3 empty"
+    );
+    assert_eq!(
+        regenerated.block2.decompressed_len, 0,
+        "regenerated PPT sample should keep block2 empty"
+    );
+    assert_eq!(
+        regenerated.block3.decompressed_len, 0,
+        "regenerated PPT sample should keep block3 empty"
+    );
+    assert!(
+        regenerated.block1.decompressed_len <= original.block1.decompressed_len,
+        "regenerated block1 plain SFNT should not grow beyond the original sample"
+    );
+    assert!(
+        regenerated.block1.compressed_len <= original.block1.compressed_len + 131_072,
+        "block1 compressed size should move into the +128 KiB parity budget"
     );
 }
 
