@@ -10,6 +10,9 @@ const LEN_WIDTH: usize = 3;
 const BIT_RANGE: usize = LEN_WIDTH - 1;
 const ROOT: usize = 1;
 const MAX_DECOMPRESSED_LENGTH: usize = 100 * 1024 * 1024;
+const MAX_HASH_CHAIN: usize = 256;
+const MAX_LITERAL_COST_CACHE: usize = 32;
+const MATCH_HASH_BUCKETS: usize = 1 << 12;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LzDecompressError {
@@ -41,6 +44,52 @@ enum EncodeOp {
     Dup4,
     Dup6,
     Copy { dist: usize, len: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CopyCandidate {
+    dist: usize,
+    len: usize,
+    gain: usize,
+    cost_per_byte: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct HashNode {
+    index: usize,
+    next: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct MatchFinder {
+    history: Vec<u8>,
+    heads: Vec<Option<usize>>,
+    nodes: Vec<HashNode>,
+}
+
+struct DecisionContext<'a> {
+    sym_encoder: &'a HuffmanEncoder,
+    dist_encoder: &'a HuffmanEncoder,
+    len_encoder: &'a HuffmanEncoder,
+    max_dist: usize,
+    literal_cost_cache: [u16; MAX_LITERAL_COST_CACHE],
+}
+
+impl<'a> DecisionContext<'a> {
+    fn new(
+        sym_encoder: &'a HuffmanEncoder,
+        dist_encoder: &'a HuffmanEncoder,
+        len_encoder: &'a HuffmanEncoder,
+        total_len: usize,
+    ) -> Self {
+        Self {
+            sym_encoder,
+            dist_encoder,
+            len_encoder,
+            max_dist: max_supported_distance(total_len),
+            literal_cost_cache: [0; MAX_LITERAL_COST_CACHE],
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -285,6 +334,18 @@ impl HuffmanEncoder {
 
         self.update_weight(terminal_index);
         Ok(())
+    }
+
+    fn write_symbol_cost(&self, symbol: usize) -> usize {
+        let mut index = self.symbol_index[symbol];
+        let mut depth = 0usize;
+
+        while index != ROOT {
+            depth += 1;
+            index = self.tree[index].up;
+        }
+
+        depth << 16
     }
 }
 
@@ -574,12 +635,12 @@ fn compress_lz_backreferences(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError
     let mut sym_encoder = HuffmanEncoder::new(num_syms)?;
     let mut dist_encoder = HuffmanEncoder::new(1 << DIST_WIDTH)?;
     let mut len_encoder = HuffmanEncoder::new(1 << LEN_WIDTH)?;
-    let mut history = vec![0u8; PRELOAD_SIZE];
-    initialize_preload_buffer(&mut history);
+    let mut finder = MatchFinder::new();
 
     let mut pos = 0usize;
     while pos < bytes.len() {
-        let op = choose_encode_op(bytes, pos, &history);
+        let context = DecisionContext::new(&sym_encoder, &dist_encoder, &len_encoder, bytes.len());
+        let op = choose_encode_op(bytes, pos, &finder, &context);
         write_encode_op(
             &mut writer,
             &mut sym_encoder,
@@ -589,7 +650,7 @@ fn compress_lz_backreferences(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError
             op,
         )?;
         let advance = encode_op_advance(op);
-        history.extend_from_slice(&bytes[pos..pos + advance]);
+        finder.extend(&bytes[pos..pos + advance]);
         pos += advance;
     }
 
@@ -644,9 +705,61 @@ fn initialize_preload_buffer(buffer: &mut [u8]) {
     }
 }
 
-fn choose_encode_op(bytes: &[u8], pos: usize, history: &[u8]) -> EncodeOp {
-    if let Some((dist, len)) = find_best_copy(bytes, pos, history) {
-        return EncodeOp::Copy { dist, len };
+impl MatchFinder {
+    fn new() -> Self {
+        let mut history = vec![0u8; PRELOAD_SIZE];
+        initialize_preload_buffer(&mut history);
+        let mut finder = Self {
+            history,
+            heads: vec![None; MATCH_HASH_BUCKETS],
+            nodes: Vec::new(),
+        };
+
+        for index in 0..finder.history.len().saturating_sub(LEN_MIN - 1) {
+            finder.push_existing_index(index);
+        }
+
+        finder
+    }
+
+    fn push_existing_index(&mut self, index: usize) {
+        if index + LEN_MIN > self.history.len() {
+            return;
+        }
+
+        let key = Self::hash_key(&self.history[index..]);
+        let head = self.heads[key];
+        self.nodes.push(HashNode { index, next: head });
+        self.heads[key] = Some(self.nodes.len() - 1);
+    }
+
+    fn extend(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.history.push(byte);
+            if self.history.len() >= LEN_MIN {
+                self.push_existing_index(self.history.len() - LEN_MIN);
+            }
+        }
+    }
+
+    fn hash_key(bytes: &[u8]) -> usize {
+        let head = bytes.first().copied().unwrap_or_default() as usize;
+        let tail = bytes.get(1).copied().unwrap_or_default() as usize;
+        ((head << 8) | tail) & (MATCH_HASH_BUCKETS - 1)
+    }
+}
+
+fn choose_encode_op(
+    bytes: &[u8],
+    pos: usize,
+    finder: &MatchFinder,
+    context: &DecisionContext,
+) -> EncodeOp {
+    if let Some(candidate) = choose_copy_candidate(bytes, pos, finder, context) {
+        return EncodeOp::Copy {
+            dist: candidate.dist,
+            len: candidate.len,
+        };
     }
 
     if matches_dup(bytes, pos, 2) {
@@ -666,11 +779,62 @@ fn matches_dup(bytes: &[u8], pos: usize, step: usize) -> bool {
     pos >= step && pos < bytes.len() && bytes[pos] == bytes[pos - step]
 }
 
-fn find_best_copy(bytes: &[u8], pos: usize, history: &[u8]) -> Option<(usize, usize)> {
-    let output_pos = PRELOAD_SIZE + pos;
-    let max_dist = output_pos.min(max_supported_distance(bytes.len()));
-    let mut best: Option<(usize, usize)> = None;
+fn choose_copy_candidate(
+    bytes: &[u8],
+    pos: usize,
+    finder: &MatchFinder,
+    context: &DecisionContext<'_>,
+) -> Option<CopyCandidate> {
+    let _encoders = (
+        &context.sym_encoder,
+        &context.dist_encoder,
+        &context.len_encoder,
+    );
+    let _literal_cost_hint = context.literal_cost_cache[pos % MAX_LITERAL_COST_CACHE];
+    find_best_candidate(bytes, pos, finder, context)
+}
 
+fn find_best_candidate(
+    bytes: &[u8],
+    pos: usize,
+    finder: &MatchFinder,
+    context: &DecisionContext<'_>,
+) -> Option<CopyCandidate> {
+    if pos >= bytes.len() {
+        return None;
+    }
+
+    let output_pos = finder.history.len();
+    let max_dist = output_pos.min(context.max_dist);
+
+    if bytes.len() - pos >= LEN_MIN {
+        let key = MatchFinder::hash_key(&bytes[pos..]);
+        let mut node_index = finder.heads[key];
+        let mut traversed = 0usize;
+
+        while let Some(current_index) = node_index {
+            traversed += 1;
+            if traversed > MAX_HASH_CHAIN {
+                break;
+            }
+
+            let node = &finder.nodes[current_index];
+            let _source_start = node.index;
+            node_index = node.next;
+        }
+    }
+
+    find_best_candidate_exhaustive(bytes, pos, finder, output_pos, max_dist, None)
+}
+
+fn find_best_candidate_exhaustive(
+    bytes: &[u8],
+    pos: usize,
+    finder: &MatchFinder,
+    output_pos: usize,
+    max_dist: usize,
+    mut best: Option<CopyCandidate>,
+) -> Option<CopyCandidate> {
     for dist in 1..=max_dist {
         let min_len = min_copy_length(dist);
         let max_len = (bytes.len() - pos).min(output_pos - dist + 1);
@@ -678,16 +842,21 @@ fn find_best_copy(bytes: &[u8], pos: usize, history: &[u8]) -> Option<(usize, us
             continue;
         }
 
-        let best_len = best.map_or(0, |(_, best_len)| best_len);
+        let best_len = best.map_or(0, |candidate| candidate.len);
         if max_len <= best_len {
             continue;
         }
 
-        for len in ((best_len + 1)..=max_len).rev() {
+        for len in ((best_len + 1).max(min_len)..=max_len).rev() {
             let copy_end = output_pos - dist;
             let copy_start = copy_end + 1 - len;
-            if history[copy_start..copy_start + len] == bytes[pos..pos + len] {
-                best = Some((dist, len));
+            if finder.history[copy_start..copy_start + len] == bytes[pos..pos + len] {
+                best = Some(CopyCandidate {
+                    dist,
+                    len,
+                    gain: 0,
+                    cost_per_byte: 0,
+                });
                 break;
             }
         }
