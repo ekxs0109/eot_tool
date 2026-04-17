@@ -148,6 +148,28 @@ fn decode_pptx_fixture_fntdata_reconstructs_roundtrip_ready_truetype() {
 }
 
 #[test]
+fn decode_raw_sfnt_payload_eot_writes_truetype_output() {
+    let output_path = temp_out();
+
+    let output = run_fonttool([
+        "decode",
+        "eFootballSans-Light.eot",
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected raw-sfnt EOT decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_truetype_roundtrip_ready(&output_path);
+
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
 fn decode_rejects_incomplete_extra_mtx_blocks_for_truetype_reconstruction() {
     let input_path = temp_in("fntdata");
     let output_path = temp_out();

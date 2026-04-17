@@ -136,8 +136,15 @@ fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String
         }
     }
 
-    let container = parse_mtx_container(&payload_bytes)
-        .map_err(|error| format!("invalid MTX container: {error}"))?;
+    let container = match parse_mtx_container(&payload_bytes) {
+        Ok(container) => container,
+        Err(error) => {
+            if parse_sfnt(&payload_bytes).is_ok() {
+                return Ok(payload_bytes);
+            }
+            return Err(format!("invalid MTX container: {error}"));
+        }
+    };
     let block1 = decompress_lz(container.block1)
         .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
     let block2 = match container.block2 {
