@@ -1,8 +1,14 @@
+mod embedded_output;
+
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use embedded_output::{
+    embedded_output_allowed, EmbeddedEotVersion, EmbeddedOutputOptions, EmbeddedPayloadFormat,
+    EmbeddedXorMode,
+};
 use fonttool_cff::{inspect_otf_font, CffError};
 use fonttool_eot::{build_eot_file, parse_eot_header};
 use fonttool_glyf::{decode_glyf, encode_glyf};
@@ -50,16 +56,16 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Some("encode") => match (args.next(), args.next(), args.next()) {
-            (Some(input), Some(output), None) => match encode_file(&input, &output) {
+        Some("encode") => match handle_encode_args(args.collect()) {
+            Ok(request) => match encode_file(&request.input_path, &request.output_path) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("fonttool: {error}");
                     ExitCode::from(1)
                 }
             },
-            _ => {
-                eprintln!("fonttool: encode expects INPUT and OUTPUT paths");
+            Err(error) => {
+                eprintln!("fonttool: {error}");
                 ExitCode::from(2)
             }
         },
@@ -81,6 +87,89 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EncodeCliRequest {
+    input_path: PathBuf,
+    output_path: PathBuf,
+    embedded_output: EmbeddedOutputOptions,
+}
+
+fn parse_payload_format(value: &str) -> Result<EmbeddedPayloadFormat, String> {
+    match value {
+        "mtx" => Ok(EmbeddedPayloadFormat::Mtx),
+        "sfnt" => Ok(EmbeddedPayloadFormat::Sfnt),
+        _ => Err(format!("invalid value `{value}` for `--payload-format`")),
+    }
+}
+
+fn parse_xor_mode(value: &str) -> Result<EmbeddedXorMode, String> {
+    match value {
+        "off" => Ok(EmbeddedXorMode::Off),
+        "on" => Ok(EmbeddedXorMode::On),
+        _ => Err(format!("invalid value `{value}` for `--xor`")),
+    }
+}
+
+fn parse_eot_version(value: &str) -> Result<EmbeddedEotVersion, String> {
+    match value {
+        "v1" => Ok(EmbeddedEotVersion::V1),
+        "v2" => Ok(EmbeddedEotVersion::V2),
+        _ => Err(format!("invalid value `{value}` for `--eot-version`")),
+    }
+}
+
+fn parse_embedded_output_args(
+    args: &[String],
+    start_index: usize,
+    output_path: &Path,
+) -> Result<EmbeddedOutputOptions, String> {
+    let mut options = EmbeddedOutputOptions::default();
+    let mut index = start_index;
+
+    while index < args.len() {
+        let flag = &args[index];
+        if index + 1 >= args.len() {
+            return Err("embedded output flag is missing a value".to_string());
+        }
+
+        match flag.as_str() {
+            "--payload-format" => {
+                options.payload_format = parse_payload_format(&args[index + 1])?;
+            }
+            "--xor" => {
+                options.xor_mode = parse_xor_mode(&args[index + 1])?;
+            }
+            "--eot-version" => {
+                options.eot_version = parse_eot_version(&args[index + 1])?;
+            }
+            _ => return Err(format!("unsupported embedded output flag `{flag}`")),
+        }
+
+        index += 2;
+    }
+
+    if options.has_non_default_values() && !embedded_output_allowed(output_path) {
+        return Err("embedded output options only apply to .eot or .fntdata output".to_string());
+    }
+
+    Ok(options)
+}
+
+fn handle_encode_args(args: Vec<String>) -> Result<EncodeCliRequest, String> {
+    if args.len() < 2 {
+        return Err("encode expects INPUT and OUTPUT paths".to_string());
+    }
+
+    let output_path: PathBuf = args[1].clone().into();
+    let embedded_output = parse_embedded_output_args(&args, 2, &output_path)?;
+
+    Ok(EncodeCliRequest {
+        input_path: args[0].clone().into(),
+        output_path,
+        embedded_output,
+    })
 }
 
 fn print_help() {
@@ -342,11 +431,12 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SubsetCliRequest {
-    input_path: std::path::PathBuf,
-    output_path: std::path::PathBuf,
+    input_path: PathBuf,
+    output_path: PathBuf,
     glyph_ids: Option<String>,
     text: Option<String>,
     variation_axes: Option<String>,
+    embedded_output: EmbeddedOutputOptions,
 }
 
 fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
@@ -360,6 +450,7 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
         glyph_ids: None,
         text: None,
         variation_axes: None,
+        embedded_output: EmbeddedOutputOptions::default(),
     };
 
     let mut index = 2usize;
@@ -385,6 +476,15 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
             "--variation" => {
                 request.variation_axes = Some(args[index + 1].clone());
             }
+            "--payload-format" => {
+                request.embedded_output.payload_format = parse_payload_format(&args[index + 1])?;
+            }
+            "--xor" => {
+                request.embedded_output.xor_mode = parse_xor_mode(&args[index + 1])?;
+            }
+            "--eot-version" => {
+                request.embedded_output.eot_version = parse_eot_version(&args[index + 1])?;
+            }
             _ => return Err(format!("unsupported subset flag `{flag}`")),
         }
 
@@ -393,6 +493,11 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
 
     if request.glyph_ids.is_none() && request.text.is_none() {
         return Err("subset requires either --glyph-ids or --text".to_string());
+    }
+    if request.embedded_output.has_non_default_values()
+        && !embedded_output_allowed(&request.output_path)
+    {
+        return Err("embedded output options only apply to .eot or .fntdata output".to_string());
     }
 
     Ok(request)

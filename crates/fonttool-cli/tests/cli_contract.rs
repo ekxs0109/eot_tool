@@ -577,3 +577,37 @@ fn subset_unsupported_flag_is_rejected() {
         "expected unsupported-flag error, stderr: {stderr}"
     );
 }
+
+#[test]
+fn encode_rejects_unknown_payload_format() {
+    let output_path = temp_path("encode-unknown-payload", "eot");
+    let output = run_fonttool([
+        "encode",
+        "testdata/OpenSans-Regular.ttf",
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "bogus",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid value `bogus` for `--payload-format`"));
+}
+
+#[test]
+fn subset_rejects_embedded_output_flags_for_ttf_output() {
+    let output_path = temp_path("subset-ttf-output", "ttf");
+    let output = run_fonttool([
+        "subset",
+        "testdata/OpenSans-Regular.ttf",
+        output_path.to_str().unwrap(),
+        "--glyph-ids",
+        "0,1,2",
+        "--payload-format",
+        "sfnt",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("embedded output options only apply to .eot or .fntdata output"));
+}
