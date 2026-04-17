@@ -72,6 +72,21 @@ fn decode_subset_output(output_path: &Path) -> PathBuf {
     decoded_path
 }
 
+fn read_embedded_payload_bytes(encoded_bytes: &[u8]) -> Vec<u8> {
+    let header = parse_eot_header(encoded_bytes).expect("encoded subset header should parse");
+    let payload_start = header.header_length as usize;
+    let payload_end = payload_start + header.font_data_size as usize;
+    let mut payload = encoded_bytes[payload_start..payload_end].to_vec();
+
+    if header.flags & 0x1000_0000 != 0 {
+        for byte in &mut payload {
+            *byte ^= 0x50;
+        }
+    }
+
+    payload
+}
+
 fn read_font(path: &Path) -> fonttool_sfnt::OwnedSfntFont {
     let bytes = fs::read(path).expect("font should be readable");
     load_sfnt(&bytes).expect("font should parse")
@@ -599,4 +614,102 @@ fn subset_opensans_ttf_glyph_ids_rebuilds_core_tables() {
     let _ = fs::remove_file(decoded_path);
     let _ = fs::remove_dir_all(isolated_cwd);
     let _ = fs::remove_file(ttf_path);
+}
+
+#[test]
+fn subset_can_emit_raw_sfnt_v2_output() {
+    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = temp_file("eot");
+    let _cleanup = TempCleanup::new(vec![output_path.clone()]);
+
+    let output = run_subset_command(
+        &[
+            "subset",
+            source_path.to_str().unwrap(),
+            output_path.to_str().unwrap(),
+            "--glyph-ids",
+            "0,36,37,38",
+            "--payload-format",
+            "sfnt",
+            "--eot-version",
+            "v2",
+        ],
+        &workspace_root(),
+    );
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0002);
+    let payload = read_embedded_payload_bytes(&bytes);
+    load_sfnt(&payload).expect("raw subset payload should be a valid SFNT");
+}
+
+#[test]
+fn subset_supports_all_embedded_output_mode_combinations() {
+    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let cases = [
+        ("sfnt", "off", "v1", 0x0002_0001, false),
+        ("sfnt", "off", "v2", 0x0002_0002, false),
+        ("sfnt", "on", "v1", 0x0002_0001, true),
+        ("sfnt", "on", "v2", 0x0002_0002, true),
+        ("mtx", "off", "v1", 0x0002_0001, false),
+        ("mtx", "off", "v2", 0x0002_0002, false),
+        ("mtx", "on", "v1", 0x0002_0001, true),
+        ("mtx", "on", "v2", 0x0002_0002, true),
+    ];
+
+    for (index, (payload_format, xor, eot_version, expected_version, expect_xor)) in
+        cases.into_iter().enumerate()
+    {
+        let output_path = temp_derived_file(&format!("mode-{index}"), "eot");
+        let _cleanup = TempCleanup::new(vec![output_path.clone()]);
+        let output = run_subset_command(
+            &[
+                "subset",
+                source_path.to_str().unwrap(),
+                output_path.to_str().unwrap(),
+                "--glyph-ids",
+                "0,36,37,38",
+                "--payload-format",
+                payload_format,
+                "--xor",
+                xor,
+                "--eot-version",
+                eot_version,
+            ],
+            &workspace_root(),
+        );
+
+        assert!(
+            output.status.success(),
+            "case {payload_format}/{xor}/{eot_version} failed, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let bytes = fs::read(&output_path).unwrap();
+        let header = parse_eot_header(&bytes).unwrap();
+        assert_eq!(header.version, expected_version);
+        if expect_xor {
+            assert_ne!(header.flags & 0x1000_0000, 0);
+        } else {
+            assert_eq!(header.flags & 0x1000_0000, 0);
+        }
+
+        let payload = read_embedded_payload_bytes(&bytes);
+        match payload_format {
+            "sfnt" => {
+                load_sfnt(&payload).expect("raw subset payload should be a valid SFNT");
+            }
+            "mtx" => {
+                parse_mtx_container(&payload)
+                    .expect("subset payload should be a valid MTX container");
+            }
+            other => panic!("unexpected payload format {other}"),
+        }
+    }
 }

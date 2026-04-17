@@ -10,12 +10,11 @@ use embedded_output::{
     EmbeddedOutputOptions, EmbeddedPayloadFormat, EmbeddedXorMode,
 };
 use fonttool_cff::{inspect_otf_font, CffError};
-use fonttool_eot::{build_eot_file, parse_eot_header};
+use fonttool_eot::parse_eot_header;
 use fonttool_glyf::{decode_glyf, encode_glyf};
 use fonttool_harfbuzz::subset_font_bytes;
 use fonttool_mtx::{
-    compress_lz, decompress_lz, pack_mtx_container_with_copy_dist, parse_mtx_container,
-    MTX_PRELOAD_SIZE,
+    decompress_lz, parse_mtx_container,
 };
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
@@ -409,25 +408,20 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
     apply_output_table_policy(&mut subset_font, &mut subset_warnings);
     let subset_bytes = serialize_sfnt(&subset_font)
         .map_err(|error| format!("failed to serialize subset: {error}"))?;
-    let copy_dist = subset_bytes.len() + MTX_PRELOAD_SIZE;
-    let block1 = compress_lz(&subset_bytes)
-        .map_err(|error| format!("failed to compress subset block1: {error}"))?;
-    let mtx_payload = pack_mtx_container_with_copy_dist(&block1, None, None, Some(copy_dist))
-        .map_err(|error| format!("failed to pack subset MTX container: {error}"))?;
     let head = table_bytes(&subset_font, TAG_HEAD, "head")?;
     let os2 = table_bytes(&subset_font, TAG_OS_2, "OS/2")?;
     let name = subset_font
         .table(TAG_NAME)
         .map(|table| table.data.as_slice())
         .unwrap_or(&[]);
-    let encoded_output = build_eot_file(
+    let encoded_output = build_embedded_output(
         head,
         os2,
         name,
-        &mtx_payload,
-        is_fntdata_output(&request.output_path),
-    )
-    .map_err(|error| format!("failed to build subset EOT header: {error}"))?;
+        &subset_bytes,
+        None,
+        request.embedded_output,
+    )?;
 
     fs::write(&request.output_path, encoded_output)
         .map_err(|error| format!("failed to write {}: {error}", request.output_path.display()))?;
@@ -570,13 +564,6 @@ fn should_copy_block1_table(tag: u32) -> bool {
     }
 
     should_copy_encode_block1_table(tag)
-}
-
-fn is_fntdata_output(output_path: &Path) -> bool {
-    output_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("fntdata"))
 }
 
 fn emit_subset_warnings(subset_warnings: &fonttool_subset::SubsetWarnings) {
