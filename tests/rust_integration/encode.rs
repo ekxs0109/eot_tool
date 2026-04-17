@@ -33,6 +33,7 @@ const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
 const TAG_VHEA: u32 = u32::from_be_bytes(*b"vhea");
 const TAG_VMTX: u32 = u32::from_be_bytes(*b"vmtx");
 const TAG_VORG: u32 = u32::from_be_bytes(*b"VORG");
+const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 
 struct TempFiles {
     paths: Vec<PathBuf>,
@@ -553,6 +554,21 @@ fn decode_utf16le_string(bytes: &[u8]) -> String {
     String::from_utf16(&code_units).expect("header string should decode as utf-16le")
 }
 
+fn embedded_font_copy_dist(bytes: &[u8]) -> u32 {
+    let header = parse_eot_header(bytes).expect("embedded font header should parse");
+    let payload_start = header.header_length as usize;
+    let payload_end = payload_start + header.font_data_size as usize;
+    let mut payload = bytes[payload_start..payload_end].to_vec();
+    if header.flags & EOT_FLAG_PPT_XOR != 0 {
+        for byte in &mut payload {
+            *byte ^= 0x50;
+        }
+    }
+
+    let container = parse_mtx_container(&payload).expect("mtx payload should parse");
+    container.copy_dist
+}
+
 #[test]
 fn encode_pptx_case7_preserves_office_save_header_metadata() {
     let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
@@ -580,6 +596,27 @@ fn encode_pptx_case7_preserves_office_save_header_metadata() {
     assert_eq!(
         header.root_string_checksum, 0x5047_5342,
         "PowerPoint save compatibility depends on the legacy Java EOT checksum sentinel"
+    );
+}
+
+#[test]
+fn encode_pptx_case7_preserves_original_copy_distance_metadata() {
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    run_encode(&source_path, &output_path);
+
+    let original_bytes = fs::read(
+        support::workspace_root().join("build/pptx_case7/ppt/fonts/font1.fntdata"),
+    )
+    .expect("original case7 embedded font should be readable");
+    let encoded_bytes = fs::read(&output_path).expect("encoded eot should be readable");
+
+    assert_eq!(
+        embedded_font_copy_dist(&encoded_bytes),
+        embedded_font_copy_dist(&original_bytes),
+        "PowerPoint save compatibility depends on preserving the original MTX copy distance metadata",
     );
 }
 

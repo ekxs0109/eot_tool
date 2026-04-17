@@ -7,7 +7,7 @@ mod hdmx;
 mod lz;
 
 pub const MTX_HEADER_SIZE: usize = 10;
-const MTX_PRELOAD_SIZE: usize = 7168;
+pub const MTX_PRELOAD_SIZE: usize = 7168;
 
 pub use cvt::{cvt_decode, cvt_encode, CvtCodecError};
 pub use hdmx::{hdmx_decode, hdmx_encode, HdmxCodecError};
@@ -119,6 +119,16 @@ pub fn pack_mtx_container(
     block2: Option<&[u8]>,
     block3: Option<&[u8]>,
 ) -> Result<Vec<u8>, MtxPackError> {
+    pack_mtx_container_with_copy_dist(block1, block2, block3, None)
+}
+
+#[must_use]
+pub fn pack_mtx_container_with_copy_dist(
+    block1: &[u8],
+    block2: Option<&[u8]>,
+    block3: Option<&[u8]>,
+    copy_dist: Option<usize>,
+) -> Result<Vec<u8>, MtxPackError> {
     if block1.is_empty() {
         return Err(MtxPackError::MissingBlock1);
     }
@@ -133,10 +143,10 @@ pub fn pack_mtx_container(
         .and_then(|size| size.checked_add(block3.len()))
         .ok_or(MtxPackError::PayloadTooLarge)?;
 
-    let max_block_size = block1.len().max(block2.len()).max(block3.len());
-    let copy_dist = MTX_PRELOAD_SIZE
-        .checked_add(max_block_size)
+    let computed_copy_dist = MTX_PRELOAD_SIZE
+        .checked_add(block1.len().max(block2.len()).max(block3.len()))
         .ok_or(MtxPackError::PayloadTooLarge)?;
+    let copy_dist = copy_dist.unwrap_or(computed_copy_dist);
     let offset_block2 = MTX_HEADER_SIZE
         .checked_add(block1.len())
         .ok_or(MtxPackError::PayloadTooLarge)?;
