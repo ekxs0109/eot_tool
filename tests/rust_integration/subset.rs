@@ -16,6 +16,7 @@ const TAG_HMTX: u32 = u32::from_be_bytes(*b"hmtx");
 const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
 const TAG_HDMX: u32 = u32::from_be_bytes(*b"hdmx");
+const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
 const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 
@@ -400,8 +401,12 @@ fn prepare_real_subset_wrapper_fixture() -> (PathBuf, PathBuf, PathBuf, TempClea
         .expect("fixture font should contain OS/2")
         .data
         .clone();
+    let name = font
+        .table(TAG_NAME)
+        .map(|table| table.data.clone())
+        .unwrap_or_default();
     let fntdata_bytes =
-        build_eot_file(&head, &os2, payload, true).expect("fixture fntdata should build");
+        build_eot_file(&head, &os2, &name, payload, true).expect("fixture fntdata should build");
     fs::write(&fntdata_path, fntdata_bytes).expect("fixture fntdata should be writable");
 
     let cleanup = TempCleanup::new(vec![

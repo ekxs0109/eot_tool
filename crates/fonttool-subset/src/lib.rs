@@ -35,7 +35,7 @@ pub enum TablePolicy {
 #[must_use]
 pub fn table_policy_for_tag(tag: u32) -> TablePolicy {
     match tag {
-        TAG_DSIG | TAG_VDMX => TablePolicy::DropWithWarning,
+        TAG_VDMX => TablePolicy::DropWithWarning,
         TAG_CVT | TAG_HDMX => TablePolicy::Reencode,
         _ => TablePolicy::Keep,
     }
@@ -1059,6 +1059,7 @@ mod tests {
     use fonttool_sfnt::{OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 
     const TAG_CVT: u32 = u32::from_be_bytes(*b"cvt ");
+    const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
     const TAG_HDMX: u32 = u32::from_be_bytes(*b"hdmx");
     const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
     const TAG_VDMX: u32 = u32::from_be_bytes(*b"VDMX");
@@ -1073,6 +1074,7 @@ mod tests {
     #[test]
     fn table_policy_keeps_other_tables() {
         assert_eq!(table_policy_for_tag(TAG_NAME), TablePolicy::Keep);
+        assert_eq!(table_policy_for_tag(TAG_DSIG), TablePolicy::Keep);
     }
 
     #[test]
@@ -1108,6 +1110,7 @@ mod tests {
     #[test]
     fn encode_block1_copy_policy_only_keeps_keep_tables() {
         assert!(should_copy_encode_block1_table(TAG_NAME));
+        assert!(should_copy_encode_block1_table(TAG_DSIG));
         assert!(should_copy_encode_block1_table(TAG_CVT));
         assert!(should_copy_encode_block1_table(TAG_HDMX));
         assert!(!should_copy_encode_block1_table(TAG_VDMX));

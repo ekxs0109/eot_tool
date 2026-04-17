@@ -8,6 +8,14 @@ const EOT_VERSION_20002: u32 = 0x0002_0002;
 const EOT_MAGIC_NUMBER: u16 = 0x504c;
 const EOT_FLAG_COMPRESSED: u32 = 0x0000_0004;
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
+const EOT_ROOT_STRING_XOR_KEY: u32 = 0x5047_5342;
+const NAME_PLATFORM_WINDOWS: u16 = 3;
+const NAME_ENCODING_UNICODE_BMP: u16 = 1;
+const NAME_LANGUAGE_EN_US: u16 = 0x0409;
+const NAME_ID_FAMILY: u16 = 1;
+const NAME_ID_STYLE: u16 = 2;
+const NAME_ID_FULL: u16 = 4;
+const NAME_ID_VERSION: u16 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EotHeaderError {
@@ -91,77 +99,89 @@ pub struct EotHeader<'a> {
 pub fn build_eot_file(
     head_table: &[u8],
     os2_table: &[u8],
+    name_table: &[u8],
     mtx_payload: &[u8],
     apply_ppt_xor: bool,
 ) -> Result<Vec<u8>, EotEncodeError> {
-    let header_len = 120usize;
+    let family_name = extract_name_utf16le(name_table, NAME_ID_FAMILY);
+    let style_name = extract_name_utf16le(name_table, NAME_ID_STYLE);
+    let version_name = extract_name_utf16le(name_table, NAME_ID_VERSION);
+    let full_name = extract_name_utf16le(name_table, NAME_ID_FULL);
+
+    let mut payload = mtx_payload.to_vec();
+    if apply_ppt_xor {
+        for byte in &mut payload {
+            *byte ^= 0x50;
+        }
+    }
+
+    let header_len = EOT_FIXED_HEADER_SIZE
+        .checked_add(2 + family_name.len())
+        .and_then(|value| value.checked_add(2))
+        .and_then(|value| value.checked_add(2 + style_name.len()))
+        .and_then(|value| value.checked_add(2))
+        .and_then(|value| value.checked_add(2 + version_name.len()))
+        .and_then(|value| value.checked_add(2))
+        .and_then(|value| value.checked_add(2 + full_name.len()))
+        .and_then(|value| value.checked_add(2))
+        .and_then(|value| value.checked_add(2))
+        .and_then(|value| value.checked_add(20))
+        .ok_or(EotEncodeError::PayloadTooLarge)?;
     let total_size = header_len
-        .checked_add(mtx_payload.len())
+        .checked_add(payload.len())
         .ok_or(EotEncodeError::PayloadTooLarge)?;
 
-    let mut header = [0u8; 120];
-    let mut pos = 0usize;
-
-    write_u32_le(
-        &mut header,
-        &mut pos,
+    let mut output = Vec::with_capacity(total_size);
+    push_u32_le(
+        &mut output,
         u32::try_from(total_size).map_err(|_| EotEncodeError::PayloadTooLarge)?,
     );
-    write_u32_le(
-        &mut header,
-        &mut pos,
-        u32::try_from(mtx_payload.len()).map_err(|_| EotEncodeError::PayloadTooLarge)?,
+    push_u32_le(
+        &mut output,
+        u32::try_from(payload.len()).map_err(|_| EotEncodeError::PayloadTooLarge)?,
     );
-    write_u32_le(&mut header, &mut pos, EOT_VERSION_20002);
-    write_u32_le(
-        &mut header,
-        &mut pos,
+    push_u32_le(&mut output, EOT_VERSION_20002);
+    push_u32_le(
+        &mut output,
         EOT_FLAG_COMPRESSED | if apply_ppt_xor { EOT_FLAG_PPT_XOR } else { 0 },
     );
 
     if os2_table.len() >= 42 {
-        header[pos..pos + 10].copy_from_slice(&os2_table[32..42]);
+        output.extend_from_slice(&os2_table[32..42]);
+    } else {
+        output.extend_from_slice(&[0u8; 10]);
     }
-    pos += 10;
 
-    header[pos] = 1;
-    pos += 1;
-
-    header[pos] = if os2_table.len() >= 64 {
-        if u16::from_be_bytes([os2_table[62], os2_table[63]]) & 1 != 0 {
-            1
-        } else {
-            0
-        }
+    output.push(1);
+    output.push(if os2_table.len() >= 64
+        && u16::from_be_bytes([os2_table[62], os2_table[63]]) & 1 != 0
+    {
+        1
     } else {
         0
-    };
-    pos += 1;
+    });
 
-    write_u32_le(
-        &mut header,
-        &mut pos,
+    push_u32_le(
+        &mut output,
         if os2_table.len() >= 6 {
             u32::from(u16::from_be_bytes([os2_table[4], os2_table[5]]))
         } else {
             0
         },
     );
-    write_u16_le(
-        &mut header,
-        &mut pos,
+    push_u16_le(
+        &mut output,
         if os2_table.len() >= 10 {
             u16::from_be_bytes([os2_table[8], os2_table[9]])
         } else {
             0
         },
     );
-    write_u16_le(&mut header, &mut pos, EOT_MAGIC_NUMBER);
+    push_u16_le(&mut output, EOT_MAGIC_NUMBER);
 
     for range_index in 0..4 {
-        write_u32_le(
-            &mut header,
-            &mut pos,
+        push_u32_le(
+            &mut output,
             if os2_table.len() >= 58 {
                 let base = 42 + range_index * 4;
                 u32::from_be_bytes([
@@ -176,27 +196,20 @@ pub fn build_eot_file(
         );
     }
 
-    for range_index in 0..2 {
-        write_u32_le(
-            &mut header,
-            &mut pos,
-            if os2_table.len() >= 86 {
-                let base = 78 + range_index * 4;
-                u32::from_be_bytes([
-                    os2_table[base],
-                    os2_table[base + 1],
-                    os2_table[base + 2],
-                    os2_table[base + 3],
-                ])
-            } else {
-                0
-            },
-        );
-    }
+    let os2_version = read_be_u16(os2_table, 0).unwrap_or(0);
+    let (code_page_range1, code_page_range2) = if os2_version >= 1 && os2_table.len() >= 86 {
+        (
+            u32::from_be_bytes([os2_table[78], os2_table[79], os2_table[80], os2_table[81]]),
+            u32::from_be_bytes([os2_table[82], os2_table[83], os2_table[84], os2_table[85]]),
+        )
+    } else {
+        (0x0000_0001, 0x0000_0000)
+    };
+    push_u32_le(&mut output, code_page_range1);
+    push_u32_le(&mut output, code_page_range2);
 
-    write_u32_le(
-        &mut header,
-        &mut pos,
+    push_u32_le(
+        &mut output,
         if head_table.len() >= 12 {
             u32::from_be_bytes([head_table[8], head_table[9], head_table[10], head_table[11]])
         } else {
@@ -204,33 +217,27 @@ pub fn build_eot_file(
         },
     );
 
-    pos += 16;
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u32_le(&mut header, &mut pos, 0);
-    write_u32_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u16_le(&mut header, &mut pos, 0);
-    write_u32_le(&mut header, &mut pos, 0);
-    write_u32_le(&mut header, &mut pos, 0);
-
-    let mut payload = mtx_payload.to_vec();
-    if apply_ppt_xor {
-        for byte in &mut payload {
-            *byte ^= 0x50;
-        }
+    for _ in 0..4 {
+        push_u32_le(&mut output, 0);
     }
 
-    let mut output = Vec::with_capacity(total_size);
-    output.extend_from_slice(&header[..pos]);
+    push_u16_le(&mut output, 0);
+    push_length_prefixed_bytes(&mut output, &family_name)?;
+    push_u16_le(&mut output, 0);
+    push_length_prefixed_bytes(&mut output, &style_name)?;
+    push_u16_le(&mut output, 0);
+    push_length_prefixed_bytes(&mut output, &version_name)?;
+    push_u16_le(&mut output, 0);
+    push_length_prefixed_bytes(&mut output, &full_name)?;
+    push_u16_le(&mut output, 0);
+    push_u16_le(&mut output, 0);
+    push_u32_le(&mut output, EOT_ROOT_STRING_XOR_KEY);
+    push_u32_le(&mut output, 0);
+    push_u16_le(&mut output, 0);
+    push_u16_le(&mut output, 0);
+    push_u32_le(&mut output, 0);
+    push_u32_le(&mut output, 0);
+
     output.extend_from_slice(&payload);
     Ok(output)
 }
@@ -349,14 +356,12 @@ fn read_u8(bytes: &[u8], offset: &mut usize) -> Result<u8, EotHeaderError> {
     Ok(value)
 }
 
-fn write_u16_le(dst: &mut [u8], offset: &mut usize, value: u16) {
-    dst[*offset..*offset + 2].copy_from_slice(&value.to_le_bytes());
-    *offset += 2;
+fn push_u16_le(dst: &mut Vec<u8>, value: u16) {
+    dst.extend_from_slice(&value.to_le_bytes());
 }
 
-fn write_u32_le(dst: &mut [u8], offset: &mut usize, value: u32) {
-    dst[*offset..*offset + 4].copy_from_slice(&value.to_le_bytes());
-    *offset += 4;
+fn push_u32_le(dst: &mut Vec<u8>, value: u32) {
+    dst.extend_from_slice(&value.to_le_bytes());
 }
 
 fn read_u16_le(bytes: &[u8], offset: &mut usize) -> Result<u16, EotHeaderError> {
@@ -367,6 +372,11 @@ fn read_u16_le(bytes: &[u8], offset: &mut usize) -> Result<u16, EotHeaderError> 
 fn read_u32_le(bytes: &[u8], offset: &mut usize) -> Result<u32, EotHeaderError> {
     let bytes = read_bytes(bytes, offset, 4)?;
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    let bytes = bytes.get(offset..offset + 2)?;
+    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
 }
 
 fn read_array(bytes: &[u8], offset: &mut usize) -> Result<[u8; 10], EotHeaderError> {
@@ -424,4 +434,69 @@ fn read_zero_padding(
         return Err(EotHeaderError::InvalidPadding { field });
     }
     Ok(value)
+}
+
+fn push_length_prefixed_bytes(dst: &mut Vec<u8>, bytes: &[u8]) -> Result<(), EotEncodeError> {
+    let length = u16::try_from(bytes.len()).map_err(|_| EotEncodeError::PayloadTooLarge)?;
+    push_u16_le(dst, length);
+    dst.extend_from_slice(bytes);
+    Ok(())
+}
+
+fn extract_name_utf16le(name_table: &[u8], name_id: u16) -> Vec<u8> {
+    let Some(bytes) = find_name_record(
+        name_table,
+        NAME_PLATFORM_WINDOWS,
+        NAME_ENCODING_UNICODE_BMP,
+        NAME_LANGUAGE_EN_US,
+        name_id,
+    ) else {
+        return Vec::new();
+    };
+
+    if bytes.len() % 2 != 0 {
+        return Vec::new();
+    }
+
+    let mut utf16le = bytes.to_vec();
+    for chunk in utf16le.chunks_exact_mut(2) {
+        chunk.swap(0, 1);
+    }
+    utf16le
+}
+
+fn find_name_record(
+    name_table: &[u8],
+    platform_id: u16,
+    encoding_id: u16,
+    language_id: u16,
+    name_id: u16,
+) -> Option<&[u8]> {
+    let count = usize::from(read_be_u16(name_table, 2)?);
+    let storage_offset = usize::from(read_be_u16(name_table, 4)?);
+
+    for index in 0..count {
+        let record_offset = 6 + index * 12;
+        let record = name_table.get(record_offset..record_offset + 12)?;
+        let record_platform = u16::from_be_bytes([record[0], record[1]]);
+        let record_encoding = u16::from_be_bytes([record[2], record[3]]);
+        let record_language = u16::from_be_bytes([record[4], record[5]]);
+        let record_name = u16::from_be_bytes([record[6], record[7]]);
+
+        if record_platform != platform_id
+            || record_encoding != encoding_id
+            || record_language != language_id
+            || record_name != name_id
+        {
+            continue;
+        }
+
+        let length = usize::from(u16::from_be_bytes([record[8], record[9]]));
+        let offset = usize::from(u16::from_be_bytes([record[10], record[11]]));
+        let start = storage_offset.checked_add(offset)?;
+        let end = start.checked_add(length)?;
+        return name_table.get(start..end);
+    }
+
+    None
 }

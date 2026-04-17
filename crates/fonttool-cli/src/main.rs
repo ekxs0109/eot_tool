@@ -21,6 +21,7 @@ const TAG_HMTX: u32 = u32::from_be_bytes(*b"hmtx");
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
 const TAG_GLYF: u32 = u32::from_be_bytes(*b"glyf");
 const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
+const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
 const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
@@ -228,6 +229,10 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     let _hhea = table_bytes(&source_font, TAG_HHEA, "hhea")?;
     let _hmtx = table_bytes(&source_font, TAG_HMTX, "hmtx")?;
     let os2 = table_bytes(&source_font, TAG_OS_2, "OS/2")?;
+    let name = source_font
+        .table(TAG_NAME)
+        .map(|table| table.data.as_slice())
+        .unwrap_or(&[]);
 
     if head.len() < 52 {
         return Err("head table is truncated".to_string());
@@ -253,7 +258,7 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
         .map_err(|error| format!("failed to compress MTX block1: {error}"))?;
     let mtx_payload = pack_mtx_container(&block1, Some(&block2), Some(&block3))
         .map_err(|error| format!("failed to pack MTX container: {error}"))?;
-    let encoded_eot = build_eot_file(head, os2, &mtx_payload, false)
+    let encoded_eot = build_eot_file(head, os2, name, &mtx_payload, false)
         .map_err(|error| format!("failed to build EOT header: {error}"))?;
 
     fs::write(output_path, encoded_eot)
@@ -298,9 +303,14 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
         .map_err(|error| format!("failed to pack subset MTX container: {error}"))?;
     let head = table_bytes(&subset_font, TAG_HEAD, "head")?;
     let os2 = table_bytes(&subset_font, TAG_OS_2, "OS/2")?;
+    let name = subset_font
+        .table(TAG_NAME)
+        .map(|table| table.data.as_slice())
+        .unwrap_or(&[]);
     let encoded_output = build_eot_file(
         head,
         os2,
+        name,
         &mtx_payload,
         is_fntdata_output(&request.output_path),
     )

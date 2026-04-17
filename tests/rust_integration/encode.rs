@@ -17,6 +17,7 @@ const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
 const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
+const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
 const TAG_HHEA: u32 = u32::from_be_bytes(*b"hhea");
 const TAG_HMTX: u32 = u32::from_be_bytes(*b"hmtx");
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
@@ -502,6 +503,37 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
     );
 }
 
+#[test]
+fn encode_decode_pptx_sample_preserves_dsig_for_office_save_compatibility() {
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let output_path = support::temp_eot();
+    let decoded_path = support::temp_ttf();
+    let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
+
+    let source_bytes = fs::read(&source_path).expect("source font should be readable");
+    let source_font = load_sfnt(&source_bytes).expect("source font should parse");
+    assert!(
+        source_font.table(TAG_DSIG).is_some(),
+        "case7 source font should carry the original DSIG table"
+    );
+
+    run_encode(&source_path, &output_path);
+    run_decode(&output_path, &decoded_path);
+
+    let roundtrip_bytes = fs::read(&decoded_path).expect("roundtrip font should be readable");
+    let roundtrip_font = load_sfnt(&roundtrip_bytes).expect("roundtrip font should parse");
+
+    assert!(
+        roundtrip_font.table(TAG_DSIG).is_some(),
+        "roundtrip font should keep DSIG so Office save flows still recognize the embedded font"
+    );
+    assert_eq!(
+        table_bytes(&source_font, TAG_DSIG, "source DSIG"),
+        table_bytes(&roundtrip_font, TAG_DSIG, "roundtrip DSIG"),
+        "roundtrip should preserve the DSIG table bytes"
+    );
+}
+
 fn case7_original_embedded_font_report() -> support::EmbeddedFontReport {
     let path = support::workspace_root().join("build/pptx_case7/ppt/fonts/font1.fntdata");
     assert!(
@@ -510,6 +542,45 @@ fn case7_original_embedded_font_report() -> support::EmbeddedFontReport {
         path.display()
     );
     support::inspect_embedded_font_file(&path)
+}
+
+fn decode_utf16le_string(bytes: &[u8]) -> String {
+    assert_eq!(bytes.len() % 2, 0, "expected utf-16le data");
+    let code_units = bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect::<Vec<_>>();
+    String::from_utf16(&code_units).expect("header string should decode as utf-16le")
+}
+
+#[test]
+fn encode_pptx_case7_preserves_office_save_header_metadata() {
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    run_encode(&source_path, &output_path);
+
+    let encoded_bytes = fs::read(&output_path).expect("encoded eot should be readable");
+    let header = parse_eot_header(&encoded_bytes).expect("encoded eot header should parse");
+
+    assert_eq!(
+        decode_utf16le_string(header.family_name),
+        "Source Han Sans CN Normal"
+    );
+    assert_eq!(decode_utf16le_string(header.style_name), "Regular");
+    assert_eq!(
+        decode_utf16le_string(header.version_name),
+        "Version 1.000;PS 1;hotconv 1.0.78;makeotf.lib2.5.61930"
+    );
+    assert_eq!(
+        decode_utf16le_string(header.full_name),
+        "Source Han Sans CN Normal"
+    );
+    assert_eq!(
+        header.root_string_checksum, 0x5047_5342,
+        "PowerPoint save compatibility depends on the legacy Java EOT checksum sentinel"
+    );
 }
 
 #[test]
@@ -555,10 +626,11 @@ fn encode_pptx_case7_block1_is_within_original_size_budget_on_this_branch() {
         "regenerated PPT sample should keep block3 decoding to an empty stream"
     );
     assert!(
-        regenerated.block1.decompressed_len <= original.block1.decompressed_len,
-        "regenerated block1 plain SFNT should not grow beyond the original sample: original decompressed={}, regenerated decompressed={}",
+        regenerated.block1.decompressed_len <= original.block1.decompressed_len + 32,
+        "regenerated block1 plain SFNT should stay within a tiny DSIG-compatible slack window over the original sample: original decompressed={}, regenerated decompressed={}, allowed maximum={}",
         original.block1.decompressed_len,
-        regenerated.block1.decompressed_len
+        regenerated.block1.decompressed_len,
+        original.block1.decompressed_len + 32
     );
     assert!(
         regenerated.block1.compressed_len <= original.block1.compressed_len + 131_072,

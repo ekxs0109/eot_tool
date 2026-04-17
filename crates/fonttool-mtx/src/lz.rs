@@ -587,7 +587,13 @@ pub fn decompress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
             return Err(LzDecompressError::InvalidBackReference);
         }
 
-        let copy_start = output_pos - dist - length + 1;
+        let copy_span = dist
+            .checked_add(length)
+            .and_then(|value| value.checked_sub(1))
+            .ok_or(LzDecompressError::InvalidBackReference)?;
+        let copy_start = output_pos
+            .checked_sub(copy_span)
+            .ok_or(LzDecompressError::InvalidBackReference)?;
         for index in 0..length {
             output[output_pos] = output[copy_start + index];
             output_pos += 1;
