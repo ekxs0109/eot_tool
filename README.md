@@ -86,11 +86,11 @@ reconstruction, not for general decode.
 `fonttool encode <input.ttf> <output.eot>` emits an MTX-compressed EOT for the
 supported TrueType path.
 
-The Rust MTX encoder now emits backreference-capable LZ streams for all output
-blocks and falls back to literal-only output when that would be smaller. This
-improves compression relative to the earlier literal-only implementation, but it
-does not yet guarantee byte-for-byte or size parity with legacy or PowerPoint
-producers.
+The Rust MTX encoder now applies Java-style local copy heuristics for MTX/LZ
+compression across the shared compressor path, with a literal-only fallback
+when that would be smaller. The tracked PowerPoint case 7 sample is used as an
+acceptance check for output-size parity, but exact byte-for-byte parity with
+legacy producers is still not guaranteed.
 
 ### Runtime Thread Control
 
