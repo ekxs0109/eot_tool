@@ -12,7 +12,6 @@ const ROOT: usize = 1;
 const MAX_DECOMPRESSED_LENGTH: usize = 100 * 1024 * 1024;
 const MAX_HASH_CHAIN: usize = 256;
 const MAX_LITERAL_COST_CACHE: usize = 32;
-const MATCH_HASH_BUCKETS: usize = 1 << 12;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LzDecompressError {
@@ -72,7 +71,6 @@ struct DecisionContext<'a> {
     dist_encoder: &'a HuffmanEncoder,
     len_encoder: &'a HuffmanEncoder,
     max_dist: usize,
-    literal_cost_cache: [u16; MAX_LITERAL_COST_CACHE],
 }
 
 impl<'a> DecisionContext<'a> {
@@ -87,7 +85,6 @@ impl<'a> DecisionContext<'a> {
             dist_encoder,
             len_encoder,
             max_dist: max_supported_distance(total_len),
-            literal_cost_cache: [0; MAX_LITERAL_COST_CACHE],
         }
     }
 }
@@ -640,7 +637,7 @@ fn compress_lz_backreferences(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError
     let mut pos = 0usize;
     while pos < bytes.len() {
         let context = DecisionContext::new(&sym_encoder, &dist_encoder, &len_encoder, bytes.len());
-        let op = choose_encode_op(bytes, pos, &finder, &context);
+        let op = choose_encode_op(&bytes[pos..], &finder, &context);
         write_encode_op(
             &mut writer,
             &mut sym_encoder,
@@ -711,11 +708,11 @@ impl MatchFinder {
         initialize_preload_buffer(&mut history);
         let mut finder = Self {
             history,
-            heads: vec![None; MATCH_HASH_BUCKETS],
+            heads: vec![None; 1 << 16],
             nodes: Vec::new(),
         };
 
-        for index in 0..finder.history.len().saturating_sub(LEN_MIN - 1) {
+        for index in 1..finder.history.len() {
             finder.push_existing_index(index);
         }
 
@@ -723,146 +720,239 @@ impl MatchFinder {
     }
 
     fn push_existing_index(&mut self, index: usize) {
-        if index + LEN_MIN > self.history.len() {
-            return;
-        }
-
-        let key = Self::hash_key(&self.history[index..]);
+        let key = self.hash_key(index - 1);
         let head = self.heads[key];
-        self.nodes.push(HashNode { index, next: head });
+        self.nodes.push(HashNode {
+            index: index - 1,
+            next: head,
+        });
         self.heads[key] = Some(self.nodes.len() - 1);
     }
 
     fn extend(&mut self, bytes: &[u8]) {
         for &byte in bytes {
+            let next_index = self.history.len();
             self.history.push(byte);
-            if self.history.len() >= LEN_MIN {
-                self.push_existing_index(self.history.len() - LEN_MIN);
+            if next_index > 0 {
+                self.push_existing_index(next_index);
             }
         }
     }
 
-    fn hash_key(bytes: &[u8]) -> usize {
-        let head = bytes.first().copied().unwrap_or_default() as usize;
-        let tail = bytes.get(1).copied().unwrap_or_default() as usize;
-        ((head << 8) | tail) & (MATCH_HASH_BUCKETS - 1)
+    fn hash_key(&self, index: usize) -> usize {
+        ((usize::from(self.history[index]) << 8) | usize::from(self.history[index + 1])) & 0xFFFF
     }
 }
 
 fn choose_encode_op(
     bytes: &[u8],
-    pos: usize,
     finder: &MatchFinder,
-    context: &DecisionContext,
+    context: &DecisionContext<'_>,
 ) -> EncodeOp {
-    if let Some(candidate) = choose_copy_candidate(bytes, pos, finder, context) {
+    if let Some(copy) = choose_copy_candidate(bytes, finder, context) {
         return EncodeOp::Copy {
-            dist: candidate.dist,
-            len: candidate.len,
+            dist: copy.dist,
+            len: copy.len,
         };
     }
 
-    if matches_dup(bytes, pos, 2) {
+    if matches_dup(bytes, finder, 2) {
         return EncodeOp::Dup2;
     }
-    if matches_dup(bytes, pos, 4) {
+    if matches_dup(bytes, finder, 4) {
         return EncodeOp::Dup4;
     }
-    if matches_dup(bytes, pos, 6) {
+    if matches_dup(bytes, finder, 6) {
         return EncodeOp::Dup6;
     }
 
-    EncodeOp::Literal(bytes[pos])
+    EncodeOp::Literal(bytes[0])
 }
 
-fn matches_dup(bytes: &[u8], pos: usize, step: usize) -> bool {
-    pos >= step && pos < bytes.len() && bytes[pos] == bytes[pos - step]
+fn matches_dup(bytes: &[u8], finder: &MatchFinder, step: usize) -> bool {
+    bytes
+        .first()
+        .zip(finder.history.get(finder.history.len().saturating_sub(step)))
+        .is_some_and(|(&current, &previous)| current == previous)
 }
 
 fn choose_copy_candidate(
     bytes: &[u8],
-    pos: usize,
     finder: &MatchFinder,
     context: &DecisionContext<'_>,
 ) -> Option<CopyCandidate> {
-    let _encoders = (
-        &context.sym_encoder,
-        &context.dist_encoder,
-        &context.len_encoder,
-    );
-    let _literal_cost_hint = context.literal_cost_cache[pos % MAX_LITERAL_COST_CACHE];
-    find_best_candidate(bytes, pos, finder, context)
+    let mut first = find_best_candidate(bytes, finder, context)?;
+    let literal_cost = context.sym_encoder.write_symbol_cost(usize::from(bytes[0]));
+
+    if bytes.len() > 1 {
+        let mut next_finder = finder.clone();
+        next_finder.extend(&bytes[..1]);
+        if let Some(next) = find_best_candidate(&bytes[1..], &next_finder, context) {
+            if next.gain >= first.gain
+                && first.cost_per_byte
+                    > (next.cost_per_byte * next.len + literal_cost) / (next.len + 1)
+            {
+                return None;
+            }
+        }
+    }
+
+    if first.len > 3 && bytes.len() > first.len {
+        let mut after_finder = finder.clone();
+        after_finder.extend(&bytes[..first.len]);
+        if let Some(after) = find_best_candidate(&bytes[first.len..], &after_finder, context) {
+            let mut shortened_finder = finder.clone();
+            shortened_finder.extend(&bytes[..first.len - 1]);
+            if let Some(shortened) =
+                find_best_candidate(&bytes[first.len - 1..], &shortened_finder, context)
+            {
+                let current_cost =
+                    first.cost_per_byte * first.len + after.cost_per_byte * after.len;
+                let shortened_dist = first.dist + 1;
+                let shortened_cost = copy_symbol_cost(
+                    shortened_dist,
+                    first.len - 1,
+                    context.sym_encoder,
+                    context.dist_encoder,
+                    context.len_encoder,
+                ) + shortened.cost_per_byte * shortened.len;
+                if shortened.len > after.len && shortened_cost < current_cost {
+                    first.len -= 1;
+                    first.dist = shortened_dist;
+                }
+            }
+        }
+    }
+
+    Some(first)
 }
 
 fn find_best_candidate(
     bytes: &[u8],
-    pos: usize,
     finder: &MatchFinder,
     context: &DecisionContext<'_>,
 ) -> Option<CopyCandidate> {
-    if pos >= bytes.len() {
+    if bytes.len() < 2 {
         return None;
     }
 
-    let output_pos = finder.history.len();
-    let max_dist = output_pos.min(context.max_dist);
+    let current_index = finder.history.len();
+    let key = ((usize::from(bytes[0]) << 8) | usize::from(bytes[1])) & 0xFFFF;
+    let mut node = finder.heads[key];
+    let mut visited = 0usize;
+    let mut best: Option<CopyCandidate> = None;
+    let mut literal_cache = [0usize; MAX_LITERAL_COST_CACHE + 1];
 
-    if bytes.len() - pos >= LEN_MIN {
-        let key = MatchFinder::hash_key(&bytes[pos..]);
-        let mut node_index = finder.heads[key];
-        let mut traversed = 0usize;
+    while let Some(node_index) = node {
+        let candidate_index = finder.nodes[node_index].index;
+        let raw_dist = current_index - candidate_index;
+        visited += 1;
 
-        while let Some(current_index) = node_index {
-            traversed += 1;
-            if traversed > MAX_HASH_CHAIN {
-                break;
-            }
-
-            let node = &finder.nodes[current_index];
-            let _source_start = node.index;
-            node_index = node.next;
+        if visited > MAX_HASH_CHAIN || raw_dist > context.max_dist {
+            break;
         }
-    }
 
-    find_best_candidate_exhaustive(bytes, pos, finder, output_pos, max_dist, None)
-}
+        let max_len = raw_dist.min(bytes.len());
+        if max_len < LEN_MIN {
+            node = finder.nodes[node_index].next;
+            continue;
+        }
 
-fn find_best_candidate_exhaustive(
-    bytes: &[u8],
-    pos: usize,
-    finder: &MatchFinder,
-    output_pos: usize,
-    max_dist: usize,
-    mut best: Option<CopyCandidate>,
-) -> Option<CopyCandidate> {
-    for dist in 1..=max_dist {
+        let mut matched = 2usize;
+        while matched < max_len && finder.history[candidate_index + matched] == bytes[matched] {
+            matched += 1;
+        }
+
+        let dist = raw_dist - matched + 1;
         let min_len = min_copy_length(dist);
-        let max_len = (bytes.len() - pos).min(output_pos - dist + 1);
-        if max_len < min_len {
-            continue;
-        }
-
-        let best_len = best.map_or(0, |candidate| candidate.len);
-        if max_len <= best_len {
-            continue;
-        }
-
-        for len in ((best_len + 1).max(min_len)..=max_len).rev() {
-            let copy_end = output_pos - dist;
-            let copy_start = copy_end + 1 - len;
-            if finder.history[copy_start..copy_start + len] == bytes[pos..pos + len] {
-                best = Some(CopyCandidate {
+        if matched >= min_len {
+            let literal_cost =
+                literal_run_cost(bytes, 0, matched, context.sym_encoder, &mut literal_cache);
+            let copy_cost = copy_symbol_cost(
+                dist,
+                matched,
+                context.sym_encoder,
+                context.dist_encoder,
+                context.len_encoder,
+            );
+            if literal_cost > copy_cost {
+                let candidate = CopyCandidate {
                     dist,
-                    len,
-                    gain: 0,
-                    cost_per_byte: 0,
-                });
-                break;
+                    len: matched,
+                    gain: literal_cost - copy_cost,
+                    cost_per_byte: copy_cost / matched,
+                };
+                if best.as_ref().is_none_or(|old| candidate.gain > old.gain) {
+                    best = Some(candidate);
+                }
             }
         }
+
+        node = finder.nodes[node_index].next;
     }
 
     best
+}
+
+fn literal_run_cost(
+    bytes: &[u8],
+    start: usize,
+    len: usize,
+    sym_encoder: &HuffmanEncoder,
+    cache: &mut [usize; MAX_LITERAL_COST_CACHE + 1],
+) -> usize {
+    let capped = len.min(MAX_LITERAL_COST_CACHE);
+    for index in 0..capped {
+        if cache[index + 1] == 0 {
+            cache[index + 1] =
+                cache[index] + sym_encoder.write_symbol_cost(usize::from(bytes[start + index]));
+        }
+    }
+
+    if len > MAX_LITERAL_COST_CACHE {
+        let base = cache[MAX_LITERAL_COST_CACHE];
+        base + (base / MAX_LITERAL_COST_CACHE) * (len - MAX_LITERAL_COST_CACHE)
+    } else {
+        cache[len]
+    }
+}
+
+fn copy_symbol_cost(
+    dist: usize,
+    len: usize,
+    sym_encoder: &HuffmanEncoder,
+    dist_encoder: &HuffmanEncoder,
+    len_encoder: &HuffmanEncoder,
+) -> usize {
+    let dist_ranges = num_dist_ranges_for_distance(dist);
+    let encoded_len = if dist >= MAX_2BYTE_DIST {
+        len - (LEN_MIN3 - LEN_MIN)
+    } else {
+        len
+    };
+    let value = encoded_len - LEN_MIN;
+    let group_count = value_group_count(value, BIT_RANGE);
+    let top_shift = BIT_RANGE * (group_count - 1);
+    let top_bits = (value >> top_shift) & ((1 << BIT_RANGE) - 1);
+    let symbol =
+        256 + (dist_ranges - 1) * (1 << LEN_WIDTH) + ((group_count > 1) as usize) * 4 + top_bits;
+
+    let mut cost = sym_encoder.write_symbol_cost(symbol);
+    if group_count > 1 {
+        for group_index in (0..(group_count - 1)).rev() {
+            let bits = (value >> (group_index * BIT_RANGE)) & ((1 << BIT_RANGE) - 1);
+            let symbol = ((group_index != 0) as usize) << (LEN_WIDTH - 1) | bits;
+            cost += len_encoder.write_symbol_cost(symbol);
+        }
+    }
+
+    let dist_value = dist - DIST_MIN;
+    for group_index in (0..dist_ranges).rev() {
+        let bits = (dist_value >> (group_index * DIST_WIDTH)) & ((1 << DIST_WIDTH) - 1);
+        cost += dist_encoder.write_symbol_cost(bits);
+    }
+
+    cost
 }
 
 fn encode_op_advance(op: EncodeOp) -> usize {

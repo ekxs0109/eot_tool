@@ -177,17 +177,23 @@ fn backreference_encoder_can_copy_from_preload_window() {
 }
 
 #[test]
-fn backreference_encoder_falls_back_to_literal_output_on_speculative_failure() {
+fn backreference_encoder_handles_previous_speculative_failure_inputs_without_regressing() {
     for input in [
         &[0xFF, 0x94][..],
         &[0xFF, 0xE2, 0x57][..],
         &[0xCE, 0x43, 0xCE, 0x24][..],
     ] {
-        let compressed = compress_lz(input).expect("compress_lz should fall back to literals");
+        let compressed =
+            compress_lz(input).expect("compress_lz should either improve on or match literals");
         let literal_only = compress_lz_literals(input).expect("literal-only encoder should work");
         let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
 
-        assert_eq!(compressed, literal_only);
+        assert!(
+            compressed.len() <= literal_only.len(),
+            "expected speculative-failure regression inputs to stay at or below the literal-only size: compressed={}, literal-only={}",
+            compressed.len(),
+            literal_only.len()
+        );
         assert_eq!(decompressed, input);
     }
 }
