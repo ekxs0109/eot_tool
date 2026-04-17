@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use embedded_output::{
-    embedded_output_allowed, EmbeddedEotVersion, EmbeddedOutputOptions, EmbeddedPayloadFormat,
-    EmbeddedXorMode,
+    build_embedded_output, embedded_output_allowed, EmbeddedEotVersion, EmbeddedMtxExtraBlocks,
+    EmbeddedOutputOptions, EmbeddedPayloadFormat, EmbeddedXorMode,
 };
 use fonttool_cff::{inspect_otf_font, CffError};
 use fonttool_eot::{build_eot_file, parse_eot_header};
@@ -57,7 +57,11 @@ fn main() -> ExitCode {
             }
         },
         Some("encode") => match handle_encode_args(args.collect()) {
-            Ok(request) => match encode_file(&request.input_path, &request.output_path) {
+            Ok(request) => match encode_file(
+                &request.input_path,
+                &request.output_path,
+                request.embedded_output,
+            ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     eprintln!("fonttool: {error}");
@@ -296,7 +300,11 @@ fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String
         .map_err(|error| format!("failed to serialize reconstructed SFNT: {error}"))
 }
 
-fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> Result<(), String> {
+fn encode_file(
+    input_path: impl AsRef<Path>,
+    output_path: impl AsRef<Path>,
+    output_options: EmbeddedOutputOptions,
+) -> Result<(), String> {
     let output_path = output_path.as_ref();
     if output_path
         .extension()
@@ -344,29 +352,26 @@ fn encode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
 
     let index_to_loca_format = i16::from_be_bytes([head[50], head[51]]);
     let num_glyphs = u16::from_be_bytes([maxp[4], maxp[5]]);
-
     let encoded_glyf = encode_glyf(glyf, loca, index_to_loca_format, num_glyphs)
         .map_err(|error| format!("failed to encode glyf/loca tables: {error}"))?;
-
-    let block1_font = build_block1_font(&source_font, &head, encoded_glyf.glyf_stream)?;
-    let block1 = serialize_sfnt(&block1_font)
+    let block1_font = build_block1_font(&source_font, head, encoded_glyf.glyf_stream)?;
+    let block1_sfnt = serialize_sfnt(&block1_font)
         .map_err(|error| format!("failed to serialize encoded SFNT: {error}"))?;
-    let copy_dist = block1
-        .len()
-        .max(encoded_glyf.push_stream.len())
-        .max(encoded_glyf.code_stream.len())
-        + MTX_PRELOAD_SIZE;
-    let block2 = compress_lz(&encoded_glyf.push_stream)
-        .map_err(|error| format!("failed to compress MTX block2: {error}"))?;
-    let block3 = compress_lz(&encoded_glyf.code_stream)
-        .map_err(|error| format!("failed to compress MTX block3: {error}"))?;
-    let block1 = compress_lz(&block1)
-        .map_err(|error| format!("failed to compress MTX block1: {error}"))?;
-    let mtx_payload =
-        pack_mtx_container_with_copy_dist(&block1, Some(&block2), Some(&block3), Some(copy_dist))
-            .map_err(|error| format!("failed to pack MTX container: {error}"))?;
-    let encoded_eot = build_eot_file(head, os2, name, &mtx_payload, false)
-        .map_err(|error| format!("failed to build EOT header: {error}"))?;
+    let sfnt_payload = match output_options.payload_format {
+        EmbeddedPayloadFormat::Mtx => block1_sfnt.as_slice(),
+        EmbeddedPayloadFormat::Sfnt => input_bytes.as_slice(),
+    };
+    let encoded_eot = build_embedded_output(
+        head,
+        os2,
+        name,
+        sfnt_payload,
+        Some(EmbeddedMtxExtraBlocks {
+            block2: Some(&encoded_glyf.push_stream),
+            block3: Some(&encoded_glyf.code_stream),
+        }),
+        output_options,
+    )?;
 
     fs::write(output_path, encoded_eot)
         .map_err(|error| format!("failed to write {}: {error}", output_path.display()))?;

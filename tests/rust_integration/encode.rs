@@ -107,6 +107,21 @@ fn read_mtx_container<'a>(encoded_bytes: &'a [u8]) -> fonttool_mtx::MtxContainer
     parse_mtx_container(&encoded_bytes[payload_start..payload_end]).expect("mtx should parse")
 }
 
+fn read_embedded_payload_bytes(encoded_bytes: &[u8]) -> Vec<u8> {
+    let header = parse_eot_header(encoded_bytes).expect("encoded eot header should parse");
+    let payload_start = header.header_length as usize;
+    let payload_end = payload_start + header.font_data_size as usize;
+    let mut payload = encoded_bytes[payload_start..payload_end].to_vec();
+
+    if header.flags & EOT_FLAG_PPT_XOR != 0 {
+        for byte in &mut payload {
+            *byte ^= 0x50;
+        }
+    }
+
+    payload
+}
+
 fn find_table_length(sfnt_bytes: &[u8], tag: u32) -> Option<u32> {
     let font = parse_sfnt(sfnt_bytes).expect("sfnt should parse");
     font.table_directory()
@@ -352,6 +367,122 @@ fn encode_ttf_to_eot_roundtrips_required_tables() {
 }
 
 #[test]
+fn encode_can_emit_raw_sfnt_v1_payload() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    let output = support::run_fonttool([
+        "encode",
+        source_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "sfnt",
+        "--eot-version",
+        "v1",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0001);
+    assert_eq!(header.flags & EOT_FLAG_PPT_XOR, 0);
+    parse_sfnt(&read_embedded_payload_bytes(&bytes)).expect("raw payload should be a valid SFNT");
+}
+
+#[test]
+fn encode_can_emit_raw_sfnt_v2_payload() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    let output = support::run_fonttool([
+        "encode",
+        source_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "sfnt",
+        "--eot-version",
+        "v2",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0002);
+    assert_eq!(header.flags & EOT_FLAG_PPT_XOR, 0);
+    parse_sfnt(&read_embedded_payload_bytes(&bytes)).expect("raw payload should be a valid SFNT");
+}
+
+#[test]
+fn encode_can_emit_mtx_v1_payload() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    let output = support::run_fonttool([
+        "encode",
+        source_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "mtx",
+        "--eot-version",
+        "v1",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0001);
+    assert_eq!(header.flags & EOT_FLAG_PPT_XOR, 0);
+    let payload = read_embedded_payload_bytes(&bytes);
+    parse_mtx_container(&payload).expect("payload should be a valid MTX container");
+}
+
+#[test]
+fn encode_can_emit_mtx_xor_v2_payload() {
+    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    let output = support::run_fonttool([
+        "encode",
+        source_path.to_str().unwrap(),
+        output_path.to_str().unwrap(),
+        "--payload-format",
+        "mtx",
+        "--xor",
+        "on",
+        "--eot-version",
+        "v2",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bytes = fs::read(&output_path).unwrap();
+    let header = parse_eot_header(&bytes).unwrap();
+    assert_eq!(header.version, 0x0002_0002);
+    assert_ne!(header.flags & EOT_FLAG_PPT_XOR, 0);
+    let payload = read_embedded_payload_bytes(&bytes);
+    parse_mtx_container(&payload).expect("payload should be a valid XOR-decoded MTX container");
+}
+
+#[test]
 fn encode_ttf_uses_backreference_compressor_for_mtx_blocks() {
     let source_path = support::temp_ttf();
     let output_path = support::temp_eot();
@@ -366,18 +497,18 @@ fn encode_ttf_uses_backreference_compressor_for_mtx_blocks() {
 
     let index_to_loca_format = i16::from_be_bytes([head[50], head[51]]);
     let num_glyphs = u16::from_be_bytes([maxp[4], maxp[5]]);
-    let encoded_glyf = encode_glyf(glyf, loca, index_to_loca_format, num_glyphs)
-        .expect("glyf data should encode");
+    let encoded_glyf =
+        encode_glyf(glyf, loca, index_to_loca_format, num_glyphs).expect("glyf data should encode");
     let expected_block1_font =
         build_expected_block1_font(&source_font, head, encoded_glyf.glyf_stream.clone());
     let expected_block1 =
         serialize_sfnt(&expected_block1_font).expect("block1 sfnt should serialize");
     let expected_block1_lz =
         compress_lz(&expected_block1).expect("block1 should compress with backreferences");
-    let expected_block2_lz = compress_lz(&encoded_glyf.push_stream)
-        .expect("block2 should compress with backreferences");
-    let expected_block3_lz = compress_lz(&encoded_glyf.code_stream)
-        .expect("block3 should compress with backreferences");
+    let expected_block2_lz =
+        compress_lz(&encoded_glyf.push_stream).expect("block2 should compress with backreferences");
+    let expected_block3_lz =
+        compress_lz(&encoded_glyf.code_stream).expect("block3 should compress with backreferences");
 
     run_encode(&source_path, &output_path);
 
@@ -449,7 +580,10 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
         (TAG_VHEA, "vhea"),
         (TAG_VMTX, "vmtx"),
     ] {
-        assert!(source_font.table(tag).is_some(), "source should contain {name}");
+        assert!(
+            source_font.table(tag).is_some(),
+            "source should contain {name}"
+        );
         assert!(
             roundtrip_font.table(tag).is_some(),
             "roundtrip should contain {name}"
@@ -493,7 +627,10 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
 
     assert!(source_glyf_length > 0, "source glyf should be non-empty");
     assert!(source_loca_length > 0, "source loca should be non-empty");
-    assert!(roundtrip_glyf_length > 0, "roundtrip glyf should be non-empty");
+    assert!(
+        roundtrip_glyf_length > 0,
+        "roundtrip glyf should be non-empty"
+    );
     assert_eq!(
         roundtrip_glyf_length, source_glyf_length,
         "current public CLI decode should reconstruct the original glyf table length"
@@ -607,10 +744,9 @@ fn encode_pptx_case7_preserves_original_copy_distance_metadata() {
 
     run_encode(&source_path, &output_path);
 
-    let original_bytes = fs::read(
-        support::workspace_root().join("build/pptx_case7/ppt/fonts/font1.fntdata"),
-    )
-    .expect("original case7 embedded font should be readable");
+    let original_bytes =
+        fs::read(support::workspace_root().join("build/pptx_case7/ppt/fonts/font1.fntdata"))
+            .expect("original case7 embedded font should be readable");
     let encoded_bytes = fs::read(&output_path).expect("encoded eot should be readable");
 
     assert_eq!(
@@ -743,15 +879,14 @@ fn subset_output_uses_backreference_compressor_for_block1() {
     fs::write(&source_path, &input_bytes).expect("fixture font should be writable");
     let input_font = load_sfnt(&input_bytes).expect("source font should parse");
     let glyph_ids = GlyphIdRequest::parse_csv("0,36,37,38").expect("glyph ids should parse");
-    let plan =
-        plan_glyph_subset(&input_font, &glyph_ids, false).expect("subset plan should build");
+    let plan = plan_glyph_subset(&input_font, &glyph_ids, false).expect("subset plan should build");
     let mut harfbuzz_input = input_font.clone();
     let mut subset_warnings = SubsetWarnings::default();
     apply_output_table_policy(&mut harfbuzz_input, &mut subset_warnings);
     let harfbuzz_input_bytes =
         serialize_sfnt(&harfbuzz_input).expect("subset input sfnt should serialize");
-    let subset_bytes = subset_font_bytes(&harfbuzz_input_bytes, &plan)
-        .expect("harfbuzz subset should succeed");
+    let subset_bytes =
+        subset_font_bytes(&harfbuzz_input_bytes, &plan).expect("harfbuzz subset should succeed");
     let mut subset_font = load_sfnt(&subset_bytes).expect("subset font should parse");
     apply_output_table_policy(&mut subset_font, &mut subset_warnings);
     let subset_bytes = serialize_sfnt(&subset_font).expect("subset sfnt should serialize");
@@ -779,7 +914,10 @@ fn subset_output_uses_backreference_compressor_for_block1() {
     let encoded_bytes = fs::read(&output_path).expect("subset output should be readable");
     let container = read_mtx_container(&encoded_bytes);
 
-    assert_eq!(container.num_blocks, 1, "subset output should only emit block1");
+    assert_eq!(
+        container.num_blocks, 1,
+        "subset output should only emit block1"
+    );
     assert_eq!(
         container.block1, expected_block1,
         "subset output should use compress_lz for block1"
