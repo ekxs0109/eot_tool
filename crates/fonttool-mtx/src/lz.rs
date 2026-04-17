@@ -750,11 +750,7 @@ impl MatchFinder {
     }
 }
 
-fn choose_encode_op(
-    bytes: &[u8],
-    finder: &MatchFinder,
-    context: &DecisionContext<'_>,
-) -> EncodeOp {
+fn choose_encode_op(bytes: &[u8], finder: &MatchFinder, context: &DecisionContext<'_>) -> EncodeOp {
     if let Some(copy) = choose_copy_candidate(bytes, finder, context) {
         return EncodeOp::Copy {
             dist: copy.dist,
@@ -778,7 +774,11 @@ fn choose_encode_op(
 fn matches_dup(bytes: &[u8], finder: &MatchFinder, step: usize) -> bool {
     bytes
         .first()
-        .zip(finder.history.get(finder.history.len().saturating_sub(step)))
+        .zip(
+            finder
+                .history
+                .get(finder.history.len().saturating_sub(step)),
+        )
         .is_some_and(|(&current, &previous)| current == previous)
 }
 
@@ -791,7 +791,8 @@ fn choose_copy_candidate(
     let literal_cost = context.sym_encoder.write_symbol_cost(usize::from(bytes[0]));
 
     if bytes.len() > 1 {
-        if let Some(next) = find_best_candidate_with_prefix(&bytes[1..], finder, &bytes[..1], context)
+        if let Some(next) =
+            find_best_candidate_with_prefix(&bytes[1..], finder, &bytes[..1], context)
         {
             if next.gain >= first.gain
                 && first.cost_per_byte
@@ -803,9 +804,12 @@ fn choose_copy_candidate(
     }
 
     if first.len > 3 && bytes.len() > first.len {
-        if let Some(after) =
-            find_best_candidate_with_prefix(&bytes[first.len..], finder, &bytes[..first.len], context)
-        {
+        if let Some(after) = find_best_candidate_with_prefix(
+            &bytes[first.len..],
+            finder,
+            &bytes[..first.len],
+            context,
+        ) {
             if let Some(shortened) = find_best_candidate_with_prefix(
                 &bytes[first.len - 1..],
                 finder,

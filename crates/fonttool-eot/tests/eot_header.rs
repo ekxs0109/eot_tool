@@ -1,6 +1,4 @@
-use fonttool_eot::{
-    build_eot_file, parse_eot_header, EotBuildOptions, EotHeaderError, EotVersion,
-};
+use fonttool_eot::{build_eot_file, parse_eot_header, EotBuildOptions, EotHeaderError, EotVersion};
 
 const FIXTURE_BYTES: &[u8] = include_bytes!("../../../testdata/wingdings3.eot");
 

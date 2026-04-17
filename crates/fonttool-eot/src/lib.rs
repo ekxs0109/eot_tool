@@ -200,13 +200,13 @@ pub fn build_eot_file(
     }
 
     output.push(1);
-    output.push(if os2_table.len() >= 64
-        && u16::from_be_bytes([os2_table[62], os2_table[63]]) & 1 != 0
-    {
-        1
-    } else {
-        0
-    });
+    output.push(
+        if os2_table.len() >= 64 && u16::from_be_bytes([os2_table[62], os2_table[63]]) & 1 != 0 {
+            1
+        } else {
+            0
+        },
+    );
 
     push_u32_le(
         &mut output,
