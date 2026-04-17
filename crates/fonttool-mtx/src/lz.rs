@@ -10,7 +10,7 @@ const LEN_WIDTH: usize = 3;
 const BIT_RANGE: usize = LEN_WIDTH - 1;
 const ROOT: usize = 1;
 const MAX_DECOMPRESSED_LENGTH: usize = 100 * 1024 * 1024;
-const MAX_HASH_CHAIN: usize = 64;
+const MAX_HASH_CHAIN: usize = 96;
 const MAX_LITERAL_COST_CACHE: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -715,6 +715,26 @@ fn encode_pptx_case7_reports_remaining_gap_when_budget_is_missed() {
 }
 
 #[test]
+fn encode_pptx_case7_stays_within_tighter_case7_budget() {
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    run_encode(&source_path, &output_path);
+
+    let original = case7_original_embedded_font_report();
+    let regenerated = support::inspect_embedded_font_file(&output_path);
+
+    assert!(
+        regenerated.block1.compressed_len <= original.block1.compressed_len + 90_000,
+        "expected tighter case7 compressed budget to hold after the hash-chain improvement: original block1 compressed={}, regenerated compressed={}, allowed maximum={}",
+        original.block1.compressed_len,
+        regenerated.block1.compressed_len,
+        original.block1.compressed_len + 90_000
+    );
+}
+
+#[test]
 fn subset_output_uses_backreference_compressor_for_block1() {
     let source_path = support::temp_ttf();
     let output_path = support::temp_eot();
