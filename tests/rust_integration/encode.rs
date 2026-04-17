@@ -569,6 +569,42 @@ fn encode_pptx_case7_block1_is_within_original_size_budget_on_this_branch() {
     );
 }
 
+fn format_embedded_font_report(label: &str, report: &support::EmbeddedFontReport) -> String {
+    format!(
+        "{label}: file_size={} header_length={} font_data_size={} flags=0x{:08x} block1={}/{} block2={}/{} block3={}/{}",
+        report.file_size,
+        report.header_length,
+        report.font_data_size,
+        report.flags,
+        report.block1.compressed_len,
+        report.block1.decompressed_len,
+        report.block2.compressed_len,
+        report.block2.decompressed_len,
+        report.block3.compressed_len,
+        report.block3.decompressed_len,
+    )
+}
+
+#[test]
+fn encode_pptx_case7_reports_remaining_gap_when_budget_is_missed() {
+    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let output_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![output_path.clone()]);
+
+    run_encode(&source_path, &output_path);
+
+    let original = case7_original_embedded_font_report();
+    let regenerated = support::inspect_embedded_font_file(&output_path);
+
+    if regenerated.block1.compressed_len > original.block1.compressed_len + 131_072 {
+        panic!(
+            "{}\n{}",
+            format_embedded_font_report("original", &original),
+            format_embedded_font_report("regenerated", &regenerated),
+        );
+    }
+}
+
 #[test]
 fn subset_output_uses_backreference_compressor_for_block1() {
     let source_path = support::temp_ttf();
