@@ -146,8 +146,16 @@ impl std::fmt::Display for RustDecodeError {
 
 impl std::error::Error for RustDecodeError {}
 
-#[allow(dead_code)]
-pub fn decode_current_rust_encoded_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, RustDecodeError> {
+struct PreparedEmbeddedFontPayload {
+    header_length: usize,
+    font_data_size: usize,
+    flags: u32,
+    payload_bytes: Vec<u8>,
+}
+
+fn prepare_embedded_font_payload(
+    input_bytes: &[u8],
+) -> Result<PreparedEmbeddedFontPayload, RustDecodeError> {
     let header = parse_eot_header(input_bytes).map_err(RustDecodeError::InvalidHeader)?;
     let payload_start = header.header_length as usize;
     let payload_end = payload_start
@@ -164,8 +172,19 @@ pub fn decode_current_rust_encoded_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, 
         }
     }
 
+    Ok(PreparedEmbeddedFontPayload {
+        header_length: header.header_length as usize,
+        font_data_size: header.font_data_size as usize,
+        flags: header.flags,
+        payload_bytes,
+    })
+}
+
+#[allow(dead_code)]
+pub fn decode_current_rust_encoded_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, RustDecodeError> {
+    let prepared = prepare_embedded_font_payload(input_bytes)?;
     let container =
-        parse_mtx_container(&payload_bytes).map_err(RustDecodeError::InvalidContainer)?;
+        parse_mtx_container(&prepared.payload_bytes).map_err(RustDecodeError::InvalidContainer)?;
     let block1 = decode_lz_block(container.block1, "block1")?;
     let block2 = match container.block2 {
         Some(block) => decode_lz_block(block, "block2")?,
@@ -245,25 +264,12 @@ pub struct EmbeddedFontReport {
 }
 
 #[allow(dead_code)]
-pub fn inspect_embedded_font_bytes(input_bytes: &[u8]) -> Result<EmbeddedFontReport, RustDecodeError> {
-    let header = parse_eot_header(input_bytes).map_err(RustDecodeError::InvalidHeader)?;
-    let payload_start = header.header_length as usize;
-    let payload_end = payload_start
-        .checked_add(header.font_data_size as usize)
-        .ok_or_else(|| RustDecodeError::InvalidBlock("invalid EOT payload range".to_string()))?;
-    let payload = input_bytes
-        .get(payload_start..payload_end)
-        .ok_or_else(|| RustDecodeError::InvalidBlock("invalid EOT payload range".to_string()))?;
-
-    let mut payload_bytes = payload.to_vec();
-    if header.flags & EOT_FLAG_PPT_XOR != 0 {
-        for byte in &mut payload_bytes {
-            *byte ^= 0x50;
-        }
-    }
-
+pub fn inspect_embedded_font_bytes(
+    input_bytes: &[u8],
+) -> Result<EmbeddedFontReport, RustDecodeError> {
+    let prepared = prepare_embedded_font_payload(input_bytes)?;
     let container =
-        parse_mtx_container(&payload_bytes).map_err(RustDecodeError::InvalidContainer)?;
+        parse_mtx_container(&prepared.payload_bytes).map_err(RustDecodeError::InvalidContainer)?;
 
     let block1 = decode_lz_block(container.block1, "block1")?;
     let block2 = match container.block2 {
@@ -277,9 +283,9 @@ pub fn inspect_embedded_font_bytes(input_bytes: &[u8]) -> Result<EmbeddedFontRep
 
     Ok(EmbeddedFontReport {
         file_size: input_bytes.len(),
-        header_length: header.header_length as usize,
-        font_data_size: header.font_data_size as usize,
-        flags: header.flags,
+        header_length: prepared.header_length,
+        font_data_size: prepared.font_data_size,
+        flags: prepared.flags,
         block1: MtxBlockReport {
             compressed_len: container.block1.len(),
             decompressed_len: block1.len(),

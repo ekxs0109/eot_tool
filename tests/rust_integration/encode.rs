@@ -301,10 +301,6 @@ fn synthetic_font_with_vdmx() -> Vec<u8> {
     serialize_sfnt(&font).expect("synthetic font should serialize")
 }
 
-fn case7_original_font_path() -> PathBuf {
-    support::workspace_root().join("build/pptx_case7/ppt/fonts/font1.fntdata")
-}
-
 #[test]
 fn encode_ttf_to_eot_roundtrips_required_tables() {
     let output_path = support::temp_eot();
@@ -506,15 +502,28 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
     );
 }
 
+fn case7_original_embedded_font_report() -> support::EmbeddedFontReport {
+    let path = support::workspace_root().join("build/pptx_case7/ppt/fonts/font1.fntdata");
+    assert!(
+        path.exists(),
+        "missing case7 baseline fixture at {}. expected tracked local PPT extraction output for the Task 1 parity test",
+        path.display()
+    );
+    support::inspect_embedded_font_file(&path)
+}
+
 #[test]
-fn encode_pptx_case7_block1_stays_within_original_size_budget() {
+fn encode_pptx_case7_block1_is_within_original_size_budget_on_this_branch() {
     let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
     run_encode(&source_path, &output_path);
 
-    let original = support::inspect_embedded_font_file(&case7_original_font_path());
+    // This started life as a parity regression guard; on the current branch the
+    // regenerated block1 already fits within the target budget, so keep the
+    // assertion name and messages explicitly green-oriented.
+    let original = case7_original_embedded_font_report();
     let regenerated = support::inspect_embedded_font_file(&output_path);
 
     assert_eq!(
@@ -535,11 +544,16 @@ fn encode_pptx_case7_block1_stays_within_original_size_budget() {
     );
     assert!(
         regenerated.block1.decompressed_len <= original.block1.decompressed_len,
-        "regenerated block1 plain SFNT should not grow beyond the original sample"
+        "regenerated block1 plain SFNT should not grow beyond the original sample: original decompressed={}, regenerated decompressed={}",
+        original.block1.decompressed_len,
+        regenerated.block1.decompressed_len
     );
     assert!(
         regenerated.block1.compressed_len <= original.block1.compressed_len + 131_072,
-        "block1 compressed size should move into the +128 KiB parity budget"
+        "regenerated block1 compressed size is already expected to stay within the +128 KiB parity budget on this branch: original compressed={}, regenerated compressed={}, allowed maximum={}",
+        original.block1.compressed_len,
+        regenerated.block1.compressed_len,
+        original.block1.compressed_len + 131_072
     );
 }
 
