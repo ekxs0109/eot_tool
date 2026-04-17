@@ -454,7 +454,7 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
         variation_axes: None,
         embedded_output: EmbeddedOutputOptions::default(),
     };
-    let mut saw_embedded_output_flag = false;
+    let mut embedded_output_args = Vec::new();
 
     let mut index = 2usize;
     while index < args.len() {
@@ -480,16 +480,16 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
                 request.variation_axes = Some(args[index + 1].clone());
             }
             "--payload-format" => {
-                saw_embedded_output_flag = true;
-                request.embedded_output.payload_format = parse_payload_format(&args[index + 1])?;
+                embedded_output_args.push(flag.clone());
+                embedded_output_args.push(args[index + 1].clone());
             }
             "--xor" => {
-                saw_embedded_output_flag = true;
-                request.embedded_output.xor_mode = parse_xor_mode(&args[index + 1])?;
+                embedded_output_args.push(flag.clone());
+                embedded_output_args.push(args[index + 1].clone());
             }
             "--eot-version" => {
-                saw_embedded_output_flag = true;
-                request.embedded_output.eot_version = parse_eot_version(&args[index + 1])?;
+                embedded_output_args.push(flag.clone());
+                embedded_output_args.push(args[index + 1].clone());
             }
             _ => return Err(format!("unsupported subset flag `{flag}`")),
         }
@@ -500,8 +500,10 @@ fn handle_subset_args(args: Vec<String>) -> Result<SubsetCliRequest, String> {
     if request.glyph_ids.is_none() && request.text.is_none() {
         return Err("subset requires either --glyph-ids or --text".to_string());
     }
-    if saw_embedded_output_flag && !embedded_output_allowed(&request.output_path) {
-        return Err("embedded output options only apply to .eot or .fntdata output".to_string());
+    if !embedded_output_args.is_empty() {
+        let (embedded_output, _) =
+            parse_embedded_output_args(&embedded_output_args, 0, &request.output_path)?;
+        request.embedded_output = embedded_output;
     }
 
     Ok(request)
