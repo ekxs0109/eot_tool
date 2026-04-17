@@ -859,6 +859,7 @@ fn encode_pptx_case7_preserves_office_save_header_metadata() {
 }
 
 #[test]
+#[ignore = "requires local/generated case7 baseline fixture"]
 fn encode_pptx_case7_preserves_original_copy_distance_metadata() {
     let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
@@ -879,6 +880,7 @@ fn encode_pptx_case7_preserves_original_copy_distance_metadata() {
 }
 
 #[test]
+#[ignore = "requires local/generated case7 baseline fixture"]
 fn encode_pptx_case7_block1_is_within_original_size_budget_on_this_branch() {
     let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
@@ -953,6 +955,7 @@ fn format_embedded_font_report(label: &str, report: &support::EmbeddedFontReport
 }
 
 #[test]
+#[ignore = "requires local/generated case7 baseline fixture"]
 fn encode_pptx_case7_reports_remaining_gap_when_budget_is_missed() {
     let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
@@ -973,6 +976,7 @@ fn encode_pptx_case7_reports_remaining_gap_when_budget_is_missed() {
 }
 
 #[test]
+#[ignore = "requires local/generated case7 baseline fixture"]
 fn encode_pptx_case7_stays_within_tighter_case7_budget() {
     let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
