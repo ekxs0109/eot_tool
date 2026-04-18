@@ -234,7 +234,9 @@ fn runtime_bridge_rejects_static_cff_conversion_until_phase3() {
 
     assert_eq!(
         error,
-        RuntimeError::Cff(fonttool_runtime::CffError::EncodeDeferredToPhase3)
+        RuntimeError::Backend(
+            "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows".to_string()
+        )
     );
 }
 

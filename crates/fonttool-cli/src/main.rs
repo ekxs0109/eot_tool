@@ -33,6 +33,10 @@ const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
 const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
+const CFF_ENCODE_DEFERRED_MESSAGE: &str =
+    "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows";
+const CFF_SUBSET_DEFERRED_MESSAGE: &str =
+    "OTF(CFF/CFF2) subset remains Phase 3-owned; use the archived native binary for compatibility flows";
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
@@ -320,7 +324,7 @@ fn encode_file(
     let source_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
 
     if source_font.table(TAG_CFF).is_some() || source_font.table(TAG_CFF2).is_some() {
-        return Err(CffError::EncodeDeferredToPhase3.to_string());
+        return Err(CFF_ENCODE_DEFERRED_MESSAGE.to_string());
     }
 
     if source_font.version_tag() != SFNT_VERSION_TRUETYPE {
@@ -601,5 +605,5 @@ fn subset_otf_file(
     }
 
     let _ = text;
-    Err(CffError::SubsetDeferredToPhase3.to_string())
+    Err(CFF_SUBSET_DEFERRED_MESSAGE.to_string())
 }

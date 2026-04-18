@@ -20,8 +20,6 @@ pub enum CffError {
     InvalidVariationAxis(String),
     EncodeFailed(String),
     SubsetFailed(String),
-    EncodeDeferredToPhase3,
-    SubsetDeferredToPhase3,
 }
 
 impl fmt::Display for CffError {
@@ -37,12 +35,6 @@ impl fmt::Display for CffError {
             | CffError::InvalidVariationAxis(message)
             | CffError::EncodeFailed(message)
             | CffError::SubsetFailed(message) => f.write_str(message),
-            CffError::EncodeDeferredToPhase3 => f.write_str(
-                "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows",
-            ),
-            CffError::SubsetDeferredToPhase3 => f.write_str(
-                "OTF(CFF/CFF2) subset remains Phase 3-owned; use the archived native binary for compatibility flows",
-            ),
         }
     }
 }
