@@ -1,10 +1,12 @@
 [package]
 name = "fonttool-cff"
+description = "CFF/CFF2 helpers for inspection, variation parsing, and variable CFF2 materialization"
 edition.workspace = true
 license.workspace = true
 publish = false
 version.workspace = true
 
 [dependencies]
+# allsorts provides the pure-Rust variable CFF2 instancing/materialization path.
 allsorts = "0.16.1"
 fonttool-sfnt = { path = "../fonttool-sfnt" }
