@@ -184,8 +184,11 @@ fn decode_otto_cff_office_fixture_writes_static_otto_output() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_static_cff_output(&output_path);
-
-    let _ = fs::remove_file(output_path);
+    fs::remove_file(&output_path).expect("decoded Office fixture temp output should be removable");
+    assert!(
+        !output_path.exists(),
+        "decoded Office fixture temp output should be deleted"
+    );
 }
 
 #[test]
