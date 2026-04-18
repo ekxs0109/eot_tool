@@ -661,7 +661,7 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
     let input_bytes = load_subset_input_sfnt_bytes(&request.input_path)?;
     let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
     if kind.is_cff_flavor {
-        return subset_otf_file(&request, &kind);
+        return subset_otf_file(&request, &input_bytes, &kind);
     }
     if request.variation_axes.is_some() {
         return Err("subset does not support --variation for non-OTF input".to_string());
@@ -869,10 +869,9 @@ fn emit_subset_warnings(subset_warnings: &fonttool_subset::SubsetWarnings) {
 
 fn subset_otf_file(
     request: &SubsetCliRequest,
+    input_bytes: &[u8],
     kind: &fonttool_cff::CffFontKind,
 ) -> Result<(), String> {
-    let input_bytes = fs::read(&request.input_path)
-        .map_err(|error| format!("failed to read {}: {error}", request.input_path.display()))?;
     let text = request
         .text
         .as_deref()
@@ -884,9 +883,9 @@ fn subset_otf_file(
     let subset = if kind.is_variable {
         let axes = parse_variation_axes(request.variation_axes.as_deref().unwrap_or_default())
             .map_err(|error| error.to_string())?;
-        subset_variable_cff2(&input_bytes, text, &axes).map_err(|error| error.to_string())?
+        subset_variable_cff2(input_bytes, text, &axes).map_err(|error| error.to_string())?
     } else {
-        subset_static_cff(&input_bytes, text).map_err(|error| error.to_string())?
+        subset_static_cff(input_bytes, text).map_err(|error| error.to_string())?
     };
     let subset_bytes = serialize_subset_otf(subset).map_err(|error| error.to_string())?;
     let subset_font = load_sfnt(&subset_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;

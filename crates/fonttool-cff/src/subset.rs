@@ -55,21 +55,14 @@ fn subset_otf_bytes(bytes: &[u8], text: &str) -> Result<OtfSubsetResult, CffErro
         .table_provider(0)
         .map_err(|error| CffError::InvalidInput(format!("invalid OTF font: {error}")))?;
 
-    let subset_bytes = subset(
-        &provider,
-        &glyph_ids,
-        &SubsetProfile::Minimal,
-        CmapTarget::Unicode,
-    )
-    .or_else(|_| {
-        subset(
-            &provider,
-            &glyph_ids,
-            &SubsetProfile::Minimal,
-            CmapTarget::Unrestricted,
-        )
-    })
-    .map_err(|error| CffError::SubsetFailed(format!("failed to subset OTF font: {error}")))?;
+    let cmap_target = if glyph_ids.len() == 1 {
+        // allsorts 0.16.1 panics building a Unicode cmap when only .notdef remains.
+        CmapTarget::Unrestricted
+    } else {
+        CmapTarget::Unicode
+    };
+    let subset_bytes = subset(&provider, &glyph_ids, &SubsetProfile::Minimal, cmap_target)
+        .map_err(|error| CffError::SubsetFailed(format!("failed to subset OTF font: {error}")))?;
 
     Ok(OtfSubsetResult {
         sfnt_bytes: subset_bytes,

@@ -96,6 +96,20 @@ fn subset_static_cff_returns_legal_otf_subset() {
 }
 
 #[test]
+fn subset_static_cff_with_unmapped_text_still_returns_a_legal_subset() {
+    let bytes = fs::read(fixture_path("cff-static.otf")).expect("static CFF fixture should load");
+
+    let subset =
+        subset_static_cff(&bytes, "ABC").expect("static CFF subset should handle unmapped text");
+    let font = load_sfnt(&subset.sfnt_bytes).expect("subset output should parse as sfnt");
+
+    assert!(font.table(TAG_CFF).is_some());
+    assert!(font.table(TAG_CMAP).is_some());
+    assert!(font.table(TAG_CFF2).is_none());
+    assert!(font.table(TAG_FVAR).is_none());
+}
+
+#[test]
 fn subset_variable_cff2_materializes_and_returns_legal_otf_subset() {
     let bytes =
         fs::read(fixture_path("cff2-variable.otf")).expect("variable CFF2 fixture should load");

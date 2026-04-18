@@ -657,6 +657,49 @@ fn subset_static_cff_text_input_emits_a_legal_static_cff_font() {
 }
 
 #[test]
+fn subset_embedded_static_cff_text_input_uses_decoded_sfnt_bytes() {
+    let input_path = support::tracked_testdata_path("testdata/otto-cff-office.fntdata");
+    let output_path = temp_file("fntdata");
+    let isolated_cwd = temp_file("cwd");
+    fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
+
+    let output = run_subset_command(
+        &[
+            "subset",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+            "--text",
+            ".",
+        ],
+        &isolated_cwd,
+    );
+
+    assert!(
+        output.status.success(),
+        "expected embedded static CFF subset to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output_path.is_file(),
+        "expected subset to create an output file"
+    );
+
+    let decoded_path = decode_subset_output(&output_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
+    let font = read_font(&decoded_path);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('.')), 1);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('A')), 0);
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(decoded_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
+}
+
+#[test]
 fn subset_variable_cff2_text_input_materializes_static_cff_output() {
     let input_path = workspace_root().join("testdata/cff2-variable.otf");
     let output_path = temp_file("fntdata");
@@ -692,6 +735,10 @@ fn subset_variable_cff2_text_input_materializes_static_cff_output() {
 
     let decoded_path = decode_subset_output(&output_path);
     support::assert_decoded_otto_static_cff_output(&decoded_path);
+    let font = read_font(&decoded_path);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('A')), 1);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('B')), 0);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('C')), 0);
 
     let _ = fs::remove_file(output_path);
     let _ = fs::remove_file(decoded_path);
