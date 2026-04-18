@@ -54,6 +54,22 @@ pub fn fixture_path(relative: &str) -> PathBuf {
     workspace_path
 }
 
+pub fn tracked_testdata_path(relative: &str) -> PathBuf {
+    assert!(
+        relative.starts_with("testdata/"),
+        "tracked_testdata_path only accepts testdata/* paths"
+    );
+
+    let workspace_path = workspace_root().join(relative);
+    assert!(
+        workspace_path.exists(),
+        "expected tracked fixture to exist in this worktree: {}",
+        workspace_path.display()
+    );
+
+    workspace_path
+}
+
 #[allow(dead_code)]
 pub fn otf_parity_fixture() -> PathBuf {
     for relative in [

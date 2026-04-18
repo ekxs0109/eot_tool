@@ -16,9 +16,7 @@ use fonttool_harfbuzz::subset_font_bytes;
 use fonttool_mtx::{
     decompress_lz, parse_mtx_container,
 };
-use fonttool_sfnt::{
-    load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_OTTO, SFNT_VERSION_TRUETYPE,
-};
+use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
     apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
     SubsetWarnings,
@@ -217,6 +215,32 @@ struct PreparedEmbeddedPayload {
     payload_bytes: Vec<u8>,
 }
 
+const TAG_BASE: u32 = u32::from_be_bytes(*b"BASE");
+const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
+const TAG_GSUB: u32 = u32::from_be_bytes(*b"GSUB");
+const TAG_HVAR: u32 = u32::from_be_bytes(*b"HVAR");
+const TAG_STAT: u32 = u32::from_be_bytes(*b"STAT");
+const TAG_VORG: u32 = u32::from_be_bytes(*b"VORG");
+const TAG_AVAR: u32 = u32::from_be_bytes(*b"avar");
+const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
+const TAG_FVAR: u32 = u32::from_be_bytes(*b"fvar");
+const TAG_POST: u32 = u32::from_be_bytes(*b"post");
+const TAG_VHEA: u32 = u32::from_be_bytes(*b"vhea");
+const TAG_VMTX: u32 = u32::from_be_bytes(*b"vmtx");
+const OFFICE_CFF2_VALID_PREFIX_TAGS: [u32; 13] = [
+    TAG_BASE, TAG_CFF2, TAG_DSIG, TAG_GSUB, TAG_HVAR, TAG_OS_2, TAG_STAT, TAG_VORG, TAG_AVAR,
+    TAG_CMAP, TAG_FVAR, TAG_HEAD, TAG_HHEA,
+];
+const OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS: [u32; 6] =
+    [TAG_HMTX, TAG_MAXP, TAG_NAME, TAG_POST, TAG_VHEA, TAG_VMTX];
+
+#[derive(Clone, Copy)]
+struct SfntRecord {
+    tag: u32,
+    offset: usize,
+    length: usize,
+}
+
 fn read_u16_be(bytes: &[u8], offset: usize) -> Option<u16> {
     let bytes = bytes.get(offset..offset + 2)?;
     Some(u16::from_be_bytes([bytes[0], bytes[1]]))
@@ -227,64 +251,95 @@ fn read_u32_be(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-fn salvage_sfnt_payload(bytes: &[u8]) -> Option<Vec<u8>> {
-    let version_tag = read_u32_be(bytes, 0)?;
-    if version_tag != SFNT_VERSION_TRUETYPE && version_tag != SFNT_VERSION_OTTO {
+fn parse_sfnt_directory_record(bytes: &[u8], index: usize) -> Option<SfntRecord> {
+    let record_offset = 12 + index * 16;
+    Some(SfntRecord {
+        tag: read_u32_be(bytes, record_offset)?,
+        offset: usize::try_from(read_u32_be(bytes, record_offset + 8)?).ok()?,
+        length: usize::try_from(read_u32_be(bytes, record_offset + 12)?).ok()?,
+    })
+}
+
+fn salvage_office_prefixed_cff2_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !bytes.starts_with(b"OTTO") {
         return None;
     }
 
     let num_tables = usize::from(read_u16_be(bytes, 4)?);
+    if num_tables != OFFICE_CFF2_VALID_PREFIX_TAGS.len() + OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS.len() {
+        return None;
+    }
     let directory_len = 12usize.checked_add(num_tables.checked_mul(16)?)?;
     if bytes.len() < directory_len {
         return None;
     }
 
-    let mut font = OwnedSfntFont::new(version_tag);
+    let mut seen_tags = Vec::with_capacity(num_tables);
+    let mut kept_records = Vec::new();
+    let mut dropped_tags = Vec::new();
+    let mut seen_invalid = false;
+    let mut last_valid_end = 0usize;
+    let mut first_invalid_offset = None;
+
     for index in 0..num_tables {
-        let record_offset = 12 + index * 16;
-        let tag = read_u32_be(bytes, record_offset)?;
-        let table_offset = usize::try_from(read_u32_be(bytes, record_offset + 8)?).ok()?;
-        let table_len = usize::try_from(read_u32_be(bytes, record_offset + 12)?).ok()?;
-
-        if table_len == 0 {
-            font.add_table(tag, Vec::new());
-            continue;
+        let record = parse_sfnt_directory_record(bytes, index)?;
+        if record.length == 0 || seen_tags.contains(&record.tag) {
+            return None;
         }
+        seen_tags.push(record.tag);
 
-        if table_offset < directory_len {
-            continue;
+        let end = record.offset.checked_add(record.length)?;
+        let is_valid = record.offset >= directory_len && end <= bytes.len();
+
+        if is_valid {
+            if seen_invalid || record.offset < last_valid_end {
+                return None;
+            }
+            last_valid_end = end;
+            kept_records.push(record);
+        } else {
+            if record.offset < directory_len {
+                return None;
+            }
+            if first_invalid_offset.is_none() {
+                first_invalid_offset = Some(record.offset);
+                if record.offset != last_valid_end {
+                    return None;
+                }
+            }
+            if record.offset < first_invalid_offset? || end <= bytes.len() {
+                return None;
+            }
+            seen_invalid = true;
+            dropped_tags.push(record.tag);
         }
-
-        let table_end = table_offset.checked_add(table_len)?;
-        if table_end > bytes.len() {
-            continue;
-        }
-
-        font.add_table(tag, bytes[table_offset..table_end].to_vec());
     }
 
-    if font.tables().is_empty() {
+    if kept_records.len() != OFFICE_CFF2_VALID_PREFIX_TAGS.len()
+        || dropped_tags.len() != OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS.len()
+    {
         return None;
     }
 
-    serialize_sfnt(&font).ok()
-}
-
-fn extract_cff_sfnt_candidate(bytes: &[u8]) -> Option<Vec<u8>> {
-    if let Ok(kind) = inspect_otf_font(bytes) {
-        if kind.is_cff_flavor {
-            return Some(bytes.to_vec());
-        }
+    let kept_tags: Vec<u32> = kept_records.iter().map(|record| record.tag).collect();
+    if kept_tags != OFFICE_CFF2_VALID_PREFIX_TAGS || dropped_tags != OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS
+    {
+        return None;
     }
 
-    let salvaged = salvage_sfnt_payload(bytes)?;
-    if let Ok(kind) = inspect_otf_font(&salvaged) {
-        if kind.is_cff_flavor {
-            return Some(salvaged);
-        }
+    let mut font = OwnedSfntFont::new(u32::from_be_bytes(*b"OTTO"));
+    for record in kept_records {
+        let table_end = record.offset.checked_add(record.length)?;
+        font.add_table(record.tag, bytes[record.offset..table_end].to_vec());
     }
 
-    None
+    let serialized = serialize_sfnt(&font).ok()?;
+    let kind = inspect_otf_font(&serialized).ok()?;
+    if !kind.is_cff_flavor || !kind.is_variable {
+        return None;
+    }
+
+    Some(serialized)
 }
 
 fn extract_cff_sfnt_payload(block1: &[u8], block2: &[u8], block3: &[u8]) -> Option<Vec<u8>> {
@@ -292,18 +347,27 @@ fn extract_cff_sfnt_payload(block1: &[u8], block2: &[u8], block3: &[u8]) -> Opti
         return None;
     }
 
-    if let Some(payload) = extract_cff_sfnt_candidate(block1) {
-        return Some(payload);
+    if let Ok(kind) = inspect_otf_font(block1) {
+        if kind.is_cff_flavor {
+            return Some(block1.to_vec());
+        }
     }
 
     // Some Office-derived payloads prepend a single marker byte before the
     // embedded OTTO font while still leaving block2/block3 empty.
     let prefixed_block1 = block1.get(1..)?;
-    if prefixed_block1.starts_with(b"OTTO") {
-        return extract_cff_sfnt_candidate(prefixed_block1);
+    if !prefixed_block1.starts_with(b"OTTO") {
+        return None;
+    }
+    if parse_sfnt(prefixed_block1).is_ok() {
+        if let Ok(kind) = inspect_otf_font(prefixed_block1) {
+            if kind.is_cff_flavor {
+                return Some(prefixed_block1.to_vec());
+            }
+        }
     }
 
-    None
+    salvage_office_prefixed_cff2_sfnt(prefixed_block1)
 }
 
 fn prepare_embedded_payload(input_bytes: &[u8]) -> Result<PreparedEmbeddedPayload, String> {
@@ -356,37 +420,14 @@ fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
         return Ok(cff_payload);
     }
 
-    decode_embedded_font_bytes_full(input_bytes)
+    decode_embedded_font_bytes_full(block1, block2, block3)
 }
 
-fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let prepared = prepare_embedded_payload(input_bytes)?;
-    let payload_bytes = prepared.payload_bytes;
-
-    let container = match parse_mtx_container(&payload_bytes) {
-        Ok(container) => container,
-        Err(error) => {
-            if parse_sfnt(&payload_bytes).is_ok() {
-                return Ok(payload_bytes);
-            }
-            return Err(format!("invalid MTX container: {error}"));
-        }
-    };
-    let block1 = decompress_lz(container.block1)
-        .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
-    let block2 = match container.block2 {
-        Some(block) => {
-            decompress_lz(block).map_err(|error| format!("failed to decode MTX block2: {error}"))?
-        }
-        None => Vec::new(),
-    };
-    let block3 = match container.block3 {
-        Some(block) => {
-            decompress_lz(block).map_err(|error| format!("failed to decode MTX block3: {error}"))?
-        }
-        None => Vec::new(),
-    };
-
+fn decode_embedded_font_bytes_full(
+    block1: Vec<u8>,
+    block2: Vec<u8>,
+    block3: Vec<u8>,
+) -> Result<Vec<u8>, String> {
     let mut font = load_sfnt(&block1).map_err(|error| format!("invalid block1 SFNT: {error}"))?;
     let needs_glyf_reconstruction = font.version_tag() == SFNT_VERSION_TRUETYPE
         && font.table(TAG_GLYF).is_some()
@@ -670,7 +711,7 @@ fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
 }
 
 fn load_subset_input_sfnt_from_embedded_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    decode_embedded_font_bytes_full(input_bytes)
+    decode_embedded_font_bytes(input_bytes)
 }
 
 fn table_bytes<'a>(font: &'a OwnedSfntFont, tag: u32, name: &str) -> Result<&'a [u8], String> {

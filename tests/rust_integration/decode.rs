@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use fonttool_mtx::{compress_lz, pack_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, SFNT_VERSION_OTTO, SFNT_VERSION_TRUETYPE};
 
 const RAW_SFNT_HEADER_LENGTH: usize = 100;
@@ -127,7 +128,7 @@ fn decode_font1_fntdata_writes_otto_sfnt() {
 
 #[test]
 fn decode_otto_cff2_variable_fixture_writes_variable_otto_output() {
-    let input_path = support::fixture_path("testdata/otto-cff2-variable.fntdata");
+    let input_path = support::tracked_testdata_path("testdata/otto-cff2-variable.fntdata");
     let output_path = temp_out();
 
     let output = run_fonttool([
@@ -143,6 +144,102 @@ fn decode_otto_cff2_variable_fixture_writes_variable_otto_output() {
     );
     support::assert_decoded_otto_cff2_variable_output(&output_path);
 
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
+fn decode_raw_otto_cff2_payload_eot_writes_variable_otto_output() {
+    let input_path = temp_in("eot");
+    let output_path = temp_out();
+    let sfnt_bytes = fs::read(support::tracked_testdata_path("testdata/cff2-variable.otf"))
+        .expect("fixture sfnt should be readable");
+    let fixture = build_raw_sfnt_payload_eot(&sfnt_bytes);
+    fs::write(&input_path, fixture).expect("synthetic raw-otto eot should be writable");
+
+    let output = run_fonttool([
+        "decode",
+        input_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected raw-OTTO EOT decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&output_path).expect("decoded output should be readable"),
+        sfnt_bytes
+    );
+    support::assert_decoded_otto_cff2_variable_output(&output_path);
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
+fn decode_rejects_malformed_prefixed_office_like_cff2_block1() {
+    let input_path = temp_in("fntdata");
+    let output_path = temp_out();
+    let fixture = build_prefixed_office_like_otf_eot(true);
+    fs::write(&input_path, fixture).expect("mutated fixture should be writable");
+
+    let output = run_fonttool([
+        "decode",
+        input_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        !output.status.success(),
+        "expected malformed prefixed office-like CFF2 payload to be rejected"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid block1 SFNT")
+            || stderr.contains("invalid MTX container")
+            || stderr.contains("decoded SFNT is invalid"),
+        "expected malformed prefixed Office-like failure, stderr: {stderr}"
+    );
+
+    let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
+fn decode_prefixed_office_like_cff2_block1_writes_trimmed_otto_output() {
+    let input_path = temp_in("fntdata");
+    let output_path = temp_out();
+    let fixture = build_prefixed_office_like_otf_eot(false);
+    fs::write(&input_path, fixture).expect("prefixed Office-like fixture should be writable");
+
+    let output = run_fonttool([
+        "decode",
+        input_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected prefixed Office-like CFF2 payload to decode, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    support::assert_decoded_otto_cff2_variable_output(&output_path);
+
+    let _ = fs::remove_file(input_path);
     let _ = fs::remove_file(output_path);
 }
 
@@ -312,6 +409,28 @@ fn build_fixture_with_non_empty_block3() -> Vec<u8> {
     bytes[4..8].copy_from_slice(&(new_font_data_size as u32).to_le_bytes());
 
     bytes
+}
+
+fn build_prefixed_office_like_otf_eot(corrupt_directory: bool) -> Vec<u8> {
+    let source_bytes = fs::read(support::tracked_testdata_path("testdata/cff2-variable.otf"))
+        .expect("OTF fixture should be readable");
+    let mut prefixed_block1 = Vec::with_capacity(source_bytes.len() + 1);
+    prefixed_block1.push(0xe7);
+    prefixed_block1.extend_from_slice(&source_bytes);
+
+    if corrupt_directory {
+        // Zero the first table's offset so the prefixed payload still starts
+        // with OTTO after the marker byte, but no longer parses as a complete
+        // SFNT once the prefix is stripped.
+        prefixed_block1[21..25].copy_from_slice(&0u32.to_be_bytes());
+    }
+
+    let compressed_block1 =
+        compress_lz(&prefixed_block1).expect("prefixed Office-like block1 should compress");
+    let payload = pack_mtx_container(&compressed_block1, None, None)
+        .expect("MTX container should pack");
+
+    build_raw_sfnt_payload_eot(&payload)
 }
 
 fn build_raw_sfnt_payload_eot(sfnt_bytes: &[u8]) -> Vec<u8> {
