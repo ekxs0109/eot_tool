@@ -66,26 +66,6 @@ fn assert_otto_header_matches_fixture(path: &Path) {
     assert_eq!(sfnt.version_tag(), SFNT_VERSION_OTTO);
 }
 
-fn assert_static_cff_output(path: &Path) {
-    let bytes = fs::read(path).expect("decoded font should be readable");
-    assert!(
-        bytes.len() >= 4,
-        "decoded font should contain an sfnt version header"
-    );
-    assert_eq!(&bytes[..4], b"OTTO");
-
-    let font = load_sfnt(&bytes).expect("decoded font should load as sfnt");
-    assert_eq!(font.version_tag(), SFNT_VERSION_OTTO);
-    assert!(
-        font.table(u32::from_be_bytes(*b"CFF ")).is_some(),
-        "decoded font should contain CFF "
-    );
-    assert!(
-        font.table(u32::from_be_bytes(*b"glyf")).is_none(),
-        "decoded font should not contain glyf"
-    );
-}
-
 fn assert_truetype_roundtrip_ready(path: &Path) {
     let bytes = fs::read(path).expect("decoded font should be readable");
     assert!(
@@ -183,7 +163,7 @@ fn decode_otto_cff_office_fixture_writes_static_otto_output() {
         "expected decode to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_static_cff_output(&output_path);
+    support::assert_decoded_otto_office_static_cff_output(&output_path);
     fs::remove_file(&output_path).expect("decoded Office fixture temp output should be removable");
     assert!(
         !output_path.exists(),

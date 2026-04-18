@@ -342,6 +342,41 @@ fn salvage_office_prefixed_cff2_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
     Some(serialized)
 }
 
+fn extract_office_prefixed_static_cff_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
+    let prefixed_bytes = bytes.get(1..)?;
+    if !prefixed_bytes.starts_with(b"OTTO") {
+        return None;
+    }
+
+    parse_sfnt(prefixed_bytes).ok()?;
+    let kind = inspect_otf_font(prefixed_bytes).ok()?;
+    if !kind.is_cff_flavor || kind.is_variable {
+        return None;
+    }
+
+    let font = load_sfnt(prefixed_bytes).ok()?;
+    if font.table(TAG_CFF).is_none() || font.table(TAG_CFF2).is_some() || font.table(TAG_GLYF).is_some() {
+        return None;
+    }
+
+    Some(prefixed_bytes.to_vec())
+}
+
+fn extract_single_byte_prefixed_cff_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
+    let prefixed_bytes = bytes.get(1..)?;
+    if !prefixed_bytes.starts_with(b"OTTO") {
+        return None;
+    }
+
+    parse_sfnt(prefixed_bytes).ok()?;
+    let kind = inspect_otf_font(prefixed_bytes).ok()?;
+    if !kind.is_cff_flavor {
+        return None;
+    }
+
+    Some(prefixed_bytes.to_vec())
+}
+
 fn extract_cff_sfnt_payload(block1: &[u8], block2: &[u8], block3: &[u8]) -> Option<Vec<u8>> {
     if !block2.is_empty() || !block3.is_empty() {
         return None;
@@ -353,21 +388,17 @@ fn extract_cff_sfnt_payload(block1: &[u8], block2: &[u8], block3: &[u8]) -> Opti
         }
     }
 
-    // Some Office-derived payloads prepend a single marker byte before the
-    // embedded OTTO font while still leaving block2/block3 empty.
-    let prefixed_block1 = block1.get(1..)?;
-    if !prefixed_block1.starts_with(b"OTTO") {
-        return None;
-    }
-    if parse_sfnt(prefixed_block1).is_ok() {
-        if let Ok(kind) = inspect_otf_font(prefixed_block1) {
-            if kind.is_cff_flavor {
-                return Some(prefixed_block1.to_vec());
-            }
-        }
+    // The real Office static CFF fixture carries a single-byte prefix in
+    // block1 before the embedded OTTO font.
+    if let Some(static_cff_payload) = extract_office_prefixed_static_cff_sfnt(block1) {
+        return Some(static_cff_payload);
     }
 
-    salvage_office_prefixed_cff2_sfnt(prefixed_block1)
+    if let Some(prefixed_cff_payload) = extract_single_byte_prefixed_cff_sfnt(block1) {
+        return Some(prefixed_cff_payload);
+    }
+
+    salvage_office_prefixed_cff2_sfnt(block1.get(1..)?)
 }
 
 fn prepare_embedded_payload(input_bytes: &[u8]) -> Result<PreparedEmbeddedPayload, String> {

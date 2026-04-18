@@ -13,13 +13,32 @@ use fonttool_sfnt::{
 };
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
+const TAG_BASE: u32 = u32::from_be_bytes(*b"BASE");
+const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
 const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
+const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
+const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
 const TAG_FVAR: u32 = u32::from_be_bytes(*b"fvar");
+const TAG_GDEF: u32 = u32::from_be_bytes(*b"GDEF");
 const TAG_GLYF: u32 = u32::from_be_bytes(*b"glyf");
+const TAG_GPOS: u32 = u32::from_be_bytes(*b"GPOS");
+const TAG_GSUB: u32 = u32::from_be_bytes(*b"GSUB");
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
+const TAG_HHEA: u32 = u32::from_be_bytes(*b"hhea");
+const TAG_HMTX: u32 = u32::from_be_bytes(*b"hmtx");
 const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
 const TAG_MAXP: u32 = u32::from_be_bytes(*b"maxp");
+const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
+const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
+const TAG_POST: u32 = u32::from_be_bytes(*b"post");
+const TAG_VHEA: u32 = u32::from_be_bytes(*b"vhea");
+const TAG_VMTX: u32 = u32::from_be_bytes(*b"vmtx");
+const TAG_VORG: u32 = u32::from_be_bytes(*b"VORG");
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+const OFFICE_STATIC_CFF_TAGS: [u32; 17] = [
+    TAG_BASE, TAG_CFF, TAG_DSIG, TAG_GDEF, TAG_GPOS, TAG_GSUB, TAG_OS_2, TAG_VORG, TAG_CMAP,
+    TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_NAME, TAG_POST, TAG_VHEA, TAG_VMTX,
+];
 
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -151,6 +170,39 @@ pub fn assert_decoded_otto_cff2_variable_output(path: &Path) {
     assert!(
         font.table(TAG_FVAR).is_some(),
         "decoded font should contain fvar"
+    );
+}
+
+pub fn assert_decoded_otto_office_static_cff_output(path: &Path) {
+    let bytes = fs::read(path).expect("decoded font should be readable");
+    assert!(
+        bytes.len() >= 4,
+        "decoded font should contain an sfnt version header"
+    );
+    assert_eq!(&bytes[..4], b"OTTO");
+
+    let font = load_sfnt(&bytes).expect("decoded font should load as sfnt");
+    assert_eq!(font.version_tag(), SFNT_VERSION_OTTO);
+
+    for tag in OFFICE_STATIC_CFF_TAGS {
+        assert!(
+            font.table(tag).is_some(),
+            "decoded Office static CFF font should contain required table `{}`",
+            String::from_utf8_lossy(&tag.to_be_bytes())
+        );
+    }
+
+    assert!(
+        font.table(TAG_CFF2).is_none(),
+        "decoded Office static CFF font should not contain CFF2"
+    );
+    assert!(
+        font.table(TAG_FVAR).is_none(),
+        "decoded Office static CFF font should not contain fvar"
+    );
+    assert!(
+        font.table(TAG_GLYF).is_none(),
+        "decoded Office static CFF font should not contain glyf"
     );
 }
 
