@@ -9,7 +9,7 @@ use embedded_output::{
     build_embedded_output, embedded_output_allowed, EmbeddedEotVersion, EmbeddedMtxExtraBlocks,
     EmbeddedOutputOptions, EmbeddedPayloadFormat, EmbeddedXorMode,
 };
-use fonttool_cff::{inspect_otf_font, CffError};
+use fonttool_cff::{inspect_otf_font, instantiate_variable_cff2, parse_variation_axes, CffError};
 use fonttool_eot::parse_eot_header;
 use fonttool_glyf::{decode_glyf, encode_glyf};
 use fonttool_harfbuzz::subset_font_bytes;
@@ -33,8 +33,6 @@ const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
 const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
-const CFF_ENCODE_DEFERRED_MESSAGE: &str =
-    "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows";
 const CFF_SUBSET_DEFERRED_MESSAGE: &str =
     "OTF(CFF/CFF2) subset remains Phase 3-owned; use the archived native binary for compatibility flows";
 
@@ -64,6 +62,7 @@ fn main() -> ExitCode {
                 &request.input_path,
                 &request.output_path,
                 request.embedded_output,
+                request.variation_axes.as_deref(),
             ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -100,6 +99,7 @@ fn main() -> ExitCode {
 struct EncodeCliRequest {
     input_path: PathBuf,
     output_path: PathBuf,
+    variation_axes: Option<String>,
     embedded_output: EmbeddedOutputOptions,
 }
 
@@ -171,14 +171,42 @@ fn handle_encode_args(args: Vec<String>) -> Result<EncodeCliRequest, String> {
         return Err("encode expects INPUT and OUTPUT paths".to_string());
     }
 
-    let output_path: PathBuf = args[1].clone().into();
-    let (embedded_output, _) = parse_embedded_output_args(&args, 2, &output_path)?;
-
-    Ok(EncodeCliRequest {
+    let mut request = EncodeCliRequest {
         input_path: args[0].clone().into(),
-        output_path,
-        embedded_output,
-    })
+        output_path: args[1].clone().into(),
+        variation_axes: None,
+        embedded_output: EmbeddedOutputOptions::default(),
+    };
+    let mut embedded_output_args = Vec::new();
+    let mut index = 2usize;
+
+    while index < args.len() {
+        let flag = &args[index];
+        if index + 1 >= args.len() {
+            return Err("encode flag is missing a value".to_string());
+        }
+
+        match flag.as_str() {
+            "--variation" => {
+                request.variation_axes = Some(args[index + 1].clone());
+            }
+            "--payload-format" | "--xor" | "--eot-version" => {
+                embedded_output_args.push(flag.clone());
+                embedded_output_args.push(args[index + 1].clone());
+            }
+            _ => return Err(format!("unsupported encode flag `{flag}`")),
+        }
+
+        index += 2;
+    }
+
+    if !embedded_output_args.is_empty() {
+        let (embedded_output, _) =
+            parse_embedded_output_args(&embedded_output_args, 0, &request.output_path)?;
+        request.embedded_output = embedded_output;
+    }
+
+    Ok(request)
 }
 
 fn print_help() {
@@ -187,7 +215,7 @@ fn print_help() {
     println!("Usage: fonttool <COMMAND>");
     println!();
     println!("Commands:");
-    println!("  encode <INPUT> <OUTPUT>  Encode a TrueType font into EOT/MTX");
+    println!("  encode <INPUT> <OUTPUT>  Encode a font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
     println!("  subset <INPUT> <OUTPUT> ...  Subset supported non-OTF glyph-id inputs in Rust");
     println!();
@@ -508,6 +536,7 @@ fn encode_file(
     input_path: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
     output_options: EmbeddedOutputOptions,
+    variation_axes: Option<&str>,
 ) -> Result<(), String> {
     let output_path = output_path.as_ref();
     if output_path
@@ -522,11 +551,15 @@ fn encode_file(
 
     let input_bytes = fs::read(input_path.as_ref())
         .map_err(|error| format!("failed to read {}: {error}", input_path.as_ref().display()))?;
-    let source_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
-
-    if source_font.table(TAG_CFF).is_some() || source_font.table(TAG_CFF2).is_some() {
-        return Err(CFF_ENCODE_DEFERRED_MESSAGE.to_string());
+    let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
+    if kind.is_cff_flavor {
+        return encode_otf_file(&input_bytes, output_path, output_options, variation_axes, &kind);
     }
+    if variation_axes.is_some() {
+        return Err("encode does not support --variation for non-OTF input".to_string());
+    }
+
+    let source_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
 
     if source_font.version_tag() != SFNT_VERSION_TRUETYPE {
         return Err(
@@ -576,6 +609,39 @@ fn encode_file(
         }),
         output_options,
     )?;
+
+    fs::write(output_path, encoded_eot)
+        .map_err(|error| format!("failed to write {}: {error}", output_path.display()))?;
+
+    Ok(())
+}
+
+fn encode_otf_file(
+    input_bytes: &[u8],
+    output_path: &Path,
+    output_options: EmbeddedOutputOptions,
+    variation_axes: Option<&str>,
+    kind: &fonttool_cff::CffFontKind,
+) -> Result<(), String> {
+    let otf_bytes = if kind.is_variable {
+        let axes = parse_variation_axes(variation_axes.unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+        instantiate_variable_cff2(input_bytes, &axes).map_err(|error| error.to_string())?
+    } else {
+        if variation_axes.is_some() {
+            return Err(CffError::VariationRejectedForStaticInput.to_string());
+        }
+        input_bytes.to_vec()
+    };
+
+    let otf_font = load_sfnt(&otf_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+    let head = table_bytes(&otf_font, TAG_HEAD, "head")?;
+    let os2 = table_bytes(&otf_font, TAG_OS_2, "OS/2")?;
+    let name = otf_font
+        .table(TAG_NAME)
+        .map(|table| table.data.as_slice())
+        .unwrap_or(&[]);
+    let encoded_eot = build_embedded_output(head, os2, name, &otf_bytes, None, output_options)?;
 
     fs::write(output_path, encoded_eot)
         .map_err(|error| format!("failed to write {}: {error}", output_path.display()))?;

@@ -317,8 +317,8 @@ fn encode_fntdata_output_is_explicitly_phase2_owned() {
 }
 
 #[test]
-fn encode_cff_static_otf_is_explicitly_phase3_owned() {
-    let isolated_cwd = temp_dir("cff-phase3-cwd");
+fn encode_cff_static_otf_succeeds_with_rust_owned_output() {
+    let isolated_cwd = temp_dir("cff-otf-cwd");
     let encoded_path = temp_path("cff-static-roundtrip", "eot");
     let input_path = workspace_root().join("testdata/cff-static.otf");
 
@@ -335,22 +335,18 @@ fn encode_cff_static_otf_is_explicitly_phase3_owned() {
         &isolated_cwd,
     );
 
-    assert_eq!(
-        encode_output.status.code(),
-        Some(1),
-        "expected explicit Phase 3 boundary, stderr: {}",
+    assert!(
+        encode_output.status.success(),
+        "expected static CFF encode to succeed, stderr: {}",
         String::from_utf8_lossy(&encode_output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&encode_output.stderr)
-            .contains("OTF(CFF/CFF2) encode remains Phase 3-owned"),
-        "expected explicit Phase 3 boundary, stderr: {}",
-        String::from_utf8_lossy(&encode_output.stderr)
+        encoded_path.exists(),
+        "encode should create output for static CFF input"
     );
-    assert!(
-        !encoded_path.exists(),
-        "encode should not create output while the OTF chain is deferred"
-    );
+    let encoded_bytes = fs::read(&encoded_path).expect("encoded output should be readable");
+    let header = parse_eot_header(&encoded_bytes).expect("encoded output should parse as EOT");
+    assert!(header.font_data_size > 0, "encoded output should contain payload bytes");
 
     let _ = fs::remove_file(encoded_path);
     let _ = fs::remove_dir_all(isolated_cwd);

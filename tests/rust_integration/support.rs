@@ -35,6 +35,9 @@ const TAG_VHEA: u32 = u32::from_be_bytes(*b"vhea");
 const TAG_VMTX: u32 = u32::from_be_bytes(*b"vmtx");
 const TAG_VORG: u32 = u32::from_be_bytes(*b"VORG");
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+const GENERIC_STATIC_CFF_TAGS: [u32; 7] = [
+    TAG_CFF, TAG_CMAP, TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_OS_2,
+];
 const OFFICE_STATIC_CFF_TAGS: [u32; 17] = [
     TAG_BASE, TAG_CFF, TAG_DSIG, TAG_GDEF, TAG_GPOS, TAG_GSUB, TAG_OS_2, TAG_VORG, TAG_CMAP,
     TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_NAME, TAG_POST, TAG_VHEA, TAG_VMTX,
@@ -95,7 +98,7 @@ pub fn otf_parity_fixture() -> PathBuf {
         "testdata/aipptfonts/香蕉Plus__20220301185701917366.otf",
         "testdata/20220301185701917366.otf",
     ] {
-        let path = workspace_root().join(relative);
+        let path = fixture_path(relative);
         if path.exists() {
             return path;
         }
@@ -203,6 +206,39 @@ pub fn assert_decoded_otto_office_static_cff_output(path: &Path) {
     assert!(
         font.table(TAG_GLYF).is_none(),
         "decoded Office static CFF font should not contain glyf"
+    );
+}
+
+pub fn assert_decoded_otto_static_cff_output(path: &Path) {
+    let bytes = fs::read(path).expect("decoded font should be readable");
+    assert!(
+        bytes.len() >= 4,
+        "decoded font should contain an sfnt version header"
+    );
+    assert_eq!(&bytes[..4], b"OTTO");
+
+    let font = load_sfnt(&bytes).expect("decoded font should load as sfnt");
+    assert_eq!(font.version_tag(), SFNT_VERSION_OTTO);
+
+    for tag in GENERIC_STATIC_CFF_TAGS {
+        assert!(
+            font.table(tag).is_some(),
+            "decoded static CFF font should contain required table `{}`",
+            String::from_utf8_lossy(&tag.to_be_bytes())
+        );
+    }
+
+    assert!(
+        font.table(TAG_CFF2).is_none(),
+        "decoded static CFF font should not contain CFF2"
+    );
+    assert!(
+        font.table(TAG_FVAR).is_none(),
+        "decoded static CFF font should not contain fvar"
+    );
+    assert!(
+        font.table(TAG_GLYF).is_none(),
+        "decoded static CFF font should not contain glyf"
     );
 }
 

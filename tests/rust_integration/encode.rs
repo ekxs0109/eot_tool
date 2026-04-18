@@ -53,22 +53,31 @@ impl Drop for TempFiles {
     }
 }
 
-fn run_encode(input_path: &Path, output_path: &Path) {
-    let output = support::run_fonttool([
-        "encode",
+fn run_encode_with_args(input_path: &Path, output_path: &Path, extra_args: &[&str]) {
+    let mut args = vec![
+        "encode".to_string(),
         input_path
             .to_str()
-            .expect("input path should be valid utf-8"),
+            .expect("input path should be valid utf-8")
+            .to_string(),
         output_path
             .to_str()
-            .expect("output path should be valid utf-8"),
-    ]);
+            .expect("output path should be valid utf-8")
+            .to_string(),
+    ];
+    args.extend(extra_args.iter().map(|arg| (*arg).to_string()));
+
+    let output = support::run_fonttool(args);
 
     assert!(
         output.status.success(),
         "expected encode to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn run_encode(input_path: &Path, output_path: &Path) {
+    run_encode_with_args(input_path, output_path, &[]);
 }
 
 fn run_decode(input_path: &Path, output_path: &Path) {
@@ -1138,4 +1147,28 @@ fn encode_ttf_roundtrip_preserves_hdmx_table_when_present() {
         table_bytes(&roundtrip_font, TAG_HDMX, "roundtrip hdmx"),
         "roundtrip should preserve the hdmx table"
     );
+}
+
+#[test]
+fn encode_static_cff_otf_to_eot_roundtrips_as_static_cff() {
+    let source_path = support::tracked_testdata_path("testdata/cff-static.otf");
+    let output_path = support::temp_eot();
+    let decoded_path = support::temp_ttf();
+    let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
+
+    run_encode(&source_path, &output_path);
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
+}
+
+#[test]
+fn encode_variable_cff2_otf_with_variation_roundtrips_as_static_cff() {
+    let source_path = support::tracked_testdata_path("testdata/cff2-variable.otf");
+    let output_path = support::temp_eot();
+    let decoded_path = support::temp_ttf();
+    let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
+
+    run_encode_with_args(&source_path, &output_path, &["--variation", "wght=700"]);
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
 }

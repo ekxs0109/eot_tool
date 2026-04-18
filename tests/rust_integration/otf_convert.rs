@@ -15,9 +15,10 @@ fn isolated_cwd(label: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn encode_static_cff_input_is_explicitly_phase3_owned() {
+fn encode_static_cff_input_is_rust_owned() {
     let output_path = support::temp_eot();
-    let cwd = isolated_cwd("otf-phase3-cwd");
+    let decoded_path = support::temp_ttf();
+    let cwd = isolated_cwd("otf-encode-cwd");
     let input_path = support::workspace_root().join("testdata/cff-static.otf");
 
     let output = support::run_fonttool_in_dir(
@@ -33,31 +34,28 @@ fn encode_static_cff_input_is_explicitly_phase3_owned() {
         &cwd,
     );
 
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "expected explicit Phase 3 boundary, stderr: {}",
+    assert!(
+        output.status.success(),
+        "expected static CFF encode to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("OTF(CFF/CFF2) encode remains Phase 3-owned"),
-        "expected explicit Phase 3 boundary, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        output_path.exists(),
+        "encode should create output for static CFF input"
     );
-    assert!(
-        !output_path.exists(),
-        "encode should not create output while the OTF chain is deferred"
-    );
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
 
     let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(decoded_path);
     let _ = fs::remove_dir_all(cwd);
 }
 
 #[test]
-fn encode_otf_parity_fixture_is_explicitly_phase3_owned() {
+fn encode_otf_parity_fixture_is_rust_owned() {
     let output_path = support::temp_eot();
-    let cwd = isolated_cwd("otf-parity-phase3-cwd");
+    let decoded_path = support::temp_ttf();
+    let cwd = isolated_cwd("otf-parity-encode-cwd");
     let fixture = support::otf_parity_fixture();
 
     let output = support::run_fonttool_in_dir(
@@ -73,24 +71,20 @@ fn encode_otf_parity_fixture_is_explicitly_phase3_owned() {
         &cwd,
     );
 
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "expected explicit Phase 3 boundary, stderr: {}",
+    assert!(
+        output.status.success(),
+        "expected OTF parity fixture encode to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("OTF(CFF/CFF2) encode remains Phase 3-owned"),
-        "expected explicit Phase 3 boundary, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        output_path.exists(),
+        "encode should create output for the OTF parity fixture"
     );
-    assert!(
-        !output_path.exists(),
-        "encode should not create output while the OTF chain is deferred"
-    );
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
 
     let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(decoded_path);
     let _ = fs::remove_dir_all(cwd);
 }
 
