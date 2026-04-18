@@ -87,3 +87,12 @@
 - Fixture identity: `sha256 f123da5808f6a5954cada6c7cf1896196ffc1ad40a4b485f175b54c5cf34d6e4`
 - The repository keeps the extracted `.fntdata` only; it does not keep the `.pptx`
 - To refresh the fixture, embed the same source font in a local `Presentation1.pptx`, extract `ppt/fonts/font1.fntdata`, overwrite `testdata/otto-cff2-variable.fntdata`, and verify the checksum changes intentionally
+
+## `testdata/otto-cff-office.fntdata`
+
+- Source path: `ppt/fonts/font1.fntdata` inside the current local `Presentation1.pptx`
+- Extraction provenance: the fixture is extracted from the local `Presentation1.pptx` and represents the real Office-compatible embedded path
+- Fixture identity: `sha256 06ee8f3c7e480590ec6121608ad27de2f80d64ea3f04a7f77fbbae2c20e577f9`
+- Decoded output: a static `OTTO + CFF` font
+- The repository keeps the extracted `.fntdata` only; it does not keep the `.pptx`
+- Compatibility note: PowerPoint may accept static `OTF/CFF` while rejecting variable `OTF/CFF2`, so Office compatibility is tested with this static fixture while variable support remains covered through source fixtures and roundtrip tests
