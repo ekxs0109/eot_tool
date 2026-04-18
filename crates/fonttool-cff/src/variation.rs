@@ -18,13 +18,6 @@ pub fn parse_variation_axes(input: &str) -> Result<Vec<VariationAxisValue>, CffE
         .collect()
 }
 
-pub(crate) fn axis_value_for_tag(
-    axes: &[VariationAxisValue],
-    tag: [u8; 4],
-) -> Option<VariationAxisValue> {
-    axes.iter().rev().copied().find(|axis| axis.tag == tag)
-}
-
 fn parse_axis_segment(segment: &str) -> Result<VariationAxisValue, CffError> {
     let (tag, value) = segment.split_once('=').ok_or_else(|| {
         CffError::InvalidVariationAxis(format!("invalid variation axis segment `{segment}`"))
