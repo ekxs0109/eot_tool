@@ -1,6 +1,8 @@
 use std::{fs, path::PathBuf};
 
-use fonttool_cff::{inspect_otf_font, parse_variation_axes};
+use fonttool_cff::{
+    inspect_otf_font, parse_variation_axes, subset_static_cff, subset_variable_cff2, CffError,
+};
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -35,5 +37,59 @@ fn parse_variation_axis_list() {
 
     assert_eq!(axes.len(), 2);
     assert_eq!(axes[0].tag, *b"wght");
+    assert_eq!(axes[0].value, 700.0);
     assert_eq!(axes[1].tag, *b"wdth");
+    assert_eq!(axes[1].value, 85.0);
+}
+
+#[test]
+fn rejects_variation_axis_segment_without_separator() {
+    let error = parse_variation_axes("wght700").expect_err("segment without `=` should fail");
+
+    assert_eq!(
+        error,
+        CffError::InvalidVariationAxis("invalid variation axis segment `wght700`".to_string())
+    );
+}
+
+#[test]
+fn rejects_variation_axis_tag_with_wrong_length() {
+    let error = parse_variation_axes("weight=700").expect_err("tag must be exactly four bytes");
+
+    assert_eq!(
+        error,
+        CffError::InvalidVariationAxis(
+            "variation axis tag `weight` must be exactly 4 bytes".to_string()
+        )
+    );
+}
+
+#[test]
+fn rejects_variation_axis_value_with_invalid_float() {
+    let error =
+        parse_variation_axes("wght=heavy").expect_err("invalid float value should fail");
+
+    assert_eq!(
+        error,
+        CffError::InvalidVariationAxis(
+            "variation axis value `heavy` is not a valid float".to_string()
+        )
+    );
+}
+
+#[test]
+fn subset_scaffolds_return_expected_placeholder_errors() {
+    let static_error =
+        subset_static_cff(&[], "abc").expect_err("static subset scaffold should not succeed");
+    let variable_error = subset_variable_cff2(&[], "abc", &[])
+        .expect_err("variable subset scaffold should not succeed");
+
+    assert_eq!(
+        static_error,
+        CffError::SubsetFailed("static CFF subset not implemented yet".to_string())
+    );
+    assert_eq!(
+        variable_error,
+        CffError::SubsetFailed("variable CFF2 subset not implemented yet".to_string())
+    );
 }
