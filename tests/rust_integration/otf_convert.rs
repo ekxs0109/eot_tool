@@ -20,6 +20,7 @@ fn encode_static_cff_input_is_rust_owned() {
     let decoded_path = support::temp_ttf();
     let cwd = isolated_cwd("otf-encode-cwd");
     let input_path = support::workspace_root().join("testdata/cff-static.otf");
+    let source_bytes = fs::read(&input_path).expect("fixture should be readable");
 
     let output = support::run_fonttool_in_dir(
         [
@@ -44,7 +45,10 @@ fn encode_static_cff_input_is_rust_owned() {
         "encode should create output for static CFF input"
     );
     support::decode_current_rust_encoded_file(&output_path, &decoded_path);
-    support::assert_decoded_otto_static_cff_output(&decoded_path);
+    support::assert_decoded_otto_preserves_office_style_static_cff_tables(
+        &decoded_path,
+        &source_bytes,
+    );
 
     let _ = fs::remove_file(output_path);
     let _ = fs::remove_file(decoded_path);
@@ -57,6 +61,7 @@ fn encode_otf_parity_fixture_is_rust_owned() {
     let decoded_path = support::temp_ttf();
     let cwd = isolated_cwd("otf-parity-encode-cwd");
     let fixture = support::otf_parity_fixture();
+    let source_bytes = fs::read(&fixture).expect("fixture should be readable");
 
     let output = support::run_fonttool_in_dir(
         [
@@ -81,7 +86,10 @@ fn encode_otf_parity_fixture_is_rust_owned() {
         "encode should create output for the OTF parity fixture"
     );
     support::decode_current_rust_encoded_file(&output_path, &decoded_path);
-    support::assert_decoded_otto_static_cff_output(&decoded_path);
+    support::assert_decoded_otto_preserves_office_style_static_cff_tables(
+        &decoded_path,
+        &source_bytes,
+    );
 
     let _ = fs::remove_file(output_path);
     let _ = fs::remove_file(decoded_path);

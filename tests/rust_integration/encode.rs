@@ -3,6 +3,7 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use fonttool_cff::{instantiate_variable_cff2, parse_variation_axes};
 use fonttool_eot::parse_eot_header;
 use fonttool_glyf::encode_glyf;
 use fonttool_harfbuzz::subset_font_bytes;
@@ -1155,10 +1156,14 @@ fn encode_static_cff_otf_to_eot_roundtrips_as_static_cff() {
     let output_path = support::temp_eot();
     let decoded_path = support::temp_ttf();
     let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
+    let source_bytes = fs::read(&source_path).expect("static CFF source should be readable");
 
     run_encode(&source_path, &output_path);
     support::decode_current_rust_encoded_file(&output_path, &decoded_path);
-    support::assert_decoded_otto_static_cff_output(&decoded_path);
+    support::assert_decoded_otto_preserves_office_style_static_cff_tables(
+        &decoded_path,
+        &source_bytes,
+    );
 }
 
 #[test]
@@ -1167,8 +1172,15 @@ fn encode_variable_cff2_otf_with_variation_roundtrips_as_static_cff() {
     let output_path = support::temp_eot();
     let decoded_path = support::temp_ttf();
     let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
+    let source_bytes = fs::read(&source_path).expect("variable CFF2 source should be readable");
+    let axes = parse_variation_axes("wght=700").expect("axis list should parse");
+    let instantiated =
+        instantiate_variable_cff2(&source_bytes, &axes).expect("variable CFF2 should instantiate");
 
     run_encode_with_args(&source_path, &output_path, &["--variation", "wght=700"]);
     support::decode_current_rust_encoded_file(&output_path, &decoded_path);
-    support::assert_decoded_otto_static_cff_output(&decoded_path);
+    support::assert_decoded_otto_preserves_office_style_static_cff_tables(
+        &decoded_path,
+        &instantiated,
+    );
 }

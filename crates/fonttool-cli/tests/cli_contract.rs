@@ -353,6 +353,88 @@ fn encode_cff_static_otf_succeeds_with_rust_owned_output() {
 }
 
 #[test]
+fn encode_missing_flag_value_is_rejected() {
+    let output = run_fonttool(["encode", "in.otf", "out.eot", "--variation"]);
+
+    assert_eq!(output.status.code(), Some(2));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("encode flag is missing a value"),
+        "expected missing-value error, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn encode_unsupported_flag_is_rejected() {
+    let output = run_fonttool(["encode", "in.otf", "out.eot", "--bogus", "1"]);
+
+    assert_eq!(output.status.code(), Some(2));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsupported encode flag `--bogus`"),
+        "expected unsupported-flag error, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn encode_static_otf_with_variation_is_rejected_by_current_contract() {
+    let output_path = temp_path("encode-static-otf-variation", "eot");
+    let output = run_fonttool([
+        "encode",
+        "testdata/cff-static.otf",
+        output_path.to_str().expect("temp path should be valid utf-8"),
+        "--variation",
+        "wght=700",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("variation arguments require a variable CFF2 input"),
+        "expected static OTF variation rejection, stderr: {stderr}"
+    );
+    assert!(
+        !output_path.exists(),
+        "encode should not create output for rejected static OTF variation input"
+    );
+}
+
+#[test]
+fn encode_non_otf_with_variation_is_rejected_by_current_contract() {
+    let output_path = temp_path("encode-non-otf-variation", "eot");
+    let input_path = workspace_root().join("testdata/font1.decoded.ttf");
+    let output = run_fonttool_in_dir(
+        [
+            "encode",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+            "--variation",
+            "wght=700",
+        ],
+        workspace_root(),
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("encode does not support --variation for non-OTF input"),
+        "expected non-OTF variation rejection, stderr: {stderr}"
+    );
+    assert!(
+        !output_path.exists(),
+        "encode should not create output for rejected non-OTF variation input"
+    );
+}
+
+#[test]
 fn decode_obfuscated_fixture_copy_succeeds_for_supported_fntdata_fixture() {
     let input_path = temp_path("font1-obfuscated", "fntdata");
     let output_path = temp_path("font1-obfuscated", "otf");

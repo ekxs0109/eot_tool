@@ -242,6 +242,35 @@ pub fn assert_decoded_otto_static_cff_output(path: &Path) {
     );
 }
 
+pub fn assert_decoded_otto_preserves_office_style_static_cff_tables(
+    decoded_path: &Path,
+    source_bytes: &[u8],
+) {
+    let decoded_bytes = fs::read(decoded_path).expect("decoded font should be readable");
+    let decoded_font = load_sfnt(&decoded_bytes).expect("decoded font should load as sfnt");
+    let source_font = load_sfnt(source_bytes).expect("source font should load as sfnt");
+
+    assert_decoded_otto_static_cff_output(decoded_path);
+
+    let preserved_tags = OFFICE_STATIC_CFF_TAGS
+        .into_iter()
+        .filter(|tag| source_font.table(*tag).is_some())
+        .collect::<Vec<_>>();
+
+    assert!(
+        !preserved_tags.is_empty(),
+        "source font should contain at least one Office-style static CFF table"
+    );
+
+    for tag in preserved_tags {
+        assert!(
+            decoded_font.table(tag).is_some(),
+            "decoded static CFF font should preserve Office-style table `{}` when present in the source",
+            String::from_utf8_lossy(&tag.to_be_bytes())
+        );
+    }
+}
+
 #[allow(dead_code)]
 pub fn run_python<I, S>(args: I) -> Output
 where
