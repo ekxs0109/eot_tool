@@ -6,4 +6,5 @@ publish = false
 version.workspace = true
 
 [dependencies]
+allsorts = "0.16.1"
 fonttool-sfnt = { path = "../fonttool-sfnt" }
