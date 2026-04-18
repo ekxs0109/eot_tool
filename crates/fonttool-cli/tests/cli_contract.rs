@@ -346,7 +346,10 @@ fn encode_cff_static_otf_succeeds_with_rust_owned_output() {
     );
     let encoded_bytes = fs::read(&encoded_path).expect("encoded output should be readable");
     let header = parse_eot_header(&encoded_bytes).expect("encoded output should parse as EOT");
-    assert!(header.font_data_size > 0, "encoded output should contain payload bytes");
+    assert!(
+        header.font_data_size > 0,
+        "encoded output should contain payload bytes"
+    );
 
     let _ = fs::remove_file(encoded_path);
     let _ = fs::remove_dir_all(isolated_cwd);
@@ -384,7 +387,9 @@ fn encode_static_otf_with_variation_is_rejected_by_current_contract() {
     let output = run_fonttool([
         "encode",
         "testdata/cff-static.otf",
-        output_path.to_str().expect("temp path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
         "--variation",
         "wght=700",
     ]);
@@ -550,6 +555,7 @@ fn subset_static_otf_with_variation_is_rejected_by_current_contract() {
 #[test]
 fn subset_cff_bytes_with_ttf_extension_still_use_otf_boundary() {
     let input_path = temp_path("cff-static-misnamed", "ttf");
+    let output_path = temp_path("cff-static-misnamed-subset", "fntdata");
     fs::copy(
         workspace_root().join("testdata/cff-static.otf"),
         &input_path,
@@ -561,20 +567,22 @@ fn subset_cff_bytes_with_ttf_extension_still_use_otf_boundary() {
         input_path
             .to_str()
             .expect("temp path should be valid utf-8"),
-        "out.eot",
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
         "--text",
-        "ABC",
+        ".",
     ]);
 
-    assert_eq!(output.status.code(), Some(1));
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("OTF(CFF/CFF2) subset remains Phase 3-owned"),
-        "expected content-based OTF boundary, stderr: {stderr}"
+        output.status.success(),
+        "expected content-based OTF detection to subset successfully, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    assert!(output_path.exists(), "expected subset output to be created");
 
     let _ = fs::remove_file(input_path);
+    let _ = fs::remove_file(output_path);
 }
 
 #[test]

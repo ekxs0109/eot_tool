@@ -3,6 +3,12 @@ use std::{fs, path::PathBuf};
 use fonttool_cff::{
     inspect_otf_font, parse_variation_axes, subset_static_cff, subset_variable_cff2, CffError,
 };
+use fonttool_sfnt::load_sfnt;
+
+const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
+const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
+const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
+const TAG_FVAR: u32 = u32::from_be_bytes(*b"fvar");
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -66,8 +72,7 @@ fn rejects_variation_axis_tag_with_wrong_length() {
 
 #[test]
 fn rejects_variation_axis_value_with_invalid_float() {
-    let error =
-        parse_variation_axes("wght=heavy").expect_err("invalid float value should fail");
+    let error = parse_variation_axes("wght=heavy").expect_err("invalid float value should fail");
 
     assert_eq!(
         error,
@@ -78,18 +83,30 @@ fn rejects_variation_axis_value_with_invalid_float() {
 }
 
 #[test]
-fn subset_scaffolds_return_expected_placeholder_errors() {
-    let static_error =
-        subset_static_cff(&[], "abc").expect_err("static subset scaffold should not succeed");
-    let variable_error = subset_variable_cff2(&[], "abc", &[])
-        .expect_err("variable subset scaffold should not succeed");
+fn subset_static_cff_returns_legal_otf_subset() {
+    let bytes = fs::read(fixture_path("cff-static.otf")).expect("static CFF fixture should load");
 
-    assert_eq!(
-        static_error,
-        CffError::SubsetFailed("static CFF subset not implemented yet".to_string())
-    );
-    assert_eq!(
-        variable_error,
-        CffError::SubsetFailed("variable CFF2 subset not implemented yet".to_string())
-    );
+    let subset = subset_static_cff(&bytes, ".").expect("static CFF subset should succeed");
+    let font = load_sfnt(&subset.sfnt_bytes).expect("subset output should parse as sfnt");
+
+    assert!(font.table(TAG_CFF).is_some());
+    assert!(font.table(TAG_CMAP).is_some());
+    assert!(font.table(TAG_CFF2).is_none());
+    assert!(font.table(TAG_FVAR).is_none());
+}
+
+#[test]
+fn subset_variable_cff2_materializes_and_returns_legal_otf_subset() {
+    let bytes =
+        fs::read(fixture_path("cff2-variable.otf")).expect("variable CFF2 fixture should load");
+    let axes = parse_variation_axes("wght=700").expect("axis list should parse");
+
+    let subset =
+        subset_variable_cff2(&bytes, "ABC", &axes).expect("variable CFF2 subset should succeed");
+    let font = load_sfnt(&subset.sfnt_bytes).expect("subset output should parse as sfnt");
+
+    assert!(font.table(TAG_CFF).is_some());
+    assert!(font.table(TAG_CMAP).is_some());
+    assert!(font.table(TAG_CFF2).is_none());
+    assert!(font.table(TAG_FVAR).is_none());
 }

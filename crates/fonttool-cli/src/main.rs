@@ -9,13 +9,14 @@ use embedded_output::{
     build_embedded_output, embedded_output_allowed, EmbeddedEotVersion, EmbeddedMtxExtraBlocks,
     EmbeddedOutputOptions, EmbeddedPayloadFormat, EmbeddedXorMode,
 };
-use fonttool_cff::{inspect_otf_font, instantiate_variable_cff2, parse_variation_axes, CffError};
+use fonttool_cff::{
+    inspect_otf_font, instantiate_variable_cff2, parse_variation_axes, serialize_subset_otf,
+    subset_static_cff, subset_variable_cff2, CffError,
+};
 use fonttool_eot::parse_eot_header;
 use fonttool_glyf::{decode_glyf, encode_glyf};
 use fonttool_harfbuzz::subset_font_bytes;
-use fonttool_mtx::{
-    decompress_lz, parse_mtx_container,
-};
+use fonttool_mtx::{decompress_lz, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
     apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
@@ -33,9 +34,6 @@ const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
 const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
-const CFF_SUBSET_DEFERRED_MESSAGE: &str =
-    "OTF(CFF/CFF2) subset remains Phase 3-owned; use the archived native binary for compatibility flows";
-
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
 
@@ -350,7 +348,8 @@ fn salvage_office_prefixed_cff2_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
     }
 
     let kept_tags: Vec<u32> = kept_records.iter().map(|record| record.tag).collect();
-    if kept_tags != OFFICE_CFF2_VALID_PREFIX_TAGS || dropped_tags != OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS
+    if kept_tags != OFFICE_CFF2_VALID_PREFIX_TAGS
+        || dropped_tags != OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS
     {
         return None;
     }
@@ -383,7 +382,10 @@ fn extract_office_prefixed_static_cff_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
     }
 
     let font = load_sfnt(prefixed_bytes).ok()?;
-    if font.table(TAG_CFF).is_none() || font.table(TAG_CFF2).is_some() || font.table(TAG_GLYF).is_some() {
+    if font.table(TAG_CFF).is_none()
+        || font.table(TAG_CFF2).is_some()
+        || font.table(TAG_GLYF).is_some()
+    {
         return None;
     }
 
@@ -553,7 +555,13 @@ fn encode_file(
         .map_err(|error| format!("failed to read {}: {error}", input_path.as_ref().display()))?;
     let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
     if kind.is_cff_flavor {
-        return encode_otf_file(&input_bytes, output_path, output_options, variation_axes, &kind);
+        return encode_otf_file(
+            &input_bytes,
+            output_path,
+            output_options,
+            variation_axes,
+            &kind,
+        );
     }
     if variation_axes.is_some() {
         return Err("encode does not support --variation for non-OTF input".to_string());
@@ -863,6 +871,8 @@ fn subset_otf_file(
     request: &SubsetCliRequest,
     kind: &fonttool_cff::CffFontKind,
 ) -> Result<(), String> {
+    let input_bytes = fs::read(&request.input_path)
+        .map_err(|error| format!("failed to read {}: {error}", request.input_path.display()))?;
     let text = request
         .text
         .as_deref()
@@ -871,6 +881,32 @@ fn subset_otf_file(
         return Err(CffError::VariationRejectedForStaticInput.to_string());
     }
 
-    let _ = text;
-    Err(CFF_SUBSET_DEFERRED_MESSAGE.to_string())
+    let subset = if kind.is_variable {
+        let axes = parse_variation_axes(request.variation_axes.as_deref().unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+        subset_variable_cff2(&input_bytes, text, &axes).map_err(|error| error.to_string())?
+    } else {
+        subset_static_cff(&input_bytes, text).map_err(|error| error.to_string())?
+    };
+    let subset_bytes = serialize_subset_otf(subset).map_err(|error| error.to_string())?;
+    let subset_font = load_sfnt(&subset_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+    let head = table_bytes(&subset_font, TAG_HEAD, "head")?;
+    let os2 = table_bytes(&subset_font, TAG_OS_2, "OS/2")?;
+    let name = subset_font
+        .table(TAG_NAME)
+        .map(|table| table.data.as_slice())
+        .unwrap_or(&[]);
+    let encoded_output = build_embedded_output(
+        head,
+        os2,
+        name,
+        &subset_bytes,
+        None,
+        request.embedded_output,
+    )?;
+
+    fs::write(&request.output_path, encoded_output)
+        .map_err(|error| format!("failed to write {}: {error}", request.output_path.display()))?;
+
+    Ok(())
 }

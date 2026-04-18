@@ -97,9 +97,49 @@ fn encode_otf_parity_fixture_is_rust_owned() {
 }
 
 #[test]
-fn subset_cff2_variable_input_is_explicitly_phase3_owned() {
+fn subset_static_cff_text_input_succeeds() {
     let output_path = support::temp_fntdata();
-    let cwd = isolated_cwd("otf-subset-phase3-cwd");
+    let decoded_path = support::temp_ttf();
+    let cwd = isolated_cwd("otf-static-subset-cwd");
+    let input_path = support::workspace_root().join("testdata/cff-static.otf");
+
+    let output = support::run_fonttool_in_dir(
+        [
+            "subset",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+            "--text",
+            ".",
+        ],
+        &cwd,
+    );
+
+    assert!(
+        output.status.success(),
+        "expected static CFF subset to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output_path.exists(),
+        "subset should create output for static CFF input"
+    );
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(decoded_path);
+    let _ = fs::remove_dir_all(cwd);
+}
+
+#[test]
+fn subset_cff2_variable_input_materializes_static_cff_output() {
+    let output_path = support::temp_fntdata();
+    let decoded_path = support::temp_ttf();
+    let cwd = isolated_cwd("otf-variable-subset-cwd");
     let input_path = support::workspace_root().join("testdata/cff2-variable.otf");
 
     let output = support::run_fonttool_in_dir(
@@ -119,23 +159,19 @@ fn subset_cff2_variable_input_is_explicitly_phase3_owned() {
         &cwd,
     );
 
-    assert_eq!(
-        output.status.code(),
-        Some(1),
-        "expected explicit Phase 3 boundary, stderr: {}",
+    assert!(
+        output.status.success(),
+        "expected variable CFF2 subset to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("OTF(CFF/CFF2) subset remains Phase 3-owned"),
-        "expected explicit Phase 3 boundary, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        output_path.exists(),
+        "subset should create output for variable CFF2 input"
     );
-    assert!(
-        !output_path.exists(),
-        "subset should not create output while the OTF chain is deferred"
-    );
+    support::decode_current_rust_encoded_file(&output_path, &decoded_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
 
     let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(decoded_path);
     let _ = fs::remove_dir_all(cwd);
 }
