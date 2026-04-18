@@ -16,7 +16,9 @@ use fonttool_harfbuzz::subset_font_bytes;
 use fonttool_mtx::{
     decompress_lz, parse_mtx_container,
 };
-use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
+use fonttool_sfnt::{
+    load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_OTTO, SFNT_VERSION_TRUETYPE,
+};
 use fonttool_subset::{
     apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
     SubsetWarnings,
@@ -211,11 +213,100 @@ fn decode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     Ok(())
 }
 
-fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    decode_embedded_font_bytes_full(input_bytes)
+struct PreparedEmbeddedPayload {
+    payload_bytes: Vec<u8>,
 }
 
-fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
+fn read_u16_be(bytes: &[u8], offset: usize) -> Option<u16> {
+    let bytes = bytes.get(offset..offset + 2)?;
+    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_u32_be(bytes: &[u8], offset: usize) -> Option<u32> {
+    let bytes = bytes.get(offset..offset + 4)?;
+    Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn salvage_sfnt_payload(bytes: &[u8]) -> Option<Vec<u8>> {
+    let version_tag = read_u32_be(bytes, 0)?;
+    if version_tag != SFNT_VERSION_TRUETYPE && version_tag != SFNT_VERSION_OTTO {
+        return None;
+    }
+
+    let num_tables = usize::from(read_u16_be(bytes, 4)?);
+    let directory_len = 12usize.checked_add(num_tables.checked_mul(16)?)?;
+    if bytes.len() < directory_len {
+        return None;
+    }
+
+    let mut font = OwnedSfntFont::new(version_tag);
+    for index in 0..num_tables {
+        let record_offset = 12 + index * 16;
+        let tag = read_u32_be(bytes, record_offset)?;
+        let table_offset = usize::try_from(read_u32_be(bytes, record_offset + 8)?).ok()?;
+        let table_len = usize::try_from(read_u32_be(bytes, record_offset + 12)?).ok()?;
+
+        if table_len == 0 {
+            font.add_table(tag, Vec::new());
+            continue;
+        }
+
+        if table_offset < directory_len {
+            continue;
+        }
+
+        let table_end = table_offset.checked_add(table_len)?;
+        if table_end > bytes.len() {
+            continue;
+        }
+
+        font.add_table(tag, bytes[table_offset..table_end].to_vec());
+    }
+
+    if font.tables().is_empty() {
+        return None;
+    }
+
+    serialize_sfnt(&font).ok()
+}
+
+fn extract_cff_sfnt_candidate(bytes: &[u8]) -> Option<Vec<u8>> {
+    if let Ok(kind) = inspect_otf_font(bytes) {
+        if kind.is_cff_flavor {
+            return Some(bytes.to_vec());
+        }
+    }
+
+    let salvaged = salvage_sfnt_payload(bytes)?;
+    if let Ok(kind) = inspect_otf_font(&salvaged) {
+        if kind.is_cff_flavor {
+            return Some(salvaged);
+        }
+    }
+
+    None
+}
+
+fn extract_cff_sfnt_payload(block1: &[u8], block2: &[u8], block3: &[u8]) -> Option<Vec<u8>> {
+    if !block2.is_empty() || !block3.is_empty() {
+        return None;
+    }
+
+    if let Some(payload) = extract_cff_sfnt_candidate(block1) {
+        return Some(payload);
+    }
+
+    // Some Office-derived payloads prepend a single marker byte before the
+    // embedded OTTO font while still leaving block2/block3 empty.
+    let prefixed_block1 = block1.get(1..)?;
+    if prefixed_block1.starts_with(b"OTTO") {
+        return extract_cff_sfnt_candidate(prefixed_block1);
+    }
+
+    None
+}
+
+fn prepare_embedded_payload(input_bytes: &[u8]) -> Result<PreparedEmbeddedPayload, String> {
     let header =
         parse_eot_header(input_bytes).map_err(|error| format!("invalid EOT header: {error}"))?;
     let payload_start = header.header_length as usize;
@@ -233,6 +324,44 @@ fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String
             *byte ^= 0x50;
         }
     }
+
+    Ok(PreparedEmbeddedPayload { payload_bytes })
+}
+
+fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let prepared = prepare_embedded_payload(input_bytes)?;
+
+    if parse_sfnt(&prepared.payload_bytes).is_ok() {
+        return Ok(prepared.payload_bytes);
+    }
+
+    let container = parse_mtx_container(&prepared.payload_bytes)
+        .map_err(|error| format!("invalid MTX container: {error}"))?;
+    let block1 = decompress_lz(container.block1)
+        .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
+    let block2 = match container.block2 {
+        Some(block) => {
+            decompress_lz(block).map_err(|error| format!("failed to decode MTX block2: {error}"))?
+        }
+        None => Vec::new(),
+    };
+    let block3 = match container.block3 {
+        Some(block) => {
+            decompress_lz(block).map_err(|error| format!("failed to decode MTX block3: {error}"))?
+        }
+        None => Vec::new(),
+    };
+
+    if let Some(cff_payload) = extract_cff_sfnt_payload(&block1, &block2, &block3) {
+        return Ok(cff_payload);
+    }
+
+    decode_embedded_font_bytes_full(input_bytes)
+}
+
+fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let prepared = prepare_embedded_payload(input_bytes)?;
+    let payload_bytes = prepared.payload_bytes;
 
     let container = match parse_mtx_container(&payload_bytes) {
         Ok(container) => container,

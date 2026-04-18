@@ -8,9 +8,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use fonttool_eot::{parse_eot_header, EotHeaderError};
 use fonttool_glyf::{decode_glyf, GlyfDecodeError};
 use fonttool_mtx::{decompress_lz, parse_mtx_container, LzDecompressError, MtxContainerError};
-use fonttool_sfnt::{load_sfnt, serialize_sfnt, OwnedSfntFont, ParseError, SerializeError};
+use fonttool_sfnt::{
+    load_sfnt, serialize_sfnt, OwnedSfntFont, ParseError, SerializeError, SFNT_VERSION_OTTO,
+};
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
+const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
+const TAG_FVAR: u32 = u32::from_be_bytes(*b"fvar");
 const TAG_GLYF: u32 = u32::from_be_bytes(*b"glyf");
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
 const TAG_LOCA: u32 = u32::from_be_bytes(*b"loca");
@@ -22,6 +26,32 @@ pub fn workspace_root() -> PathBuf {
         .join("../..")
         .canonicalize()
         .expect("workspace root should exist")
+}
+
+fn shared_repo_root() -> Option<PathBuf> {
+    let workspace = workspace_root();
+    let worktrees_dir = workspace.parent()?;
+    if worktrees_dir.file_name() != Some(OsStr::new(".worktrees")) {
+        return None;
+    }
+
+    Some(worktrees_dir.parent()?.to_path_buf())
+}
+
+pub fn fixture_path(relative: &str) -> PathBuf {
+    let workspace_path = workspace_root().join(relative);
+    if workspace_path.exists() {
+        return workspace_path;
+    }
+
+    if let Some(shared_root) = shared_repo_root() {
+        let shared_path = shared_root.join(relative);
+        if shared_path.exists() {
+            return shared_path;
+        }
+    }
+
+    workspace_path
 }
 
 #[allow(dead_code)]
@@ -86,6 +116,26 @@ where
         .current_dir(current_dir)
         .output()
         .expect("fonttool binary should launch")
+}
+
+pub fn assert_decoded_otto_cff2_variable_output(path: &Path) {
+    let bytes = fs::read(path).expect("decoded font should be readable");
+    assert!(
+        bytes.len() >= 4,
+        "decoded font should contain an sfnt version header"
+    );
+    assert_eq!(&bytes[..4], b"OTTO");
+
+    let font = load_sfnt(&bytes).expect("decoded font should load as sfnt");
+    assert_eq!(font.version_tag(), SFNT_VERSION_OTTO);
+    assert!(
+        font.table(TAG_CFF2).is_some(),
+        "decoded font should contain CFF2"
+    );
+    assert!(
+        font.table(TAG_FVAR).is_some(),
+        "decoded font should contain fvar"
+    );
 }
 
 #[allow(dead_code)]

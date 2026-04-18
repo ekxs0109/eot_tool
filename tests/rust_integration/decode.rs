@@ -1,3 +1,5 @@
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -100,11 +102,14 @@ fn assert_truetype_output_matches_fixture(path: &Path, expected: &[u8]) {
 
 #[test]
 fn decode_font1_fntdata_writes_otto_sfnt() {
+    let input_path = support::fixture_path("testdata/font1.fntdata");
     let output_path = temp_out();
 
     let output = run_fonttool([
         "decode",
-        "testdata/font1.fntdata",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         output_path
             .to_str()
             .expect("temp path should be valid utf-8"),
@@ -121,8 +126,8 @@ fn decode_font1_fntdata_writes_otto_sfnt() {
 }
 
 #[test]
-fn decode_otto_cff2_variable_fixture_currently_fails_with_invalid_block1_sfnt() {
-    let input_path = workspace_root().join("testdata/otto-cff2-variable.fntdata");
+fn decode_otto_cff2_variable_fixture_writes_variable_otto_output() {
+    let input_path = support::fixture_path("testdata/otto-cff2-variable.fntdata");
     let output_path = temp_out();
 
     let output = run_fonttool([
@@ -132,26 +137,24 @@ fn decode_otto_cff2_variable_fixture_currently_fails_with_invalid_block1_sfnt() 
     ]);
 
     assert!(
-        !output.status.success(),
-        "expected decode to fail for the current cff2 office regression sample"
+        output.status.success(),
+        "expected decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("invalid block1 SFNT: unsupported sfnt version tag: 0xe74f5454"),
-        "expected current invalid block1 SFNT failure, stderr: {stderr}"
-    );
+    support::assert_decoded_otto_cff2_variable_output(&output_path);
 
     let _ = fs::remove_file(output_path);
 }
 
 #[test]
 fn decode_pptx_fixture_fntdata_reconstructs_roundtrip_ready_truetype() {
+    let input_path = support::fixture_path("build/pptx_case7/ppt/fonts/font1.fntdata");
     let output_path = temp_out();
     let reencoded_path = temp_in("eot");
 
     let output = run_fonttool([
         "decode",
-        "build/pptx_case7/ppt/fonts/font1.fntdata",
+        input_path.to_str().expect("fixture path should be valid utf-8"),
         output_path
             .to_str()
             .expect("temp path should be valid utf-8"),
@@ -187,7 +190,7 @@ fn decode_pptx_fixture_fntdata_reconstructs_roundtrip_ready_truetype() {
 fn decode_raw_sfnt_payload_eot_writes_truetype_output() {
     let input_path = temp_in("eot");
     let output_path = temp_out();
-    let sfnt_bytes = fs::read(workspace_root().join("testdata/OpenSans-Regular.ttf"))
+    let sfnt_bytes = fs::read(support::fixture_path("testdata/OpenSans-Regular.ttf"))
         .expect("fixture sfnt should be readable");
     let fixture = build_raw_sfnt_payload_eot(&sfnt_bytes);
     fs::write(&input_path, fixture).expect("synthetic raw-sfnt eot should be writable");
@@ -217,7 +220,7 @@ fn decode_raw_sfnt_payload_eot_writes_truetype_output() {
 fn decode_xor_raw_sfnt_payload_eot_writes_truetype_output() {
     let input_path = temp_in("eot");
     let output_path = temp_out();
-    let sfnt_bytes = fs::read(workspace_root().join("testdata/OpenSans-Regular.ttf"))
+    let sfnt_bytes = fs::read(support::fixture_path("testdata/OpenSans-Regular.ttf"))
         .expect("fixture sfnt should be readable");
     let mut fixture = build_raw_sfnt_payload_eot(&sfnt_bytes);
 
@@ -284,7 +287,7 @@ fn decode_rejects_incomplete_extra_mtx_blocks_for_truetype_reconstruction() {
 }
 
 fn build_fixture_with_non_empty_block3() -> Vec<u8> {
-    let mut bytes = fs::read(workspace_root().join("testdata/font1.fntdata"))
+    let mut bytes = fs::read(support::fixture_path("testdata/font1.fntdata"))
         .expect("fixture should be readable");
     let eot_size = read_u32_le(&bytes[0..4]) as usize;
     let font_data_size = read_u32_le(&bytes[4..8]) as usize;
