@@ -3,6 +3,7 @@
 ## `testdata/cff-static.otf`
 
 - SHA-256: `21c56133f7c02e2d9acc4b6aaa2965fe63572a212393ad369d3afb3da453d591`
+- Exact upstream file: `https://raw.githubusercontent.com/fonttools/fonttools/main/Tests/ttx/data/TestOTF.otf`
 - Verified name-table identity:
   - family: `Test OTF`
   - PostScript: `TestOTF-Regular`
@@ -10,8 +11,8 @@
 - Current provenance and regeneration note:
   - this file was already used by OTF-focused tests in the main workspace before Task 2, but it was not tracked in git there
   - Task 2 formalized it as a tracked fixture so fresh worktrees remain reproducible
-  - the exact original upstream file path is not currently proven, so this README records the current verified identity instead of inventing stronger provenance
-  - if it is ever replaced, keep the verified identity story explicit and update the checksum and name-table strings intentionally
+  - the upstream raw file at the URL above was verified to match the tracked fixture exactly at the same SHA-256
+  - to refresh it, download that raw URL, overwrite `testdata/cff-static.otf`, and verify the checksum still matches intentionally
 - Why it is tracked:
   - existing OTF inspection/subsetting tests already depended on it
   - tracking it in the repository removes the old local-untracked dependency and makes new worktrees self-contained
@@ -19,15 +20,18 @@
 ## `testdata/cff2-variable.otf`
 
 - SHA-256: `2dc8227c1e152d5fc0afb0bf46e9d3445e2208b9bf923c73759de78db09fbfe9`
+- Exact upstream source file: `https://raw.githubusercontent.com/fonttools/fonttools/main/Tests/varLib/data/master_cff2/TestCFF2_Regular.ttx`
 - Verified name-table identity:
   - family: `Source Code Variable`
   - PostScript: `SourceCodeVariable-Roman`
   - unique ID: `1.010;ADBO;SourceCodeVariable-Roman`
+  - version string: `Version 1.010;hotconv 1.0.109;makeotfexe 2.5.65596`
+  - CFF font name: `SourceCodeVariable-Roman`
 - Current provenance and regeneration note:
   - this file was already used by OTF-focused tests in the main workspace before Task 2, but it was not tracked in git there
   - Task 2 formalized it as a tracked fixture so fresh worktrees remain reproducible
-  - its verified release context matches Adobe's Source Code Pro repository and releases page, including the `variable-fonts` / `1.010` release line: `https://github.com/adobe-fonts/source-code-pro`
-  - if it is ever refreshed, replace it from the matching Adobe Source Code Pro variable-font release context, then update the checksum and name-table strings intentionally
+  - the upstream `.ttx` source at the URL above was verified to contain the identifying strings listed here
+  - to refresh it, download that `.ttx`, compile it to OTF with FontTools `ttx`, overwrite `testdata/cff2-variable.otf`, and verify or intentionally update the tracked checksum
 - Why it is tracked:
   - existing OTF inspection/subsetting tests already depended on it
   - tracking it in the repository removes the old local-untracked dependency and makes new worktrees self-contained
