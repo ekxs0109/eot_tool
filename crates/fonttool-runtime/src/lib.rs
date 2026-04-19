@@ -2,16 +2,18 @@
 
 use core::fmt;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
 };
 use std::thread;
 
-pub use fonttool_cff::CffError;
+mod otf;
 
-use fonttool_cff::inspect_otf_font;
+pub use fonttool_cff::CffError;
+#[cfg(test)]
+use fonttool_eot::parse_eot_header;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeThreadMode {
@@ -65,9 +67,6 @@ pub enum OutputKind {
     Eot,
     Fntdata,
 }
-
-const CFF_ENCODE_DEFERRED_MESSAGE: &str =
-    "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows";
 
 impl OutputKind {
     #[must_use]
@@ -262,22 +261,23 @@ where
 pub fn convert_otf_to_embedded_font(
     request: ConvertRequest<'_>,
 ) -> Result<ConvertResult, RuntimeError> {
-    if request.output_kind == OutputKind::Fntdata {
-        return Err(RuntimeError::Backend(
-            "PowerPoint-compatible .fntdata output remains Phase 2-owned; use the archived native binary for compatibility flows".to_string(),
-        ));
-    }
-
-    let temp_output = temp_runtime_output_path(request.output_kind);
+    let output = Mutex::new(None);
     let diagnostics = run_indexed_tasks(1, RuntimeSchedulingOptions::default(), |_| {
-        run_conversion_request(request, request.input_path, &temp_output)?;
+        let data = otf::convert_otf_path_to_embedded_bytes(
+            request.input_path,
+            request.output_kind,
+            request.variation_axes,
+        )?;
+        *output
+            .lock()
+            .expect("runtime output mutex should not be poisoned") = Some(data);
         Ok::<(), RuntimeError>(())
     })
     .map_err(|failure| failure.error)?;
-
-    let data = std::fs::read(&temp_output)
-        .map_err(|error| RuntimeError::Io(format!("failed to read runtime output: {error}")))?;
-    let _ = std::fs::remove_file(&temp_output);
+    let data = output
+        .into_inner()
+        .expect("runtime output mutex should not be poisoned")
+        .expect("conversion task should produce output bytes");
 
     Ok(ConvertResult {
         data,
@@ -287,55 +287,11 @@ pub fn convert_otf_to_embedded_font(
 }
 
 #[cfg(test)]
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn workspace_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .expect("workspace root should exist")
-}
-
-fn run_conversion_request(
-    request: ConvertRequest<'_>,
-    input_path: &Path,
-    output_path: &Path,
-) -> Result<(), RuntimeError> {
-    let font_bytes = std::fs::read(input_path)
-        .map_err(|error| RuntimeError::Io(format!("failed to read OTF input: {error}")))?;
-    let kind = inspect_otf_font(&font_bytes)?;
-    if !kind.is_cff_flavor {
-        return Err(RuntimeError::Backend(
-            "runtime bridge expects OTF/CFF or OTF/CFF2 input".to_string(),
-        ));
-    }
-
-    if let Some(variation_axes) = request.variation_axes {
-        if !kind.is_variable {
-            return Err(RuntimeError::Cff(CffError::VariationRejectedForStaticInput));
-        }
-        let _ = variation_axes;
-        return Err(RuntimeError::Backend(
-            "runtime bridge does not yet support variable-font conversion".to_string(),
-        ));
-    }
-
-    let _ = input_path;
-    let _ = output_path;
-    Err(RuntimeError::Backend(
-        CFF_ENCODE_DEFERRED_MESSAGE.to_string(),
-    ))
-}
-
-fn temp_runtime_output_path(output_kind: OutputKind) -> PathBuf {
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("time should move forward")
-        .as_nanos();
-
-    std::env::temp_dir().join(format!(
-        "fonttool-runtime-{}-{unique}.{}",
-        std::process::id(),
-        output_kind.file_extension()
-    ))
 }
 
 fn runtime_supports_threads() -> bool {
@@ -388,6 +344,7 @@ fn drain_task_queue<E, F>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
@@ -401,6 +358,21 @@ mod tests {
 
     fn fixture(path: &str) -> PathBuf {
         workspace_root().join(path)
+    }
+
+    fn assert_eot_header_shape(data: &[u8], output_kind: OutputKind) {
+        let header =
+            parse_eot_header(data).expect("runtime output should contain a valid EOT header");
+        assert!(
+            header.font_data_size > 0,
+            "embedded payload should not be empty"
+        );
+        let has_ppt_xor = header.flags & 0x1000_0000 != 0;
+
+        match output_kind {
+            OutputKind::Eot => assert!(!has_ppt_xor, ".eot output should not enable PPT XOR"),
+            OutputKind::Fntdata => assert!(has_ppt_xor, ".fntdata output should enable PPT XOR"),
+        }
     }
 
     fn assert_runtime_error(
@@ -569,20 +541,16 @@ mod tests {
     }
 
     #[test]
-    fn rejects_static_otf_conversion_until_phase3() {
-        let error = convert_otf_to_embedded_font(ConvertRequest {
+    fn converts_static_cff_to_eot() {
+        let result = convert_otf_to_embedded_font(ConvertRequest {
             input_path: &fixture("testdata/cff-static.otf"),
             output_kind: OutputKind::Eot,
             variation_axes: None,
         })
-        .expect_err("static CFF conversion should stay outside the Phase 1 runtime boundary");
+        .expect("static CFF input should convert to EOT");
 
-        assert_eq!(
-            error,
-            RuntimeError::Backend(
-                "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows".to_string()
-            )
-        );
+        assert_eq!(result.output_kind, OutputKind::Eot);
+        assert_eot_header_shape(&result.data, OutputKind::Eot);
     }
 
     #[test]
@@ -601,19 +569,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_variable_font_conversion_until_runtime_bridge_grows_full_support() {
-        let error = convert_otf_to_embedded_font(ConvertRequest {
+    fn converts_variable_cff2_instance_to_fntdata() {
+        let result = convert_otf_to_embedded_font(ConvertRequest {
             input_path: &fixture("testdata/cff2-variable.otf"),
-            output_kind: OutputKind::Eot,
+            output_kind: OutputKind::Fntdata,
             variation_axes: Some("wght=700"),
         })
-        .expect_err("variable conversion should stay explicitly unsupported");
+        .expect("variable CFF2 input should instantiate and convert to .fntdata");
 
-        assert_eq!(
-            error,
-            RuntimeError::Backend(
-                "runtime bridge does not yet support variable-font conversion".to_string()
-            )
-        );
+        assert_eq!(result.output_kind, OutputKind::Fntdata);
+        assert_eot_header_shape(&result.data, OutputKind::Fntdata);
     }
 }

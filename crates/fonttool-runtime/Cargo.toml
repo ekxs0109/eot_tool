@@ -7,3 +7,5 @@ version.workspace = true
 
 [dependencies]
 fonttool-cff = { path = "../fonttool-cff" }
+fonttool-eot = { path = "../fonttool-eot" }
+fonttool-sfnt = { path = "../fonttool-sfnt" }
