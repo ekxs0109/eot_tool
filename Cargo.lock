@@ -196,6 +196,8 @@ name = "fonttool-runtime"
 version = "0.1.0"
 dependencies = [
  "fonttool-cff",
+ "fonttool-eot",
+ "fonttool-sfnt",
 ]
 
 [[package]]
