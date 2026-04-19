@@ -1,3 +1,6 @@
+mod support;
+
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
@@ -23,6 +26,40 @@ fn workspace_root() -> PathBuf {
 
 fn fixture(path: &str) -> PathBuf {
     workspace_root().join(path)
+}
+
+fn assert_embedded_roundtrip(
+    data: &[u8],
+    extension: &str,
+    assert_decoded: fn(&Path),
+) {
+    let output_path = if extension == "fntdata" {
+        support::temp_fntdata()
+    } else {
+        support::temp_eot()
+    };
+    let decoded_path = support::temp_ttf();
+
+    assert!(
+        !data.is_empty(),
+        "bridge result should contain encoded output bytes"
+    );
+
+    fs::write(&output_path, data).expect("bridge output should be writable");
+    let decode = support::run_fonttool([
+        "decode",
+        output_path.to_str().unwrap(),
+        decoded_path.to_str().unwrap(),
+    ]);
+    assert!(
+        decode.status.success(),
+        "decode stderr: {}",
+        String::from_utf8_lossy(&decode.stderr)
+    );
+    assert_decoded(&decoded_path);
+
+    let _ = fs::remove_file(&output_path);
+    let _ = fs::remove_file(&decoded_path);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,53 +261,70 @@ fn runtime_uses_lowest_failing_index_regardless_of_completion_order() {
 }
 
 #[test]
-fn runtime_bridge_rejects_static_cff_conversion_until_phase3() {
-    let error = convert_otf_to_embedded_font(ConvertRequest {
+fn runtime_bridge_converts_static_cff_to_eot() {
+    let result = convert_otf_to_embedded_font(ConvertRequest {
         input_path: &fixture("testdata/cff-static.otf"),
         output_kind: OutputKind::Eot,
         variation_axes: None,
     })
-    .expect_err("static CFF conversion should stay outside the Phase 1 runtime boundary");
+    .expect("runtime bridge should convert static CFF input to EOT");
 
-    assert_eq!(
-        error,
-        RuntimeError::Backend(
-            "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows".to_string()
-        )
+    assert_eq!(result.output_kind, OutputKind::Eot);
+    assert_embedded_roundtrip(
+        &result.data,
+        "eot",
+        support::assert_decoded_otto_static_cff_output,
     );
 }
 
 #[test]
-fn runtime_bridge_rejects_fntdata_output_until_phase2() {
-    let error = convert_otf_to_embedded_font(ConvertRequest {
-        input_path: &fixture("testdata/cff-static.otf"),
+fn runtime_bridge_converts_woff_cff_to_fntdata() {
+    let result = convert_otf_to_embedded_font(ConvertRequest {
+        input_path: &fixture("testdata/cff-static.woff"),
         output_kind: OutputKind::Fntdata,
         variation_axes: None,
     })
-    .expect_err(".fntdata output should stay outside the Phase 1 runtime boundary");
+    .expect("runtime bridge should convert WOFF-backed static CFF input to .fntdata");
 
-    assert_eq!(
-        error,
-        RuntimeError::Backend(
-            "PowerPoint-compatible .fntdata output remains Phase 2-owned; use the archived native binary for compatibility flows".to_string()
-        )
+    assert_eq!(result.output_kind, OutputKind::Fntdata);
+    assert_embedded_roundtrip(
+        &result.data,
+        "fntdata",
+        support::assert_decoded_otto_static_cff_output,
     );
 }
 
 #[test]
-fn wasm_bridge_rejects_fntdata_output_until_phase2() {
-    let error = wasm_convert_otf_to_embedded_font(ConvertRequest {
-        input_path: &fixture("testdata/cff-static.otf"),
-        output_kind: OutputKind::Fntdata,
-        variation_axes: None,
+fn wasm_bridge_converts_variable_cff2_instance_to_eot() {
+    let result = wasm_convert_otf_to_embedded_font(ConvertRequest {
+        input_path: &fixture("testdata/cff2-variable.otf"),
+        output_kind: OutputKind::Eot,
+        variation_axes: Some("wght=700"),
     })
-    .expect_err(".fntdata output should stay outside the Phase 1 wasm boundary");
+    .expect("wasm bridge should materialize a variable CFF2 instance to EOT");
 
-    assert_eq!(
-        error,
-        RuntimeError::Backend(
-            "PowerPoint-compatible .fntdata output remains Phase 2-owned; use the archived native binary for compatibility flows".to_string()
-        )
+    assert_eq!(result.output_kind, OutputKind::Eot);
+    assert_embedded_roundtrip(
+        &result.data,
+        "eot",
+        support::assert_decoded_otto_static_cff_output,
+    );
+}
+
+#[test]
+fn wasm_bridge_converts_variable_cff2_instance_to_fntdata() {
+    let result = wasm_convert_otf_to_embedded_font(ConvertRequest {
+        input_path: &fixture("testdata/cff2-variable.otf"),
+        output_kind: OutputKind::Fntdata,
+        variation_axes: Some("wght=700"),
+    })
+    .expect("wasm bridge should materialize a variable CFF2 instance to .fntdata");
+
+    assert_eq!(result.output_kind, OutputKind::Fntdata);
+    assert_embedded_roundtrip(
+        &result.data,
+        "fntdata",
+        support::assert_decoded_otto_static_cff_output,
     );
 }
 
@@ -302,38 +356,4 @@ fn wasm_bridge_surfaces_runtime_validation_errors() {
         error,
         RuntimeError::Cff(fonttool_runtime::CffError::VariationRejectedForStaticInput)
     ));
-}
-
-#[test]
-fn runtime_bridge_rejects_variable_font_conversion_for_now() {
-    let error = convert_otf_to_embedded_font(ConvertRequest {
-        input_path: &fixture("testdata/cff2-variable.otf"),
-        output_kind: OutputKind::Eot,
-        variation_axes: Some("wght=700"),
-    })
-    .expect_err("variable conversion should stay explicitly unsupported");
-
-    assert_eq!(
-        error,
-        RuntimeError::Backend(
-            "runtime bridge does not yet support variable-font conversion".to_string()
-        )
-    );
-}
-
-#[test]
-fn wasm_bridge_rejects_variable_font_conversion_for_now() {
-    let error = wasm_convert_otf_to_embedded_font(ConvertRequest {
-        input_path: &fixture("testdata/cff2-variable.otf"),
-        output_kind: OutputKind::Eot,
-        variation_axes: Some("wght=700"),
-    })
-    .expect_err("variable conversion should stay explicitly unsupported");
-
-    assert_eq!(
-        error,
-        RuntimeError::Backend(
-            "runtime bridge does not yet support variable-font conversion".to_string()
-        )
-    );
 }
