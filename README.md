@@ -99,13 +99,13 @@ legacy producers is still not guaranteed.
 - `EOT_TOOL_THREADS=1`: strict serial mode for debugging/regression checks
 - `EOT_TOOL_THREADS=<N>`: requests `N` worker threads
 
-Current supported/unsupported encode boundaries:
+Current supported/unsupported CLI encode boundaries:
 
 - TrueType SFNT input to `.eot`: supported
 - TrueType `WOFF/WOFF2` input to `.eot`: supported after source materialization
 - static `OTF/CFF` input to `.eot`: supported
 - variable `OTF/CFF2` input to `.eot`: supported, with optional `--variation`
-- any input to `.fntdata`: unsupported
+- any input to `.fntdata`: unsupported in the CLI `encode` command
 
 For `.eot` output, `fonttool encode` accepts embedded-output controls:
 
@@ -243,6 +243,22 @@ The Rust contract still defers a few surfaces:
 The supported browser/WASM surface is the Rust-owned `fonttool-wasm` package
 plus the vendored runtime artifacts under
 `packages/fonttool-wasm/vendor/wasm`.
+
+The Rust-owned runtime/WASM conversion boundary now supports:
+
+- static `OTF/CFF` input to `.eot`
+- static `OTF/CFF` and `WOFF/WOFF2(CFF)` input to `.fntdata`
+- variable `OTF/CFF2` input to `.eot` and `.fntdata` after instance
+  materialization
+
+Runtime/WASM conversion follows the same Rust-owned font-processing path as the
+CLI:
+
+- source `WOFF/WOFF2` input is materialized to canonical SFNT bytes first
+- variable `OTF/CFF2` input is instantiated to a static `OTF/CFF` font before
+  embedded wrapping
+- static `OTF/CFF` input still rejects variation arguments, and that validation
+  contract is shared across CLI, runtime, and WASM entry points
 
 Canonical verification entrypoints:
 

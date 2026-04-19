@@ -2,13 +2,13 @@
 
 ## Goal
 
-Add Rust CLI support for `OTF(CFF)`, `OTF(CFF2/variable)`, and
-`WOFF/WOFF2` sources across `decode`, `encode`, `subset`, and explicit
-conversion flows, while making Office/PowerPoint compatibility an explicit
-product target.
+Add Rust support for `OTF(CFF)`, `OTF(CFF2/variable)`, and `WOFF/WOFF2`
+sources across CLI, runtime, and WASM-facing `decode`, `encode`, `subset`,
+and explicit conversion flows, while making Office/PowerPoint compatibility an
+explicit product target.
 
-This design started as a two-phase convergence plan. The transitional
-HarfBuzz-unification phase has now been retired, and the current shipped
+This design started as a larger convergence plan. The earlier
+HarfBuzz-transition idea has now been retired, and the current shipped
 direction is the steady-state one:
 
 - converge the supported font-processing path onto `allsorts` plus Rust-owned
@@ -24,10 +24,10 @@ The compatibility baseline changes in one important way:
 - `OTF -> TTF` remains available as an explicit CLI option for compatibility
   workflows, but it is not the default Office path
 
-Historical note: some later sections still describe the earlier HarfBuzz
-transition phase because this spec was updated in place instead of being split
-into archival docs. The current shipped workspace state is the Rust-owned one
-described above.
+Historical note: this spec was updated in place instead of being split into an
+archival transition document. The current shipped workspace state is the
+Rust-owned one described above, and the remaining work is runtime/WASM
+alignment rather than HarfBuzz convergence.
 
 ## Scope
 
@@ -39,6 +39,8 @@ This design covers:
 - `fonttool subset` support for static `CFF` and `CFF2/variable` OTF input
 - `fonttool encode`, `fonttool subset`, and explicit conversion support for
   `WOFF/WOFF2` input after source materialization
+- `fonttool-runtime` and `fonttool-wasm` support for the same embedded
+  `EOT` / `.fntdata` success paths exposed by the shipped CLI boundary
 - variable-instance selection for `CFF2`
 - Office-compatible embedding through a static `OTF/CFF` default path
 - an explicit CLI option to convert `OTF(CFF/CFF2)` input to `TTF`
@@ -74,13 +76,25 @@ The current Rust workspace already has:
 - `OTTO` SFNT parsing support in `fonttool-sfnt`
 - `fonttool-cff` as a boundary crate with basic OTF inspection helpers
 
-The workspace now routes these supported paths through Rust-owned crates:
+The workspace now routes the shipped CLI paths through Rust-owned crates:
 
 - `fonttool-cff` owns `OTF/CFF/CFF2/WOFF` inspection, materialization,
   instancing, and explicit `OTF/WOFF -> TTF` conversion
 - `fonttool-subset` owns the non-OTF glyph-id subset path
 
 The earlier HarfBuzz split has been removed from the shipped workspace.
+
+The remaining gap is not font parsing or conversion capability in the mainline
+CLI path. The remaining gap is that `fonttool-runtime` and the Rust-side
+`fonttool-wasm` wrapper still expose an incomplete contract:
+
+- runtime diagnostics and scheduler behavior are implemented and tested
+- the runtime bridge still rejects `.fntdata` output
+- the runtime bridge still rejects variable `CFF2` conversion
+- the runtime bridge does not yet materialize `WOFF/WOFF2` before flavor-aware
+  OTF processing
+
+That gap is the final scope this updated plan needs to close.
 
 Recent investigation established:
 
@@ -99,15 +113,14 @@ Therefore the repository must not treat "PowerPoint can directly emit variable
 ## Chosen Approach
 
 Use the existing Rust CLI and embedded-output architecture as the outer shell,
-keep OTF/CFF-specific transform logic under `fonttool-cff`, and execute the
-delivery in two phases inside one plan.
+keep OTF/CFF-specific transform logic under `fonttool-cff`, and make
+`fonttool-runtime` / `fonttool-wasm` thin wrappers over the same Rust-owned
+success path.
 
 At a high level:
 
 - keep `fonttool-cli` responsible for argument parsing, input classification,
   and output dispatch
-- in the transition phase, make `fonttool-harfbuzz` the only crate that owns
-  HarfBuzz versioning, linking, headers, and raw HarfBuzz calls
 - keep `fonttool-eot` and shared embedded-output code responsible for
   `.eot` / `.fntdata` wrapping
 - expand `decode` to preserve embedded `CFF` and embedded `CFF2` when the
@@ -118,8 +131,8 @@ At a high level:
   Office embedding
 - add `WOFF/WOFF2` source loading that materializes canonical SFNT bytes before
   flavor inspection and output dispatch
-- in the steady-state phase, move source loading, subset, and outline
-  extraction onto `allsorts`-owned Rust APIs inside `fonttool-cff`
+- keep runtime/WASM conversion requests on that same materialize -> inspect ->
+  instantiate -> embed path
 - keep `OTF -> TTF` as an explicit CLI compatibility branch, not the default
   output flavor
 
@@ -191,29 +204,26 @@ If a structurally complete embedded `CFF2` sample becomes available later, it
 can be added as an extra fixture, but it is no longer required to unblock the
 main implementation path.
 
-### Transitional HarfBuzz Adapter Layer
+### Runtime/WASM Bridge Layer
 
-`fonttool-harfbuzz` becomes the sole HarfBuzz integration boundary during the
-transition phase.
+`fonttool-runtime` and `fonttool-wasm` are compatibility wrappers, not separate
+font engines.
 
 Responsibilities:
 
-- own the workspace's HarfBuzz version and linking mode
-- expose Rust-facing wrappers for:
-  - blob / face / font creation
-  - variation axis inspection and normalized coordinate selection
-  - subsetting
-  - glyph draw / outline collection needed by `OTF -> TTF`
-- hide HarfBuzz raw types and loader details from callers
+- accept filesystem-backed or buffer-backed requests for embedded output
+- reuse the same Rust-owned `load_font_source -> inspect -> instantiate ->
+  embed` path already shipped by the CLI
+- preserve runtime scheduling diagnostics and thread-mode reporting
+- surface the same validation errors the CLI path already exposes, especially
+  static-input `--variation` rejection
 
 Non-responsibilities:
 
-- `fonttool-harfbuzz` does not own `cu2qu`, TrueType rebuild, or SFNT table
-  assembly
-- it does not become a general font-conversion crate
-
-The key rule is simple: no other workspace crate may link or call HarfBuzz
-directly while the transition phase is still active.
+- they do not introduce a second font parser or subset implementation
+- they do not own CFF/CFF2 instancing policy
+- they do not diverge from the CLI support boundary for supported
+  `CFF/CFF2/WOFF` inputs
 
 ### Steady-State Allsorts Core Layer
 
@@ -334,9 +344,8 @@ Requirements:
 - the conversion path must be visibly opt-in
 - docs and tests must distinguish "default Office mode" from
   "explicit TTF compatibility mode"
-- during the transition phase, outline extraction for this path may come from
-  `fonttool-harfbuzz`
-- in the steady-state phase, outline extraction must come from `allsorts`
+- outline extraction for this path must come from the shipped Rust-owned
+  `fonttool-cff` path
 - `fonttool-cff` must keep only the conversion stages that are specific to its
   own domain:
   - `cu2qu`
@@ -346,8 +355,8 @@ Requirements:
 ## Third-Party Library Policy
 
 New dependencies are allowed only if they remain contained within
-`fonttool-harfbuzz`, `fonttool-cff`, or another narrowly scoped
-font-processing boundary.
+`fonttool-cff`, `fonttool-runtime`, or another narrowly scoped font-processing
+boundary.
 
 Adoption rules:
 
@@ -355,10 +364,8 @@ Adoption rules:
 - require explicit user confirmation before adding the dependency
 - keep `fonttool-cli`, runtime, and WASM layers insulated from dependency
   public APIs
-- do not introduce a second HarfBuzz entry path while the transitional adapter
-  still exists
-- keep HarfBuzz version decisions centralized inside `fonttool-harfbuzz`
-  until the allsorts convergence phase removes it from supported flows
+- do not reintroduce a second native or non-Rust-owned path for the supported
+  `CFF/CFF2/WOFF` features
 
 Reason:
 
@@ -467,12 +474,14 @@ Formal acceptance coverage:
 6. Office-oriented compatibility regression:
    - at least one PowerPoint-derived static `OTF/CFF` embedded sample must
      remain supported
-7. HarfBuzz integration regression:
-   - the CLI conversion path must execute through the same HarfBuzz adapter
-     boundary used by the subsetting path
-8. allsorts convergence regression:
-   - the final supported `CFF/CFF2/WOFF` encode, subset, and convert paths must
-     execute without routing through `fonttool-harfbuzz`
+7. runtime/WASM regression:
+   - `fonttool-runtime` and `fonttool-wasm` must support:
+     - static `CFF -> .eot`
+     - static `CFF/WOFF(CFF) -> .fntdata`
+     - variable `CFF2 -> instance -> .eot`
+     - variable `CFF2 -> instance -> .fntdata`
+   - the runtime/WASM path must surface the same static-input variation
+     validation errors as the CLI path
 
 Out of scope for formal completion:
 
@@ -494,14 +503,15 @@ Cover:
 - static CFF serialization
 - optional TTF conversion boundary selection
 
-### 2. Unit Tests in `fonttool-harfbuzz`
+### 2. Unit Tests in `fonttool-runtime` And `fonttool-wasm`
 
 Cover:
 
-- face creation from source OTF bytes
-- axis inspection / normalized coordinate construction
-- glyph outline collection for a known OTF fixture
-- subsetting through the unified adapter boundary
+- static `CFF -> .eot`
+- `WOFF(CFF) -> .fntdata`
+- variable `CFF2 -> instance -> embedded output`
+- shared validation-error surfacing for static `--variation`
+- scheduler diagnostics remaining intact while conversion support expands
 
 ### 3. CLI and Integration Tests
 
@@ -547,14 +557,9 @@ Implementation should proceed in this order:
 3. implement variable-instance handling for `CFF2`
 4. implement default OTF encode through static `OTF/CFF`
 5. implement static and variable subset flows
-6. promote `fonttool-harfbuzz` to the single HarfBuzz adapter
-7. rebase explicit `OTF -> TTF` conversion on that adapter
-8. add `WOFF/WOFF2` fixtures and source-materialization support through
-   `allsorts`
-9. rebase supported `CFF/CFF2/WOFF` subset and outline extraction onto
-   `allsorts`
-10. remove `fonttool-harfbuzz` from the steady-state supported path, update
-    docs/contracts, and run final verification
+6. expand `fonttool-runtime` to reuse the shipped Rust-owned embedded OTF path
+7. rebase `fonttool-wasm` and runtime integration tests onto real success paths
+8. update runtime/WASM docs and verification contracts
 
 ## Risk Controls
 
@@ -574,28 +579,24 @@ accepted, instantiated, tested, and emitted through at least one supported path.
 The explicit `OTF -> TTF` branch is valuable for compatibility, but it must not
 silently replace the default static `OTF/CFF` Office path.
 
-### HarfBuzz Transition Must Be Singular
+### Runtime/WASM Must Reuse The Shipped Path
 
-The workspace must not ship two independent HarfBuzz integration paths in the
-same CLI binary. `fonttool-harfbuzz` is the only allowed HarfBuzz boundary
-while the transition phase exists.
-
-### Allsorts Convergence Must Actually Finish
-
-This plan is not complete if it stops at "HarfBuzz is unified". The same plan
-must also land the allsorts-owned `WOFF/WOFF2` source path and retire
-`fonttool-harfbuzz` from supported `CFF/CFF2/WOFF` encode, subset, and convert
-flows.
+This plan is not complete if runtime/WASM stays on deferred or divergent logic
+while the CLI path succeeds. The runtime/WASM surfaces must reuse the same
+Rust-owned source materialization, variation instancing, and embedded-output
+path that already defines the shipped CLI behavior.
 
 ## Completion Definition
 
-This project is complete when the Rust CLI provides test-covered support for:
+This project is complete when the Rust CLI, runtime, and WASM surfaces provide
+test-covered support for:
 
 - embedded static `CFF` decode from a real Office fixture
 - static `CFF` `encode + subset`
 - variable `CFF2` instance selection plus `encode + subset`
 - default Office-compatible embedded output through static `OTF/CFF`
+- runtime/WASM `EOT` and `.fntdata` output for static `CFF`, variable `CFF2`,
+  and materialized `WOFF(CFF)` input
 - explicit CLI-selectable `OTF -> TTF` conversion
 - explicit `WOFF/WOFF2` input support with flavor-aware dispatch
-- a final allsorts-first supported path for `CFF/CFF2/WOFF` flows, with no
-  product requirement on `fonttool-harfbuzz`
+- a final allsorts-first supported path for `CFF/CFF2/WOFF` flows
