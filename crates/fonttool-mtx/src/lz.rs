@@ -10,7 +10,10 @@ const LEN_WIDTH: usize = 3;
 const BIT_RANGE: usize = LEN_WIDTH - 1;
 const ROOT: usize = 1;
 const MAX_DECOMPRESSED_LENGTH: usize = 100 * 1024 * 1024;
-const MAX_HASH_CHAIN: usize = 96;
+// The Java sfntly reference walks up to 256 match nodes before truncating the
+// chain. Matching that search depth materially improves the case7 MTX block1
+// compression ratio and keeps Rust output closer to the historical Office path.
+const MAX_HASH_CHAIN: usize = 256;
 const MAX_LITERAL_COST_CACHE: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +73,7 @@ struct DecisionContext<'a> {
     sym_encoder: &'a HuffmanEncoder,
     dist_encoder: &'a HuffmanEncoder,
     len_encoder: &'a HuffmanEncoder,
+    total_dist_ranges: usize,
     max_dist: usize,
 }
 
@@ -80,10 +84,12 @@ impl<'a> DecisionContext<'a> {
         len_encoder: &'a HuffmanEncoder,
         total_len: usize,
     ) -> Self {
+        let total_dist_ranges = num_dist_ranges(total_len);
         Self {
             sym_encoder,
             dist_encoder,
             len_encoder,
+            total_dist_ranges,
             max_dist: max_supported_distance(total_len),
         }
     }
@@ -816,9 +822,9 @@ fn choose_copy_candidate(
                 &bytes[..first.len - 1],
                 context,
             ) {
+                let shortened_dist = first.dist + 1;
                 let current_cost =
                     first.cost_per_byte * first.len + after.cost_per_byte * after.len;
-                let shortened_dist = first.dist + 1;
                 let shortened_cost = copy_symbol_cost(
                     shortened_dist,
                     first.len - 1,
@@ -826,11 +832,36 @@ fn choose_copy_candidate(
                     context.dist_encoder,
                     context.len_encoder,
                 ) + shortened.cost_per_byte * shortened.len;
-                if shortened.len > after.len && shortened_cost < current_cost {
+                let current_avg = current_cost / (first.len + after.len);
+                let shortened_avg = shortened_cost / (first.len - 1 + shortened.len);
+                if shortened.len > after.len
+                    && shortened.cost_per_byte < after.cost_per_byte
+                    && current_avg > shortened_avg
+                {
                     first.len -= 1;
                     first.dist = shortened_dist;
                 }
             }
+        }
+    }
+
+    if first.len == 2 {
+        let dup2 = 256 + (1 << LEN_WIDTH) * context.total_dist_ranges;
+        let dup2_cost = context.sym_encoder.write_symbol_cost(dup2);
+
+        if matches_dup(bytes, finder, 2) {
+            let tail_literal_cost = context.sym_encoder.write_symbol_cost(usize::from(bytes[1]));
+            if first.cost_per_byte * 2 > dup2_cost + tail_literal_cost {
+                return None;
+            }
+        } else if finder
+            .history
+            .last()
+            .zip(bytes.get(1))
+            .is_some_and(|(&previous, &next)| previous == next)
+            && first.cost_per_byte * 2 > literal_cost + dup2_cost
+        {
+            return None;
         }
     }
 
@@ -886,10 +917,8 @@ fn find_best_candidate_with_prefix(
     }
 
     if !prefix.is_empty() {
-        for candidate_index in base_len.saturating_sub(1)..current_index.saturating_sub(1) {
-            if virtual_hash_key(finder, prefix, candidate_index) != key {
-                continue;
-            }
+        let candidate_index = base_len.saturating_sub(1);
+        if virtual_hash_key(finder, prefix, candidate_index) == key {
             consider_virtual_candidate(
                 bytes,
                 finder,
@@ -935,7 +964,40 @@ fn consider_virtual_candidate(
         return;
     }
 
+    if let Some(old) = best.as_ref() {
+        if matched <= old.len && dist > old.dist {
+            if matched + 2 <= old.len {
+                return;
+            }
+            if dist > (old.dist << DIST_WIDTH)
+                && (matched < old.len || dist > (old.dist << (DIST_WIDTH + 1)))
+            {
+                return;
+            }
+        }
+    }
+
     let literal_cost = literal_run_cost(bytes, 0, matched, context.sym_encoder, literal_cache);
+    if literal_cost
+        <= best.as_ref().map_or(0, |old| old.gain)
+    {
+        return;
+    }
+
+    let dist_ranges = num_dist_ranges_for_distance(dist);
+    let fast_copy_cost = copy_length_symbol_cost(
+        dist,
+        matched,
+        context.sym_encoder,
+        context.len_encoder,
+    );
+    let gain_threshold = literal_cost
+        .saturating_sub(fast_copy_cost)
+        .saturating_sub(dist_ranges << 16);
+    if gain_threshold <= best.as_ref().map_or(0, |old| old.gain) {
+        return;
+    }
+
     let copy_cost = copy_symbol_cost(
         dist,
         matched,
@@ -953,7 +1015,8 @@ fn consider_virtual_candidate(
         gain: literal_cost - copy_cost,
         cost_per_byte: copy_cost / matched,
     };
-    if best.as_ref().is_none_or(|old| candidate.gain > old.gain) {
+    let replace = best.as_ref().is_none_or(|old| candidate.gain > old.gain);
+    if replace {
         *best = Some(candidate);
     }
 }
@@ -1030,6 +1093,36 @@ fn copy_symbol_cost(
         cost += dist_encoder.write_symbol_cost(bits);
     }
 
+    cost
+}
+
+fn copy_length_symbol_cost(
+    dist: usize,
+    len: usize,
+    sym_encoder: &HuffmanEncoder,
+    len_encoder: &HuffmanEncoder,
+) -> usize {
+    let dist_ranges = num_dist_ranges_for_distance(dist);
+    let encoded_len = if dist >= MAX_2BYTE_DIST {
+        len - (LEN_MIN3 - LEN_MIN)
+    } else {
+        len
+    };
+    let value = encoded_len - LEN_MIN;
+    let group_count = value_group_count(value, BIT_RANGE);
+    let top_shift = BIT_RANGE * (group_count - 1);
+    let top_bits = (value >> top_shift) & ((1 << BIT_RANGE) - 1);
+    let symbol =
+        256 + (dist_ranges - 1) * (1 << LEN_WIDTH) + ((group_count > 1) as usize) * 4 + top_bits;
+
+    let mut cost = sym_encoder.write_symbol_cost(symbol);
+    if group_count > 1 {
+        for group_index in (0..(group_count - 1)).rev() {
+            let bits = (value >> (group_index * BIT_RANGE)) & ((1 << BIT_RANGE) - 1);
+            let symbol = ((group_index != 0) as usize) << (LEN_WIDTH - 1) | bits;
+            cost += len_encoder.write_symbol_cost(symbol);
+        }
+    }
     cost
 }
 

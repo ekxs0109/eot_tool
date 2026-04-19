@@ -244,3 +244,54 @@ fn backreference_encoder_matches_java_reference_length_on_overlapping_repeats() 
     assert_eq!(decompressed, input);
     assert_eq!(compressed.len(), JAVA_REFERENCE_LEN);
 }
+
+#[test]
+fn backreference_encoder_matches_java_reference_length_on_case7_style_branching_input() {
+    // Measured from sfntly_web LzcompCompress.compress.
+    const JAVA_REFERENCE_LEN: usize = 16;
+    let input = *b"DBDCAECABEAECDCC";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+    assert!(
+        compressed.len() <= JAVA_REFERENCE_LEN,
+        "expected branching input to encode within the Java reference length target of {JAVA_REFERENCE_LEN} bytes, got {}",
+        compressed.len()
+    );
+}
+
+#[test]
+fn backreference_encoder_matches_java_reference_length_on_shortened_copy_branch_input() {
+    // Measured from sfntly_web LzcompCompress.compress.
+    const JAVA_REFERENCE_LEN: usize = 14;
+    let input = *b"DEBBCEACAEDE";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+    assert!(
+        compressed.len() <= JAVA_REFERENCE_LEN,
+        "expected shortened-copy input to encode within the Java reference length target of {JAVA_REFERENCE_LEN} bytes, got {}",
+        compressed.len()
+    );
+}
+
+#[test]
+fn backreference_encoder_matches_java_reference_length_on_longer_shortened_copy_input() {
+    // Measured from sfntly_web LzcompCompress.compress.
+    const JAVA_REFERENCE_LEN: usize = 31;
+    let input = *b"DEABBCCADECDCCBBCEBABBEDDECDDEDDEEAACBBC";
+
+    let compressed = compress_lz(&input).expect("backreference encoder should succeed");
+    let decompressed = decompress_lz(&compressed).expect("compressed data should decode");
+
+    assert_eq!(decompressed, input);
+    assert!(
+        compressed.len() <= JAVA_REFERENCE_LEN,
+        "expected longer shortened-copy input to encode within the Java reference length target of {JAVA_REFERENCE_LEN} bytes, got {}",
+        compressed.len()
+    );
+}
