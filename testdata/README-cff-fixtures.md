@@ -78,6 +78,51 @@
   - existing OTF inspection/subsetting tests already depended on it
   - tracking it in the repository removes the old local-untracked dependency and makes new worktrees self-contained
 
+## `testdata/OpenSans-Regular.woff`
+
+- SHA-256: `87fc29c5f45b0e8be6823ab7d4b6a8a29e4d0f425a2466aa09edd8eb1d3c28c4`
+- Derived from tracked source: `testdata/OpenSans-Regular.ttf`
+- Generation command:
+  `/Users/ekxs/Codes/eot_tool/build/venv/bin/python - <<'PY' ... TTFont(src).flavor = "woff" ... PY`
+- Regeneration note:
+  - load `testdata/OpenSans-Regular.ttf` with `fontTools.ttLib.TTFont`
+  - set `flavor = "woff"`
+  - save to `testdata/OpenSans-Regular.woff`
+- Why it is tracked:
+  - it provides a stable container-format fixture for allsorts source-materialization tests
+  - it keeps WOFF coverage self-contained in fresh worktrees
+
+## `testdata/OpenSans-Regular.woff2`
+
+- SHA-256: `7ee263235c498b56e5486bc162b48149de23745f8d33ea73cb9770007dcfb4b4`
+- Derived from tracked source: `testdata/OpenSans-Regular.ttf`
+- Generation prerequisites:
+  - `fontTools`
+  - the Python `brotli` extension so `fontTools` can write WOFF2
+- Generation command:
+  `/Users/ekxs/Codes/eot_tool/build/venv/bin/python - <<'PY' ... TTFont(src).flavor = "woff2" ... PY`
+- Regeneration note:
+  - load `testdata/OpenSans-Regular.ttf` with `fontTools.ttLib.TTFont`
+  - set `flavor = "woff2"`
+  - save to `testdata/OpenSans-Regular.woff2`
+- Why it is tracked:
+  - it provides a stable WOFF2 fixture for allsorts source-materialization tests
+  - it avoids depending on local ad-hoc webfont generation in each worktree
+
+## `testdata/cff-static.woff`
+
+- SHA-256: `3815c1b303964250b93c216e7e75951d53d99f9300ca9505384835ab895f5e76`
+- Derived from tracked source: `testdata/cff-static.otf`
+- Generation command:
+  `/Users/ekxs/Codes/eot_tool/build/venv/bin/python - <<'PY' ... TTFont(src).flavor = "woff" ... PY`
+- Regeneration note:
+  - load `testdata/cff-static.otf` with `fontTools.ttLib.TTFont`
+  - set `flavor = "woff"`
+  - save to `testdata/cff-static.woff`
+- Why it is tracked:
+  - it provides a stable static-CFF webfont fixture for allsorts materialization and convert coverage
+  - it keeps the verified `WOFF(CFF) -> OTF(CFF) -> TTF` path self-contained in fresh worktrees
+
 ## `testdata/otto-cff2-variable.fntdata`
 
 - Source font: `SourceHanSansVFProtoCN.otf`

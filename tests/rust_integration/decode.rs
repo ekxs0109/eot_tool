@@ -133,8 +133,12 @@ fn decode_otto_cff2_variable_fixture_writes_variable_otto_output() {
 
     let output = run_fonttool([
         "decode",
-        input_path.to_str().expect("fixture path should be valid utf-8"),
-        output_path.to_str().expect("temp path should be valid utf-8"),
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
     ]);
 
     assert!(
@@ -154,8 +158,12 @@ fn decode_otto_cff_office_fixture_writes_static_otto_output() {
 
     let output = run_fonttool([
         "decode",
-        input_path.to_str().expect("fixture path should be valid utf-8"),
-        output_path.to_str().expect("temp path should be valid utf-8"),
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
     ]);
 
     assert!(
@@ -275,7 +283,9 @@ fn decode_pptx_fixture_fntdata_reconstructs_roundtrip_ready_truetype() {
 
     let output = run_fonttool([
         "decode",
-        input_path.to_str().expect("fixture path should be valid utf-8"),
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         output_path
             .to_str()
             .expect("temp path should be valid utf-8"),
@@ -451,8 +461,8 @@ fn build_prefixed_office_like_otf_eot(corrupt_directory: bool) -> Vec<u8> {
 
     let compressed_block1 =
         compress_lz(&prefixed_block1).expect("prefixed Office-like block1 should compress");
-    let payload = pack_mtx_container(&compressed_block1, None, None)
-        .expect("MTX container should pack");
+    let payload =
+        pack_mtx_container(&compressed_block1, None, None).expect("MTX container should pack");
 
     build_raw_sfnt_payload_eot(&payload)
 }

@@ -18,7 +18,13 @@ fn assert_python_success_or_skip_missing_fonttools(output: std::process::Output)
 
 #[test]
 fn python_verify_font_entrypoint_accepts_a_valid_font() {
-    let output = support::run_python(["tests/verify_font.py", "testdata/OpenSans-Regular.ttf"]);
+    let font_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
+    let output = support::run_python([
+        "tests/verify_font.py",
+        font_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
+    ]);
     assert_python_success_or_skip_missing_fonttools(output);
 }
 
@@ -26,9 +32,12 @@ fn python_verify_font_entrypoint_accepts_a_valid_font() {
 #[test]
 fn swift_coretext_probe_accepts_supported_decode_output_from_rust_harness() {
     let decoded_path = support::temp_ttf();
+    let input_path = support::fixture_path("testdata/font1.fntdata");
     let decode = support::run_fonttool([
         "decode",
-        "testdata/font1.fntdata",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         decoded_path
             .to_str()
             .expect("temp path should be valid utf-8"),

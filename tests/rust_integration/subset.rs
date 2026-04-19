@@ -342,7 +342,7 @@ fn run_subset_command(args: &[&str], cwd: &Path) -> std::process::Output {
 }
 
 fn build_subset_fixture_font(include_extra_tables: bool) -> fonttool_sfnt::OwnedSfntFont {
-    let bytes = fs::read(workspace_root().join("testdata/OpenSans-Regular.ttf"))
+    let bytes = fs::read(support::fixture_path("testdata/OpenSans-Regular.ttf"))
         .expect("OpenSans fixture should be readable");
     let mut font = load_sfnt(&bytes).expect("OpenSans fixture should load");
 
@@ -618,7 +618,7 @@ fn subset_opensans_ttf_glyph_ids_rebuilds_core_tables() {
 
 #[test]
 fn subset_static_cff_text_input_emits_a_legal_static_cff_font() {
-    let input_path = workspace_root().join("testdata/cff-static.otf");
+    let input_path = support::fixture_path("testdata/cff-static.otf");
     let output_path = temp_file("fntdata");
     let isolated_cwd = temp_file("cwd");
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
@@ -701,7 +701,7 @@ fn subset_embedded_static_cff_text_input_uses_decoded_sfnt_bytes() {
 
 #[test]
 fn subset_variable_cff2_text_input_materializes_static_cff_output() {
-    let input_path = workspace_root().join("testdata/cff2-variable.otf");
+    let input_path = support::fixture_path("testdata/cff2-variable.otf");
     let output_path = temp_file("fntdata");
     let isolated_cwd = temp_file("cwd");
     fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
@@ -747,7 +747,7 @@ fn subset_variable_cff2_text_input_materializes_static_cff_output() {
 
 #[test]
 fn subset_can_emit_raw_sfnt_v2_output() {
-    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = temp_file("eot");
     let _cleanup = TempCleanup::new(vec![output_path.clone()]);
 
@@ -780,7 +780,7 @@ fn subset_can_emit_raw_sfnt_v2_output() {
 
 #[test]
 fn subset_fntdata_output_defaults_to_xor_on() {
-    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = temp_file("fntdata");
     let _cleanup = TempCleanup::new(vec![output_path.clone()]);
 
@@ -810,7 +810,7 @@ fn subset_fntdata_output_defaults_to_xor_on() {
 
 #[test]
 fn subset_supports_all_embedded_output_mode_combinations() {
-    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let cases = [
         ("sfnt", "off", "v1", 0x0002_0001, false),
         ("sfnt", "off", "v2", 0x0002_0002, false),

@@ -10,17 +10,16 @@ use embedded_output::{
     EmbeddedOutputOptions, EmbeddedPayloadFormat, EmbeddedXorMode,
 };
 use fonttool_cff::{
-    inspect_otf_font, instantiate_variable_cff2, parse_variation_axes, serialize_subset_otf,
-    subset_static_cff, subset_variable_cff2, CffError,
+    convert_otf_to_ttf, inspect_otf_font, instantiate_variable_cff2, load_font_source,
+    parse_variation_axes, serialize_subset_otf, subset_static_cff, subset_variable_cff2,
+    CffError,
 };
 use fonttool_eot::parse_eot_header;
 use fonttool_glyf::{decode_glyf, encode_glyf};
-use fonttool_harfbuzz::subset_font_bytes;
 use fonttool_mtx::{decompress_lz, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
-    apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
-    SubsetWarnings,
+    should_copy_encode_block1_table, subset_owned_font, GlyphIdRequest,
 };
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
@@ -86,6 +85,19 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Some("convert") => match handle_convert_args(args.collect()) {
+            Ok(request) => match convert_file(request) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("fonttool: {error}");
+                    ExitCode::from(1)
+                }
+            },
+            Err(error) => {
+                eprintln!("fonttool: {error}");
+                ExitCode::from(2)
+            }
+        },
         Some(command) => {
             eprintln!("fonttool: unknown command `{command}`");
             ExitCode::from(2)
@@ -99,6 +111,14 @@ struct EncodeCliRequest {
     output_path: PathBuf,
     variation_axes: Option<String>,
     embedded_output: EmbeddedOutputOptions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConvertCliRequest {
+    input_path: PathBuf,
+    output_path: PathBuf,
+    target: String,
+    variation_axes: Option<String>,
 }
 
 fn parse_payload_format(value: &str) -> Result<EmbeddedPayloadFormat, String> {
@@ -207,6 +227,44 @@ fn handle_encode_args(args: Vec<String>) -> Result<EncodeCliRequest, String> {
     Ok(request)
 }
 
+fn handle_convert_args(args: Vec<String>) -> Result<ConvertCliRequest, String> {
+    if args.len() < 4 {
+        return Err("convert expects INPUT OUTPUT and `--to <FORMAT>`".to_string());
+    }
+
+    let mut request = ConvertCliRequest {
+        input_path: args[0].clone().into(),
+        output_path: args[1].clone().into(),
+        target: String::new(),
+        variation_axes: None,
+    };
+
+    let mut index = 2usize;
+    while index < args.len() {
+        let flag = &args[index];
+        if index + 1 >= args.len() {
+            return Err("convert flag is missing a value".to_string());
+        }
+
+        match flag.as_str() {
+            "--to" => request.target = args[index + 1].clone(),
+            "--variation" => request.variation_axes = Some(args[index + 1].clone()),
+            _ => return Err(format!("unsupported convert flag `{flag}`")),
+        }
+
+        index += 2;
+    }
+
+    if request.target.is_empty() {
+        return Err("convert expects INPUT OUTPUT and `--to <FORMAT>`".to_string());
+    }
+    if request.target != "ttf" {
+        return Err(format!("unsupported convert target `{}`", request.target));
+    }
+
+    Ok(request)
+}
+
 fn print_help() {
     println!("fonttool");
     println!();
@@ -216,6 +274,7 @@ fn print_help() {
     println!("  encode <INPUT> <OUTPUT>  Encode a font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
     println!("  subset <INPUT> <OUTPUT> ...  Subset supported non-OTF glyph-id inputs in Rust");
+    println!("  convert <INPUT> <OUTPUT>  Explicitly convert supported OTF input to another format");
     println!();
     println!("Options:");
     println!("  -h, --help  Print help");
@@ -544,6 +603,16 @@ fn encode_file(
     if output_path
         .extension()
         .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("ttf"))
+    {
+        return Err(
+            "encode output must be .eot or .fntdata; use `convert --to ttf` for TrueType output"
+                .to_string(),
+        );
+    }
+    if output_path
+        .extension()
+        .and_then(|value| value.to_str())
         .is_some_and(|value| value.eq_ignore_ascii_case("fntdata"))
     {
         return Err(
@@ -551,8 +620,9 @@ fn encode_file(
         );
     }
 
-    let input_bytes = fs::read(input_path.as_ref())
+    let raw_input_bytes = fs::read(input_path.as_ref())
         .map_err(|error| format!("failed to read {}: {error}", input_path.as_ref().display()))?;
+    let input_bytes = load_font_source(&raw_input_bytes).map_err(|error| error.to_string())?;
     let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
     if kind.is_cff_flavor {
         return encode_otf_file(
@@ -624,6 +694,32 @@ fn encode_file(
     Ok(())
 }
 
+fn convert_file(request: ConvertCliRequest) -> Result<(), String> {
+    let raw_bytes = fs::read(&request.input_path)
+        .map_err(|error| format!("failed to read {}: {error}", request.input_path.display()))?;
+    let bytes = load_font_source(&raw_bytes).map_err(|error| error.to_string())?;
+
+    let output = match request.target.as_str() {
+        "ttf" => {
+            let axes = parse_variation_axes(request.variation_axes.as_deref().unwrap_or_default())
+                .map_err(|error| error.to_string())?;
+            let source_font = load_sfnt(&bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+            if source_font.version_tag() == SFNT_VERSION_TRUETYPE {
+                if !axes.is_empty() {
+                    return Err("convert does not support --variation for non-OTF input".to_string());
+                }
+                bytes
+            } else {
+                convert_otf_to_ttf(&bytes, &axes).map_err(|error| error.to_string())?
+            }
+        }
+        other => return Err(format!("unsupported convert target `{other}`")),
+    };
+
+    fs::write(&request.output_path, output)
+        .map_err(|error| format!("failed to write {}: {error}", request.output_path.display()))
+}
+
 fn encode_otf_file(
     input_bytes: &[u8],
     output_path: &Path,
@@ -673,18 +769,8 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
     let glyph_ids = GlyphIdRequest::parse_csv(glyph_ids_csv)
         .map_err(|error| format!("invalid subset arguments: {error}"))?;
     let input_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
-    let plan =
-        plan_glyph_subset(&input_font, &glyph_ids, false).map_err(|error| error.to_string())?;
-    let mut harfbuzz_input = input_font.clone();
-    let mut subset_warnings = SubsetWarnings::default();
-    apply_output_table_policy(&mut harfbuzz_input, &mut subset_warnings);
-    let harfbuzz_input_bytes = serialize_sfnt(&harfbuzz_input)
-        .map_err(|error| format!("failed to serialize subset input: {error}"))?;
-    let subset_bytes = subset_font_bytes(&harfbuzz_input_bytes, &plan)
-        .map_err(|error| format!("failed to subset font with HarfBuzz: {error}"))?;
-    let mut subset_font = load_sfnt(&subset_bytes)
-        .map_err(|error| format!("invalid HarfBuzz subset SFNT: {error}"))?;
-    apply_output_table_policy(&mut subset_font, &mut subset_warnings);
+    let (subset_font, subset_warnings) =
+        subset_owned_font(input_font, &glyph_ids).map_err(|error| error.to_string())?;
     let subset_bytes = serialize_sfnt(&subset_font)
         .map_err(|error| format!("failed to serialize subset: {error}"))?;
     let head = table_bytes(&subset_font, TAG_HEAD, "head")?;
@@ -810,8 +896,12 @@ fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
                 )
             })
         }
-        _ => fs::read(input_path)
-            .map_err(|error| format!("failed to read {}: {error}", input_path.display())),
+        _ => {
+            let input_bytes = fs::read(input_path)
+                .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
+            load_font_source(&input_bytes)
+                .map_err(|error| format!("failed to load subset input {}: {error}", input_path.display()))
+        }
     }
 }
 

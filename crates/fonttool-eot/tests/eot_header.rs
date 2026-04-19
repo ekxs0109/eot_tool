@@ -1,14 +1,50 @@
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use fonttool_eot::{build_eot_file, parse_eot_header, EotBuildOptions, EotHeaderError, EotVersion};
 
-const FIXTURE_BYTES: &[u8] = include_bytes!("../../../testdata/wingdings3.eot");
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root should exist")
+}
 
-fn fixture_bytes() -> &'static [u8] {
-    FIXTURE_BYTES
+fn shared_repo_root() -> Option<PathBuf> {
+    let workspace = workspace_root();
+    let worktrees_dir = workspace.parent()?;
+    if worktrees_dir.file_name() != Some(OsStr::new(".worktrees")) {
+        return None;
+    }
+
+    Some(worktrees_dir.parent()?.to_path_buf())
+}
+
+fn fixture_path(relative: &str) -> PathBuf {
+    let workspace_path = workspace_root().join(relative);
+    if workspace_path.exists() {
+        return workspace_path;
+    }
+
+    if let Some(shared_root) = shared_repo_root() {
+        let shared_path = shared_root.join(relative);
+        if shared_path.exists() {
+            return shared_path;
+        }
+    }
+
+    workspace_path
+}
+
+fn fixture_bytes() -> Vec<u8> {
+    fs::read(fixture_path("testdata/wingdings3.eot")).expect("fixture should be readable")
 }
 
 #[test]
 fn parses_eot_header_lengths_and_flags() {
-    let header = parse_eot_header(fixture_bytes()).unwrap();
+    let bytes = fixture_bytes();
+    let header = parse_eot_header(&bytes).unwrap();
 
     assert_eq!(header.version, 0x0002_0002);
     assert_eq!(header.magic_number, 0x504c);
@@ -43,7 +79,7 @@ fn rejects_invalid_magic() {
 
 #[test]
 fn rejects_invalid_size_metadata() {
-    let mut bytes = fixture_bytes().to_vec();
+    let mut bytes = fixture_bytes();
     bytes[0..4].copy_from_slice(&0u32.to_le_bytes());
 
     let err = parse_eot_header(&bytes).unwrap_err();
@@ -52,8 +88,9 @@ fn rejects_invalid_size_metadata() {
 
 #[test]
 fn rejects_truncated_to_declared_header_length() {
-    let full = parse_eot_header(fixture_bytes()).unwrap();
-    let truncated = &fixture_bytes()[..full.header_length as usize];
+    let bytes = fixture_bytes();
+    let full = parse_eot_header(&bytes).unwrap();
+    let truncated = &bytes[..full.header_length as usize];
 
     let err = parse_eot_header(truncated).unwrap_err();
     assert_eq!(err, EotHeaderError::InvalidSizeMetadata);

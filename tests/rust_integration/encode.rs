@@ -6,12 +6,10 @@ use std::path::{Path, PathBuf};
 use fonttool_cff::{instantiate_variable_cff2, parse_variation_axes};
 use fonttool_eot::parse_eot_header;
 use fonttool_glyf::encode_glyf;
-use fonttool_harfbuzz::subset_font_bytes;
 use fonttool_mtx::{compress_lz, compress_lz_literals, decompress_lz, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
-    apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
-    SubsetWarnings,
+    plan_glyph_subset, should_copy_encode_block1_table, subset_owned_font, GlyphIdRequest,
 };
 
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
@@ -253,7 +251,7 @@ fn write_u32_be(bytes: &mut [u8], offset: usize, value: u32) {
 }
 
 fn repetitive_cvt_fixture_bytes() -> Vec<u8> {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let source_bytes = fs::read(&source_path).expect("source font should be readable");
     let mut font = load_sfnt(&source_bytes).expect("source font should parse");
     let repeated_cvt = b"Wingdings".repeat(8192);
@@ -332,7 +330,7 @@ fn synthetic_font_with_vdmx() -> Vec<u8> {
 fn encode_ttf_to_eot_roundtrips_required_tables() {
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let source_bytes = fs::read(&source_path).expect("source font should be readable");
 
     run_encode(&source_path, &output_path);
@@ -378,7 +376,7 @@ fn encode_ttf_to_eot_roundtrips_required_tables() {
 
 #[test]
 fn encode_can_emit_raw_sfnt_v1_payload() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -406,7 +404,7 @@ fn encode_can_emit_raw_sfnt_v1_payload() {
 
 #[test]
 fn encode_can_emit_raw_sfnt_v2_payload() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -434,7 +432,7 @@ fn encode_can_emit_raw_sfnt_v2_payload() {
 
 #[test]
 fn encode_can_emit_raw_sfnt_xor_v1_payload() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -465,7 +463,7 @@ fn encode_can_emit_raw_sfnt_xor_v1_payload() {
 
 #[test]
 fn encode_can_emit_raw_sfnt_xor_v2_payload() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -496,7 +494,7 @@ fn encode_can_emit_raw_sfnt_xor_v2_payload() {
 
 #[test]
 fn encode_can_emit_mtx_v1_payload() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -525,7 +523,7 @@ fn encode_can_emit_mtx_v1_payload() {
 
 #[test]
 fn encode_can_emit_mtx_v2_payload() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -554,7 +552,7 @@ fn encode_can_emit_mtx_v2_payload() {
 
 #[test]
 fn encode_can_emit_mtx_xor_v1_payload() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -585,7 +583,7 @@ fn encode_can_emit_mtx_xor_v1_payload() {
 
 #[test]
 fn encode_can_emit_mtx_xor_v2_payload() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -666,19 +664,19 @@ fn encode_ttf_uses_backreference_compressor_for_mtx_blocks() {
 #[test]
 fn encode_truetype_sample_uses_non_regressing_mtx_compression() {
     // Tracked PPTX-derived fixture from the case 7 sample so this regression stays portable.
-    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let source_path = support::fixture_path("testdata/font1.decoded.ttf");
     assert_non_regressing_mtx_compression(&source_path, false);
 }
 
 #[test]
 fn encode_truetype_with_non_empty_extra_blocks_uses_non_regressing_mtx_compression() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     assert_non_regressing_mtx_compression(&source_path, true);
 }
 
 #[test]
 fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
-    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let source_path = support::fixture_path("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let decoded_path = support::temp_ttf();
     let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
@@ -775,7 +773,7 @@ fn encode_decode_pptx_sample_roundtrips_after_backreference_compression() {
 
 #[test]
 fn encode_decode_pptx_sample_preserves_dsig_for_office_save_compatibility() {
-    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let source_path = support::fixture_path("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let decoded_path = support::temp_ttf();
     let _temps = TempFiles::new(vec![output_path.clone(), decoded_path.clone()]);
@@ -840,7 +838,7 @@ fn embedded_font_copy_dist(bytes: &[u8]) -> u32 {
 
 #[test]
 fn encode_pptx_case7_preserves_office_save_header_metadata() {
-    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let source_path = support::fixture_path("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -871,7 +869,7 @@ fn encode_pptx_case7_preserves_office_save_header_metadata() {
 #[test]
 #[ignore = "requires local/generated case7 baseline fixture"]
 fn encode_pptx_case7_preserves_original_copy_distance_metadata() {
-    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let source_path = support::fixture_path("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -892,7 +890,7 @@ fn encode_pptx_case7_preserves_original_copy_distance_metadata() {
 #[test]
 #[ignore = "requires local/generated case7 baseline fixture"]
 fn encode_pptx_case7_block1_is_within_original_size_budget_on_this_branch() {
-    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let source_path = support::fixture_path("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -967,7 +965,7 @@ fn format_embedded_font_report(label: &str, report: &support::EmbeddedFontReport
 #[test]
 #[ignore = "requires local/generated case7 baseline fixture"]
 fn encode_pptx_case7_reports_remaining_gap_when_budget_is_missed() {
-    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let source_path = support::fixture_path("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -988,7 +986,7 @@ fn encode_pptx_case7_reports_remaining_gap_when_budget_is_missed() {
 #[test]
 #[ignore = "requires local/generated case7 baseline fixture"]
 fn encode_pptx_case7_stays_within_tighter_case7_budget() {
-    let source_path = support::workspace_root().join("testdata/font1.decoded.ttf");
+    let source_path = support::fixture_path("testdata/font1.decoded.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 
@@ -1015,16 +1013,9 @@ fn subset_output_uses_backreference_compressor_for_block1() {
     fs::write(&source_path, &input_bytes).expect("fixture font should be writable");
     let input_font = load_sfnt(&input_bytes).expect("source font should parse");
     let glyph_ids = GlyphIdRequest::parse_csv("0,36,37,38").expect("glyph ids should parse");
-    let plan = plan_glyph_subset(&input_font, &glyph_ids, false).expect("subset plan should build");
-    let mut harfbuzz_input = input_font.clone();
-    let mut subset_warnings = SubsetWarnings::default();
-    apply_output_table_policy(&mut harfbuzz_input, &mut subset_warnings);
-    let harfbuzz_input_bytes =
-        serialize_sfnt(&harfbuzz_input).expect("subset input sfnt should serialize");
-    let subset_bytes =
-        subset_font_bytes(&harfbuzz_input_bytes, &plan).expect("harfbuzz subset should succeed");
-    let mut subset_font = load_sfnt(&subset_bytes).expect("subset font should parse");
-    apply_output_table_policy(&mut subset_font, &mut subset_warnings);
+    let _plan = plan_glyph_subset(&input_font, &glyph_ids, false).expect("subset plan should build");
+    let (subset_font, _subset_warnings) =
+        subset_owned_font(input_font, &glyph_ids).expect("pure Rust subset should succeed");
     let subset_bytes = serialize_sfnt(&subset_font).expect("subset sfnt should serialize");
     let expected_block1 =
         compress_lz(&subset_bytes).expect("subset block1 should compress with backreferences");
@@ -1100,7 +1091,7 @@ fn encode_ttf_excludes_vdmx_from_block1_and_roundtrip_output() {
 
 #[test]
 fn encode_ttf_block1_retains_cvt_table_when_present() {
-    let source_path = support::workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = support::temp_eot();
     let _temps = TempFiles::new(vec![output_path.clone()]);
 

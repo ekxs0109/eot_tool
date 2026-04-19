@@ -21,6 +21,32 @@ fn workspace_root() -> PathBuf {
         .expect("workspace root should exist")
 }
 
+fn shared_repo_root() -> Option<PathBuf> {
+    let workspace = workspace_root();
+    let worktrees_dir = workspace.parent()?;
+    if worktrees_dir.file_name() != Some(std::ffi::OsStr::new(".worktrees")) {
+        return None;
+    }
+
+    Some(worktrees_dir.parent()?.to_path_buf())
+}
+
+fn fixture_path(relative: &str) -> PathBuf {
+    let workspace_path = workspace_root().join(relative);
+    if workspace_path.exists() {
+        return workspace_path;
+    }
+
+    if let Some(shared_root) = shared_repo_root() {
+        let shared_path = shared_root.join(relative);
+        if shared_path.exists() {
+            return shared_path;
+        }
+    }
+
+    workspace_path
+}
+
 fn run_fonttool<I, S>(args: I) -> std::process::Output
 where
     I: IntoIterator<Item = S>,
@@ -112,6 +138,10 @@ fn help_succeeds_and_lists_top_level_commands() {
         stdout.contains("subset <INPUT> <OUTPUT>"),
         "expected subset command in help, stdout: {stdout}"
     );
+    assert!(
+        stdout.contains("convert <INPUT> <OUTPUT>"),
+        "expected convert command in help, stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -174,12 +204,74 @@ fn encode_without_required_args_exits_with_status_2_and_contract_error() {
 }
 
 #[test]
+fn convert_without_required_args_exits_with_status_2_and_contract_error() {
+    let output = run_fonttool(["convert"]);
+
+    assert_eq!(output.status.code(), Some(2));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("convert expects INPUT OUTPUT and `--to <FORMAT>`"),
+        "expected convert contract error, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn convert_requires_explicit_ttf_target() {
+    let input_path = fixture_path("testdata/cff-static.otf");
+    let output = run_fonttool([
+        "convert",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
+        temp_path("convert-missing-to", "ttf")
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("convert expects INPUT OUTPUT and `--to <FORMAT>`"),
+        "expected missing --to error, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn convert_rejects_unknown_target_format() {
+    let input_path = fixture_path("testdata/cff-static.otf");
+    let output = run_fonttool([
+        "convert",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
+        temp_path("convert-bad-target", "woff")
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+        "--to",
+        "woff",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsupported convert target `woff`"),
+        "expected bad target error, stderr: {stderr}"
+    );
+}
+
+#[test]
 fn decode_real_fixture_creates_parseable_output_file() {
     let output_path = temp_path("decode-font1", "otf");
+    let input_path = fixture_path("testdata/font1.fntdata");
 
     let output = run_fonttool([
         "decode",
-        "testdata/font1.fntdata",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         output_path
             .to_str()
             .expect("temp path should be valid utf-8"),
@@ -210,7 +302,7 @@ fn decode_real_fixture_creates_parseable_output_file() {
 fn decode_real_fixture_succeeds_outside_workspace_without_legacy_binary() {
     let isolated_cwd = temp_dir("decode-no-shellout-cwd");
     let output_path = temp_path("decode-no-shellout", "otf");
-    let input_path = workspace_root().join("testdata/font1.fntdata");
+    let input_path = fixture_path("testdata/font1.fntdata");
 
     let output = run_fonttool_in_dir(
         [
@@ -247,7 +339,7 @@ fn decode_real_fixture_succeeds_outside_workspace_without_legacy_binary() {
 fn encode_ttf_succeeds_outside_workspace_without_legacy_binary() {
     let isolated_cwd = temp_dir("encode-no-shellout-cwd");
     let encoded_path = temp_path("ttf-no-shellout", "eot");
-    let input_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let input_path = fixture_path("testdata/OpenSans-Regular.ttf");
 
     let encode_output = run_fonttool_in_dir(
         [
@@ -280,7 +372,7 @@ fn encode_ttf_succeeds_outside_workspace_without_legacy_binary() {
 fn encode_fntdata_output_is_explicitly_phase2_owned() {
     let isolated_cwd = temp_dir("encode-fntdata-phase2-cwd");
     let output_path = temp_path("ttf-phase2-fntdata", "fntdata");
-    let input_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let input_path = fixture_path("testdata/OpenSans-Regular.ttf");
 
     let output = run_fonttool_in_dir(
         [
@@ -320,7 +412,7 @@ fn encode_fntdata_output_is_explicitly_phase2_owned() {
 fn encode_cff_static_otf_succeeds_with_rust_owned_output() {
     let isolated_cwd = temp_dir("cff-otf-cwd");
     let encoded_path = temp_path("cff-static-roundtrip", "eot");
-    let input_path = workspace_root().join("testdata/cff-static.otf");
+    let input_path = fixture_path("testdata/cff-static.otf");
 
     let encode_output = run_fonttool_in_dir(
         [
@@ -356,6 +448,43 @@ fn encode_cff_static_otf_succeeds_with_rust_owned_output() {
 }
 
 #[test]
+fn encode_otf_to_ttf_requires_explicit_convert_command() {
+    let isolated_cwd = temp_dir("encode-otf-to-ttf-contract-cwd");
+    let output_path = temp_path("implicit-otf-to-ttf", "ttf");
+    let input_path = fixture_path("testdata/cff-static.otf");
+
+    let output = run_fonttool_in_dir(
+        [
+            "encode",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+        ],
+        &isolated_cwd,
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "encode output must be .eot or .fntdata; use `convert --to ttf` for TrueType output"
+        ),
+        "expected explicit convert guidance, stderr: {stderr}"
+    );
+    assert!(
+        !output_path.exists(),
+        "encode should not create .ttf output without explicit convert"
+    );
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
+}
+
+#[test]
 fn encode_missing_flag_value_is_rejected() {
     let output = run_fonttool(["encode", "in.otf", "out.eot", "--variation"]);
 
@@ -384,9 +513,12 @@ fn encode_unsupported_flag_is_rejected() {
 #[test]
 fn encode_static_otf_with_variation_is_rejected_by_current_contract() {
     let output_path = temp_path("encode-static-otf-variation", "eot");
+    let input_path = fixture_path("testdata/cff-static.otf");
     let output = run_fonttool([
         "encode",
-        "testdata/cff-static.otf",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         output_path
             .to_str()
             .expect("temp path should be valid utf-8"),
@@ -410,7 +542,7 @@ fn encode_static_otf_with_variation_is_rejected_by_current_contract() {
 #[test]
 fn encode_non_otf_with_variation_is_rejected_by_current_contract() {
     let output_path = temp_path("encode-non-otf-variation", "eot");
-    let input_path = workspace_root().join("testdata/font1.decoded.ttf");
+    let input_path = fixture_path("testdata/font1.decoded.ttf");
     let output = run_fonttool_in_dir(
         [
             "encode",
@@ -444,10 +576,7 @@ fn decode_obfuscated_fixture_copy_succeeds_for_supported_fntdata_fixture() {
     let input_path = temp_path("font1-obfuscated", "fntdata");
     let output_path = temp_path("font1-obfuscated", "otf");
 
-    write_obfuscated_fixture_copy(
-        &workspace_root().join("testdata/font1.fntdata"),
-        &input_path,
-    );
+    write_obfuscated_fixture_copy(&fixture_path("testdata/font1.fntdata"), &input_path);
 
     let output = run_fonttool([
         "decode",
@@ -533,9 +662,12 @@ fn subset_missing_selection_mode_is_rejected() {
 
 #[test]
 fn subset_static_otf_with_variation_is_rejected_by_current_contract() {
+    let input_path = fixture_path("testdata/cff-static.otf");
     let output = run_fonttool([
         "subset",
-        "testdata/cff-static.otf",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         "out.eot",
         "--text",
         "ABC",
@@ -556,11 +688,8 @@ fn subset_static_otf_with_variation_is_rejected_by_current_contract() {
 fn subset_cff_bytes_with_ttf_extension_still_use_otf_boundary() {
     let input_path = temp_path("cff-static-misnamed", "ttf");
     let output_path = temp_path("cff-static-misnamed-subset", "fntdata");
-    fs::copy(
-        workspace_root().join("testdata/cff-static.otf"),
-        &input_path,
-    )
-    .expect("fixture copy should be writable");
+    fs::copy(fixture_path("testdata/cff-static.otf"), &input_path)
+        .expect("fixture copy should be writable");
 
     let output = run_fonttool([
         "subset",
@@ -588,9 +717,12 @@ fn subset_cff_bytes_with_ttf_extension_still_use_otf_boundary() {
 #[test]
 fn subset_non_otf_with_variation_is_rejected_by_current_contract() {
     let output_path = temp_path("subset-non-otf-variation", "eot");
+    let input_path = fixture_path("testdata/OpenSans-Regular.ttf");
     let output = run_fonttool([
         "subset",
-        "testdata/OpenSans-Regular.ttf",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         output_path
             .to_str()
             .expect("temp path should be valid utf-8"),
@@ -615,9 +747,12 @@ fn subset_non_otf_with_variation_is_rejected_by_current_contract() {
 
 #[test]
 fn subset_otf_without_text_is_rejected_by_current_contract() {
+    let input_path = fixture_path("testdata/cff-static.otf");
     let output = run_fonttool([
         "subset",
-        "testdata/cff-static.otf",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         "out.eot",
         "--glyph-ids",
         "1,2",
@@ -634,9 +769,12 @@ fn subset_otf_without_text_is_rejected_by_current_contract() {
 
 #[test]
 fn subset_non_otf_with_text_only_is_rejected_by_current_contract() {
+    let input_path = fixture_path("testdata/OpenSans-Regular.ttf");
     let output = run_fonttool([
         "subset",
-        "testdata/OpenSans-Regular.ttf",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
         "out.eot",
         "--text",
         "ABC",
@@ -667,9 +805,10 @@ fn subset_unsupported_flag_is_rejected() {
 #[test]
 fn encode_rejects_unknown_payload_format() {
     let output_path = temp_path("encode-unknown-payload", "eot");
+    let input_path = fixture_path("testdata/OpenSans-Regular.ttf");
     let output = run_fonttool([
         "encode",
-        "testdata/OpenSans-Regular.ttf",
+        input_path.to_str().unwrap(),
         output_path.to_str().unwrap(),
         "--payload-format",
         "bogus",
@@ -683,9 +822,10 @@ fn encode_rejects_unknown_payload_format() {
 #[test]
 fn subset_rejects_embedded_output_flags_for_ttf_output() {
     let output_path = temp_path("subset-ttf-output", "ttf");
+    let input_path = fixture_path("testdata/OpenSans-Regular.ttf");
     let output = run_fonttool([
         "subset",
-        "testdata/OpenSans-Regular.ttf",
+        input_path.to_str().unwrap(),
         output_path.to_str().unwrap(),
         "--glyph-ids",
         "0,1,2",

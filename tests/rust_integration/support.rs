@@ -10,6 +10,7 @@ use fonttool_glyf::{decode_glyf, GlyfDecodeError};
 use fonttool_mtx::{decompress_lz, parse_mtx_container, LzDecompressError, MtxContainerError};
 use fonttool_sfnt::{
     load_sfnt, serialize_sfnt, OwnedSfntFont, ParseError, SerializeError, SFNT_VERSION_OTTO,
+    SFNT_VERSION_TRUETYPE,
 };
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
@@ -269,6 +270,45 @@ pub fn assert_decoded_otto_preserves_office_style_static_cff_tables(
             String::from_utf8_lossy(&tag.to_be_bytes())
         );
     }
+}
+
+pub fn assert_true_type_glyf_output(path: &Path) {
+    let bytes = fs::read(path).expect("converted font should be readable");
+    let font = load_sfnt(&bytes).expect("converted font should load as sfnt");
+
+    assert_eq!(font.version_tag(), SFNT_VERSION_TRUETYPE);
+    assert!(
+        font.table(TAG_GLYF).is_some(),
+        "converted font should contain glyf"
+    );
+    assert!(
+        font.table(TAG_LOCA).is_some(),
+        "converted font should contain loca"
+    );
+    assert!(
+        font.table(TAG_HEAD).is_some(),
+        "converted font should contain head"
+    );
+    assert!(
+        font.table(TAG_HHEA).is_some(),
+        "converted font should contain hhea"
+    );
+    assert!(
+        font.table(TAG_HMTX).is_some(),
+        "converted font should contain hmtx"
+    );
+    assert!(
+        font.table(TAG_MAXP).is_some(),
+        "converted font should contain maxp"
+    );
+    assert!(
+        font.table(TAG_CFF).is_none(),
+        "converted font should not contain CFF "
+    );
+    assert!(
+        font.table(TAG_CFF2).is_none(),
+        "converted font should not contain CFF2"
+    );
 }
 
 #[allow(dead_code)]
