@@ -1,8 +1,50 @@
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use fonttool_sfnt::parse_sfnt;
 use fonttool_sfnt::ParseError;
 
-const TEST_TTF_BYTES: &[u8] = include_bytes!("../../../testdata/OpenSans-Regular.ttf");
-const TEST_OTF_BYTES: &[u8] = include_bytes!("../../../testdata/cff-static.otf");
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root should exist")
+}
+
+fn shared_repo_root() -> Option<PathBuf> {
+    let workspace = workspace_root();
+    let worktrees_dir = workspace.parent()?;
+    if worktrees_dir.file_name() != Some(OsStr::new(".worktrees")) {
+        return None;
+    }
+
+    Some(worktrees_dir.parent()?.to_path_buf())
+}
+
+fn fixture_path(relative: &str) -> PathBuf {
+    let workspace_path = workspace_root().join(relative);
+    if workspace_path.exists() {
+        return workspace_path;
+    }
+
+    if let Some(shared_root) = shared_repo_root() {
+        let shared_path = shared_root.join(relative);
+        if shared_path.exists() {
+            return shared_path;
+        }
+    }
+
+    workspace_path
+}
+
+fn test_ttf_bytes() -> Vec<u8> {
+    fs::read(fixture_path("testdata/OpenSans-Regular.ttf")).expect("fixture should be readable")
+}
+
+fn test_otf_bytes() -> Vec<u8> {
+    fs::read(fixture_path("testdata/cff-static.otf")).expect("fixture should be readable")
+}
 
 fn build_sfnt(version_tag: u32, records: &[(u32, u32, u32, u32)], total_len: usize) -> Vec<u8> {
     let mut bytes = vec![0u8; total_len];
@@ -30,13 +72,15 @@ fn build_sfnt(version_tag: u32, records: &[(u32, u32, u32, u32)], total_len: usi
 
 #[test]
 fn parses_truetype_sfnt_header() {
-    let font = parse_sfnt(TEST_TTF_BYTES).unwrap();
+    let bytes = test_ttf_bytes();
+    let font = parse_sfnt(&bytes).unwrap();
     assert_eq!(font.version_tag(), 0x0001_0000);
 }
 
 #[test]
 fn parses_otto_sfnt_header() {
-    let font = parse_sfnt(TEST_OTF_BYTES).unwrap();
+    let bytes = test_otf_bytes();
+    let font = parse_sfnt(&bytes).unwrap();
     assert_eq!(font.version_tag(), u32::from_be_bytes(*b"OTTO"));
 }
 

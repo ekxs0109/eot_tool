@@ -1,7 +1,8 @@
 # eot_tool
 
 Standalone Rust-first font toolchain for MTX-compressed EOT decode, TrueType
-encode, non-OTF glyph-id subset, and packaged WASM runtime delivery.
+and CFF-aware encode/convert flows, non-OTF glyph-id subset plus OTF text
+subset, WOFF/WOFF2 source materialization, and packaged WASM runtime delivery.
 
 The legacy native `src/` tree and Makefile pipeline were retired on
 2026-04-15. The Rust workspace, package scripts, and vendored WASM artifacts
@@ -42,8 +43,8 @@ build/venv/bin/python -m pip install -r tests/requirements.txt
 ```
 
 Python tooling is verification/reference-only. The Rust workspace owns the
-supported decode, TrueType encode, non-OTF subset, and Rust-facing runtime/WASM
-contract surfaces.
+supported decode, TrueType/CFF encode and convert flows, non-OTF glyph-id
+subset plus OTF text subset, and Rust-facing runtime/WASM contract surfaces.
 
 Stable verifier entrypoints:
 
@@ -81,8 +82,8 @@ reconstruction, not for general decode.
 
 ## Encode / Roundtrip
 
-`fonttool encode <input.ttf> <output.eot>` emits an MTX-compressed EOT for the
-supported TrueType path.
+`fonttool encode <input> <output.eot>` emits an MTX-compressed EOT for the
+supported Rust-owned encode surface.
 
 The Rust MTX encoder now applies Java-style local copy heuristics for MTX/LZ
 compression across the shared compressor path, with a literal-only fallback
@@ -100,9 +101,11 @@ legacy producers is still not guaranteed.
 
 Current supported/unsupported encode boundaries:
 
-- TrueType input to `.eot`: supported
-- TrueType input to `.fntdata`: unsupported
-- `OTF(CFF/CFF2)` input: unsupported
+- TrueType SFNT input to `.eot`: supported
+- TrueType `WOFF/WOFF2` input to `.eot`: supported after source materialization
+- static `OTF/CFF` input to `.eot`: supported
+- variable `OTF/CFF2` input to `.eot`: supported, with optional `--variation`
+- any input to `.fntdata`: unsupported
 
 For `.eot` output, `fonttool encode` accepts embedded-output controls:
 
@@ -150,23 +153,43 @@ The PPTX-derived CLI roundtrip regression is covered in the Rust integration
 tests; it does not imply general multi-block reconstruction parity for arbitrary
 encode output yet.
 
+## Convert
+
+`fonttool convert <input> <output.ttf> --to ttf` is supported for the
+Rust-owned conversion surface:
+
+- static `OTF/CFF` input: supported
+- variable `OTF/CFF2` input: supported, with optional `--variation`
+- TrueType `WOFF/WOFF2` input: supported after source materialization
+- static `WOFF(CFF)` input: supported after source materialization
+
+Shared source loading materializes `WOFF/WOFF2` inputs into canonical SFNT
+bytes before flavor detection, so `convert` and `encode` follow the same
+content-based routing instead of branching on filename extensions.
+
 ## Subset
 
-Rust-owned subset support currently covers the non-OTF glyph-id path:
+Rust-owned subset support currently covers two paths:
 
-- `.eot` / `.fntdata`: `decode -> sfnt subset -> encode`
-- `.ttf`: `sfnt load -> subset -> encode`
-- `.otf`: unsupported in the Rust contract
+- non-OTF glyph-id path:
+  - `.eot` / `.fntdata`: `decode -> sfnt subset -> encode`
+  - `.ttf`: `sfnt load -> subset -> encode`
+- OTF text-subset path:
+  - static `OTF/CFF`: supported with `--text`
+  - variable `OTF/CFF2`: supported with `--text`, plus optional `--variation`
 
 The supported Rust subset path accepts `.eot`, `.fntdata`, and `.ttf` inputs
-with `--glyph-ids`, rebuilds the supported subset tables (`cmap`, `glyf`,
-`loca`, `hhea`, `hmtx`, and `maxp`), and emits warnings when `HDMX` or `VDMX`
-are dropped from the subset output. `.fntdata` output stays wrapped with the
-PPT XOR flag so the CLI can preserve the expected container shape.
+with `--glyph-ids`, and `OTF/CFF/CFF2` inputs with `--text`. It rebuilds the
+supported subset tables (`cmap`, `glyf`, `loca`, `hhea`, `hmtx`, and `maxp`)
+for the non-OTF path, and emits warnings when `HDMX` or `VDMX` are dropped
+from subset output. `.fntdata` output stays wrapped with the PPT XOR flag so
+the CLI can preserve the expected container shape.
 
 For `.eot` / `.fntdata` input, the Rust subset path reconstructs a real SFNT
 from the current Rust-encoded multi-block MTX payload (`block1` + `block2` +
-`block3`) before handing the font to HarfBuzz.
+`block3`) before handing the font to the Rust-owned glyph-id subsetter in
+`fonttool-subset`. `OTF/CFF/CFF2` text subsetting stays in the Rust-owned
+`fonttool-cff` path.
 
 Extra-table behavior across the supported non-OTF subset path is:
 
@@ -178,7 +201,8 @@ Extra-table behavior across the supported non-OTF subset path is:
 - `VDMX`: dropped during subset with a warning
 
 The Rust CLI does not currently support `--text`, `--unicodes`, or
-`--keep-gids` for non-OTF input.
+`--keep-gids` for non-OTF input, and it does not support `--glyph-ids` for
+`OTF/CFF/CFF2` input.
 
 For `.eot` / `.fntdata` output, `fonttool subset` accepts the same
 embedded-output controls:
@@ -204,12 +228,15 @@ build/venv/bin/python tests/compare_fonts.py \
   build/out/OpenSans-Regular.subset.ttf
 ```
 
-## OTF/CFF Deferred Boundary
+## Remaining Deferred Boundary
 
-`OTF(CFF/CFF2)` encode, subset, and variable-instance export remain explicitly
-unsupported in the Rust contract. The CLI/runtime/WASM entrypoints surface
-Phase 3-owned errors instead of silently routing through a hidden native
-backend.
+The Rust contract still defers a few surfaces:
+
+- `.fntdata` encode remains Phase 2-owned and is still rejected by the CLI
+- non-OTF subset still only supports `--glyph-ids`
+- `OTF/CFF/CFF2` subset still only supports `--text`
+- the current non-OTF subsetter is limited to the Rust-owned TrueType glyph
+  rebuild path and does not yet expose `--text`, `--unicodes`, or `--keep-gids`
 
 ## Browser / WASM Runtime
 

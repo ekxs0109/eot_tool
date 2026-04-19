@@ -2,44 +2,68 @@
 
 ## Goal
 
-Add pure-Rust support for `OTF(CFF)` and `OTF(CFF2/variable)` across the Rust
-CLI's `decode`, `encode`, and `subset` commands, and make Office/PowerPoint
-compatibility a first-class acceptance target rather than an accidental side
-effect.
+Add Rust CLI support for `OTF(CFF)`, `OTF(CFF2/variable)`, and
+`WOFF/WOFF2` sources across `decode`, `encode`, `subset`, and explicit
+conversion flows, while making Office/PowerPoint compatibility an explicit
+product target.
 
-The highest-priority acceptance case is successful decode of the current
-PowerPoint-exported embedded font sample extracted from `Presentation1.pptx`,
-which will be stored as a permanent test fixture under `testdata/`.
+This design started as a two-phase convergence plan. The transitional
+HarfBuzz-unification phase has now been retired, and the current shipped
+direction is the steady-state one:
+
+- converge the supported font-processing path onto `allsorts` plus Rust-owned
+  subset/rebuild code
+- remove `fonttool-harfbuzz` from the final shipped `CFF/CFF2/WOFF` feature set
+
+The compatibility baseline changes in one important way:
+
+- Office compatibility does not require PowerPoint to natively emit
+  `CFF2/variable` embedded samples
+- the default Office-oriented path for variable input is
+  `CFF2/variable -> instantiated static OTF/CFF -> embedded output`
+- `OTF -> TTF` remains available as an explicit CLI option for compatibility
+  workflows, but it is not the default Office path
+
+Historical note: some later sections still describe the earlier HarfBuzz
+transition phase because this spec was updated in place instead of being split
+into archival docs. The current shipped workspace state is the Rust-owned one
+described above.
 
 ## Scope
 
 This design covers:
 
-- `fonttool decode` support for embedded `CFF` and `CFF2/variable` fonts in
-  `.eot` / `.fntdata` containers
+- `fonttool decode` support for embedded `CFF` fonts and structurally valid
+  embedded `CFF2/variable` fonts in `.eot` / `.fntdata` containers
 - `fonttool encode` support for static `CFF` and `CFF2/variable` OTF input
 - `fonttool subset` support for static `CFF` and `CFF2/variable` OTF input
-- Office/PowerPoint compatibility as a formal verification target
-- Permanent regression fixtures for embedded OTF samples
+- `fonttool encode`, `fonttool subset`, and explicit conversion support for
+  `WOFF/WOFF2` input after source materialization
+- variable-instance selection for `CFF2`
+- Office-compatible embedding through a static `OTF/CFF` default path
+- an explicit CLI option to convert `OTF(CFF/CFF2)` input to `TTF`
+- an explicit CLI path to convert `WOFF/WOFF2` sources into `TTF` or embedded
+  output after flavor-aware source loading
+- permanent regression fixtures for Office-derived embedded OTF samples
 
 This design does not include:
 
+- requiring PowerPoint to generate native `CFF2/variable` embedded fixtures
 - `.otc` / TTC / OTC collection input support
-- byte-for-byte reproduction of historical native output
-- restoring a legacy/native backend bridge
+- byte-for-byte reproduction of retired native output
+- restoring the retired standalone native backend as a separate product path
 - storing Office `.pptx` documents in the repository
 
 ## User-Confirmed Constraints
 
-- Implementation must stay pure Rust end-to-end
+- The public CLI and crate surfaces must stay Rust-first
 - Third-party libraries are allowed, but must be discussed before being added
-- Pure Rust crates are preferred over Rust+FFI
-- The repository should keep only extracted `.fntdata` fixtures, not the source
-  `.pptx`
-- This phase must include `CFF2/variable` `encode + decode + subset`, not just
-  static `CFF`
-- Office/PowerPoint re-consumption compatibility is part of the formal success
-  criteria
+- the long-term target is still an `allsorts`-first implementation for the
+  supported `CFF/CFF2/WOFF` flows
+- The repository should keep extracted fixtures, not source `.pptx` files
+- This phase must still include `CFF2/variable` `encode + decode + subset`
+- Office/PowerPoint compatibility remains a formal success criterion
+- `OTF -> TTF` must remain available as a CLI-selectable compatibility option
 
 ## Current State
 
@@ -48,90 +72,99 @@ The current Rust workspace already has:
 - working `decode` for the supported TrueType/MTX path
 - working `encode` / `subset` for the supported TrueType path
 - `OTTO` SFNT parsing support in `fonttool-sfnt`
-- `fonttool-cff` as a boundary crate that currently only inspects OTF input and
-  emits deferred-boundary errors
+- `fonttool-cff` as a boundary crate with basic OTF inspection helpers
 
-The current Rust CLI does not yet provide:
+The workspace now routes these supported paths through Rust-owned crates:
 
-- successful `encode` for `OTF(CFF)` input
-- successful `encode` for `OTF(CFF2/variable)` input
-- successful `subset` for `OTF(CFF)` input
-- successful `subset` for `OTF(CFF2/variable)` input
-- robust decode of all PowerPoint-exported OTF embedded font shapes
+- `fonttool-cff` owns `OTF/CFF/CFF2/WOFF` inspection, materialization,
+  instancing, and explicit `OTF/WOFF -> TTF` conversion
+- `fonttool-subset` owns the non-OTF glyph-id subset path
 
-The current PowerPoint-derived `Presentation1.pptx` sample contains an embedded
-font that fails today's Rust `decode` path and therefore acts as the lead
-regression case for this work.
+The earlier HarfBuzz split has been removed from the shipped workspace.
+
+Recent investigation established:
+
+- the current local `Presentation1.pptx` contains embedded static `OTF/CFF`
+  samples for `思源黑体`
+- at least one embedded sample from that file decodes into a legal
+  `OTTO + CFF` font
+- the tested `SourceCodeVF-Upright.otf` sample is a legal
+  `OTTO + CFF2 + fvar` variable font
+- PowerPoint rejects that variable OTF with a generic "not TrueType" style
+  error even though PowerPoint accepts static `OTF/CFF`
+
+Therefore the repository must not treat "PowerPoint can directly emit variable
+`CFF2` fixtures" as a prerequisite for supporting variable input.
 
 ## Chosen Approach
 
-Use the existing Rust CLI and EOT/MTX architecture as the outer shell, and add
-an OTF-specific processing path under `fonttool-cff`.
+Use the existing Rust CLI and embedded-output architecture as the outer shell,
+keep OTF/CFF-specific transform logic under `fonttool-cff`, and execute the
+delivery in two phases inside one plan.
 
 At a high level:
 
 - keep `fonttool-cli` responsible for argument parsing, input classification,
   and output dispatch
-- keep `fonttool-eot` and `embedded_output` responsible for EOT/fntdata
-  wrapping
-- expand `decode` to support OTF-oriented embedded reconstruction in addition to
-  the current TrueType-oriented path
-- add a dedicated `encode_otf_file()` path in `fonttool-cli`
-- move real `CFF/CFF2` subsetting and variation handling into `fonttool-cff`
-- use a pure-Rust third-party crate only inside `fonttool-cff` for
-  `CFF/CFF2` subset and serialization
+- in the transition phase, make `fonttool-harfbuzz` the only crate that owns
+  HarfBuzz versioning, linking, headers, and raw HarfBuzz calls
+- keep `fonttool-eot` and shared embedded-output code responsible for
+  `.eot` / `.fntdata` wrapping
+- expand `decode` to preserve embedded `CFF` and embedded `CFF2` when the
+  payload is structurally complete
+- add an OTF-specific encode path that defaults to Office-compatible static
+  `OTF/CFF` embedding
+- add variable-instance selection so `CFF2` input can be instantiated before
+  Office embedding
+- add `WOFF/WOFF2` source loading that materializes canonical SFNT bytes before
+  flavor inspection and output dispatch
+- in the steady-state phase, move source loading, subset, and outline
+  extraction onto `allsorts`-owned Rust APIs inside `fonttool-cff`
+- keep `OTF -> TTF` as an explicit CLI compatibility branch, not the default
+  output flavor
 
 ## Alternatives Considered
 
-### 1. Rust-native mainline plus targeted third-party CFF/CFF2 support
-
-This keeps the current repository architecture intact and introduces a
-third-party pure-Rust crate only in the `fonttool-cff` implementation layer for
-the hardest `CFF/CFF2` subset/serialize logic.
+### 1. Default variable input to static `OTF/CFF`, keep `TTF` as opt-in
 
 Pros:
 
-- smallest architecture change
-- preserves current CLI/runtime layering
-- isolates third-party dependencies
-- best fit for the requested pure-Rust direction
+- matches the observed Office behavior more closely
+- avoids making TrueType conversion the only compatibility story
+- keeps PostScript/CFF outlines on the mainline path
 
 Cons:
 
-- requires a careful adapter layer between the chosen crate and the repository's
-  existing SFNT/EOT/MTX pipeline
+- still requires real variable-instance handling before embedding
+- needs careful serialization of static `CFF` output
 
 This is the chosen approach.
 
-### 2. Migrate more aggressively to a third-party font stack
-
-This would move much more of the font processing core onto a third-party
-library ecosystem.
+### 2. Default variable input to `TTF`
 
 Pros:
 
-- potentially more complete long-term font feature support
+- may maximize compatibility with environments that truly require TrueType
 
 Cons:
 
-- much larger refactor
-- higher integration risk
-- harder to keep focused on this project's Office compatibility target
+- makes outline conversion the primary path even though static `OTF/CFF`
+  already appears Office-compatible
+- larger fidelity risk
+- higher implementation risk for a pure-Rust-only stack
 
-This is not selected.
+This is not the default, but it remains an explicit CLI option.
 
-### 3. Build all `CFF/CFF2` encode/subset/write logic from scratch in-repo
+### 3. Require native PowerPoint-generated `CFF2` fixtures before proceeding
 
 Pros:
 
-- maximum local control
-- no new dependency risk
+- keeps Office acceptance strictly tied to PowerPoint-produced artifacts
 
 Cons:
 
-- highest schedule risk
-- weakest option for reaching `CFF2/variable + Office compatibility` in one
-  iteration
+- conflicts with observed product behavior
+- blocks variable support on a tool limitation outside the repository
 
 This is not selected.
 
@@ -139,26 +172,77 @@ This is not selected.
 
 ### Fixture Layer
 
-Add permanent fixtures for OTF-focused embedded regression coverage:
+Keep two acceptance tracks.
 
-- `testdata/otto-cff2-variable.fntdata`
-  - extracted from the current `Presentation1.pptx`
-  - renamed to a generic fixture name
-  - stored without the `.pptx`
-- keep the existing OTF source fixtures:
-  - `testdata/cff-static.otf`
-  - `testdata/cff2-variable.otf`
+Office-derived fixtures:
 
-Add a fixture note file:
-
+- `testdata/otto-cff-office.fntdata`
+  - extracted from `Presentation1.pptx`
+  - represents the real static `OTF/CFF` Office-compatible path
 - `testdata/README-cff-fixtures.md`
+  - records provenance and regeneration policy
 
-It should record:
+Source OTF fixtures:
 
-- the embedded fixture came from a PowerPoint export of an open-source source
-  font
-- the repository keeps only the extracted `.fntdata`
-- how to regenerate the fixture when it is intentionally replaced
+- `testdata/cff-static.otf`
+- `testdata/cff2-variable.otf`
+
+If a structurally complete embedded `CFF2` sample becomes available later, it
+can be added as an extra fixture, but it is no longer required to unblock the
+main implementation path.
+
+### Transitional HarfBuzz Adapter Layer
+
+`fonttool-harfbuzz` becomes the sole HarfBuzz integration boundary during the
+transition phase.
+
+Responsibilities:
+
+- own the workspace's HarfBuzz version and linking mode
+- expose Rust-facing wrappers for:
+  - blob / face / font creation
+  - variation axis inspection and normalized coordinate selection
+  - subsetting
+  - glyph draw / outline collection needed by `OTF -> TTF`
+- hide HarfBuzz raw types and loader details from callers
+
+Non-responsibilities:
+
+- `fonttool-harfbuzz` does not own `cu2qu`, TrueType rebuild, or SFNT table
+  assembly
+- it does not become a general font-conversion crate
+
+The key rule is simple: no other workspace crate may link or call HarfBuzz
+directly while the transition phase is still active.
+
+### Steady-State Allsorts Core Layer
+
+`fonttool-cff` becomes the long-term owner of:
+
+- source loading for `OTF`, `WOFF`, and `WOFF2`
+- OTF/WOFF flavor inspection
+- variable-instance materialization
+- CFF/CFF2 subset execution
+- glyph outline extraction for explicit `OTF/WOFF(CFF) -> TTF`
+
+The steady-state boundary keeps using the existing native `cu2qu`,
+`tt_rebuilder`, and SFNT rebuild code where it is already stable, but all font
+parsing, variation, subset selection, and outline visitation should come from
+`allsorts`.
+
+### WOFF Source Layer
+
+`WOFF` and `WOFF2` are container formats, not distinct outline flavors.
+
+Rules:
+
+- `WOFF/WOFF2` input must first materialize to canonical SFNT bytes
+- if the materialized flavor is TrueType, the input may flow directly into the
+  existing TrueType encode path
+- if the materialized flavor is `OTF/CFF` or `OTF/CFF2`, the input must flow
+  through the same CFF/CFF2 logic used for raw OTF sources
+- `WOFF(CFF/CFF2) -> TTF` remains an explicit conversion path, not a silent
+  encode default
 
 ### Decode Layer
 
@@ -176,90 +260,113 @@ Refactor embedded decode into explicit stages:
    - `reconstruct_cff_from_mtx_blocks()`
    - `reconstruct_cff2_from_mtx_blocks()`
 
-The current TrueType path remains valid, but OTF/CFF/CFF2 must no longer be
-forced through the `glyf/loca` reconstruction assumptions that exist today.
+Decode rules:
 
-The decode result must be a legal SFNT accepted by `parse_sfnt()` /
-`load_sfnt()`, with OTF flavor preserved:
-
-- static CFF output remains `OTTO + CFF`
-- variable CFF2 output remains `OTTO + CFF2 + fvar`
+- embedded static `CFF` must decode to legal `OTTO + CFF`
+- embedded variable `CFF2` must decode to legal `OTTO + CFF2 + fvar` when the
+  input payload is structurally complete
+- Office acceptance requires successful decode of the static Office fixture
+- variable decode remains supported for committable fixtures and synthetic
+  roundtrip coverage; it is not blocked on PowerPoint producing such a fixture
 
 ### Encode Layer
 
-Split the current encode implementation into two explicit branches:
+Split the current encode implementation into explicit branches:
 
 - `encode_truetype_file()`
 - `encode_otf_file()`
 
-`encode_otf_file()` handles both static CFF and variable CFF2 input.
+`encode_otf_file()` handles both static `CFF` and variable `CFF2` input.
 
-Default behavior for OTF input:
+Default behavior for OTF input targeting embedded output:
 
-- output target: `.eot`
+- static `CFF` input: preserve static `OTF/CFF`
+- variable `CFF2` input: instantiate to a static font, then emit static
+  `OTF/CFF` by default
 - payload mode: raw SFNT payload by default
-- minimal structural rewriting of the original OTF
-- no reuse of the TrueType `glyf/loca`-specific MTX block generation logic
+- no reuse of TrueType-specific `glyf/loca` MTX synthesis logic
 
-The default Office-compatible strategy is to preserve as much of the original
-OTF byte structure as practical and only change the embedding container layer.
+The default Office-compatible strategy is to preserve or materialize a static
+`OTF/CFF` font first and only then wrap it in the embedding container.
 
-Support for MTX payload mode on OTF input is not the primary acceptance target
-for the first implementation. The mainline success path is Office-compatible
-raw-SFNT embedding.
+### Variable Handling Layer
 
-### Subset Layer
+Move variable-instance handling into `fonttool-cff` and keep it there for the
+steady-state implementation.
 
-Move OTF-specific subset logic into `fonttool-cff`.
+Key operations:
 
-Add dedicated operations such as:
-
-- `subset_static_cff(...)`
+- `inspect_otf_font(...)`
+- `parse_variation_axes(...)`
 - `instantiate_variable_cff2(...)`
-- `subset_variable_cff2(...)`
-- `serialize_subset_otf(...)`
+- `serialize_static_cff_instance(...)`
+- `load_font_source(...)`
 
-Static CFF subset rules:
+`fonttool-cff` remains the owner of:
 
-- require `--text`
-- produce a valid subset OTF
+- OTF flavor inspection policy
+- instance-to-static-CFF serialization policy
+- CFF/CFF2-specific error mapping
 
-Variable CFF2 subset rules:
+Variable rules:
 
-- require `--text`
-- accept `--variation`
-- apply variation instance selection before or during subsetting
-- produce a valid subset OTF that follows the chosen instance semantics
+- `CFF2` input accepts `--variation`
+- when no explicit variation is supplied, the default instance is used
+- the Office-compatible output of variable input is a static font
+- static-instance semantics must be explicit in tests and docs
 
-The CLI remains responsible for parsing and validation; `fonttool-cff` becomes
-responsible for OTF/CFF/CFF2 processing internals.
+### Optional TTF Conversion Layer
+
+Keep `OTF -> TTF` available as an explicit CLI path for compatibility
+workflows that need TrueType outlines.
+
+This path is secondary, not default.
+
+CLI surface:
+
+- add a dedicated conversion command or output-flavor option that makes the
+  conversion explicit
+- do not silently replace the default static `OTF/CFF` Office path with TTF
+  conversion
+
+Requirements:
+
+- the conversion path must be visibly opt-in
+- docs and tests must distinguish "default Office mode" from
+  "explicit TTF compatibility mode"
+- during the transition phase, outline extraction for this path may come from
+  `fonttool-harfbuzz`
+- in the steady-state phase, outline extraction must come from `allsorts`
+- `fonttool-cff` must keep only the conversion stages that are specific to its
+  own domain:
+  - `cu2qu`
+  - `tt_rebuilder`
+  - SFNT copy/rebuild policy
 
 ## Third-Party Library Policy
 
-The design allows a new pure-Rust third-party crate only if it is contained
-inside `fonttool-cff`.
+New dependencies are allowed only if they remain contained within
+`fonttool-harfbuzz`, `fonttool-cff`, or another narrowly scoped
+font-processing boundary.
 
 Adoption rules:
 
-- prefer a pure-Rust crate over FFI
 - do not leak third-party core types across crate boundaries
 - require explicit user confirmation before adding the dependency
-- keep `fonttool-cli`, runtime, and WASM layers insulated from the dependency's
-  public API
-
-Preferred candidate:
-
-- `allsorts`
+- keep `fonttool-cli`, runtime, and WASM layers insulated from dependency
+  public APIs
+- do not introduce a second HarfBuzz entry path while the transitional adapter
+  still exists
+- keep HarfBuzz version decisions centralized inside `fonttool-harfbuzz`
+  until the allsorts convergence phase removes it from supported flows
 
 Reason:
 
-- it already contains `CFF/CFF2` subset logic
-- it is closer to the needed `subset + serialize` responsibilities than the
-  current in-repo code
+- it already helps with `CFF/CFF2` inspection, variation, subsetting, and
+  serialization-adjacent work
 
-Fallback candidates may be evaluated later, but the implementation plan should
-assume `allsorts` first and keep the integration boundary narrow enough to swap
-it cleanly if the chosen dependency proves unsuitable during implementation.
+If the optional `OTF -> TTF` branch needs additional pure-Rust support, that
+dependency decision must be reviewed separately and kept just as isolated.
 
 ## Functional Boundaries
 
@@ -270,17 +377,18 @@ Must support:
 - `.eot` / `.fntdata` input containing:
   - TrueType `glyf`
   - static `CFF`
-  - `CFF2/variable`
+  - structurally complete `CFF2/variable`
 
 Success conditions:
 
 - CLI command succeeds
 - output parses as legal SFNT
-- output flavor is preserved
+- output flavor is preserved for the decoded payload
 
-Lead acceptance case:
+Lead acceptance cases:
 
-- `testdata/otto-cff2-variable.fntdata` decodes successfully
+- `testdata/otto-cff-office.fntdata` decodes successfully
+- committable `CFF2` fixtures and roundtrip outputs decode successfully
 
 ### Encode
 
@@ -288,59 +396,90 @@ Must support:
 
 - static `CFF` OTF input
 - `CFF2/variable` OTF input
+- `WOFF` input whose materialized source flavor is `OTF/CFF`, `OTF/CFF2`, or
+  TrueType
+- `WOFF2` input whose materialized source flavor is `OTF/CFF`, `OTF/CFF2`, or
+  TrueType
 
-Primary output:
+Primary embedded output:
 
 - `.eot`
+- `.fntdata` when the Office-compatible embedded mode is requested
 
 Success conditions:
 
 - CLI command succeeds
-- generated embedded font decodes back to a legal OTF
-- roundtrip preserves the intended OTF flavor
-- at least one Office/PowerPoint-oriented acceptance sample remains compatible
+- generated embedded font decodes back to a legal static font
+- default variable-input path yields static `OTF/CFF`
+- at least one Office-derived fixture remains compatible with the supported
+  decode path
 
 ### Subset
 
 Must support:
 
 - static `CFF` with `--text`
-- `CFF2/variable` with `--text` and `--variation`
+- `CFF2/variable` with `--text` and optional `--variation`
+- `WOFF/WOFF2` input after source materialization, with behavior matching the
+  materialized source flavor
 
 Success conditions:
 
-- subset result is a legal OTF
-- subset result can be re-encoded
-- encoded subset can be decoded back to a legal OTF
-- variation behavior matches requested axes for the supported fixture set
+- subset result is a legal font
+- subset result can be re-encoded through the embedded output layer
+- variable subset semantics match the chosen instance
+
+### Optional OTF to TTF Conversion
+
+Must support:
+
+- explicit CLI opt-in only
+- static `CFF` input
+- variable `CFF2` input after instance selection
+- `WOFF/WOFF2` input after source materialization and flavor classification
+
+Success conditions:
+
+- CLI command succeeds
+- output parses as legal `TTF`
+- tests prove the path is optional and does not change default Office behavior
 
 ## Acceptance Standards
 
-This project uses Office compatibility as a first-class success criterion, but
-the repository's default automated coverage should still rely on stable,
-committable fixtures rather than live PowerPoint automation.
-
 Formal acceptance coverage:
 
-1. `decode` permanent regression for `otto-cff2-variable.fntdata`
+1. `decode` permanent regression for the static Office fixture
 2. `encode` success coverage for:
    - static `CFF`
-   - variable `CFF2`
+   - variable `CFF2` through static `OTF/CFF` output
 3. `subset` success coverage for:
    - static `CFF`
    - variable `CFF2`
 4. `roundtrip` coverage:
-   - `OTF -> EOT -> OTF`
+   - `OTF(CFF) -> embedded -> OTF(CFF)`
+   - `OTF(CFF2 variable) -> instantiate -> embedded -> static OTF(CFF)`
    - `subset -> encode -> decode`
-5. Office-oriented compatibility regression:
-   - at least one PowerPoint-derived embedded sample must remain supported
+5. explicit CLI conversion coverage:
+   - `OTF(CFF) -> TTF`
+   - `OTF(CFF2 variable) -> instance -> TTF`
+   - `WOFF(TTF) -> TTF` materialization
+   - `WOFF(CFF/CFF2) -> instance/convert -> TTF`
+6. Office-oriented compatibility regression:
+   - at least one PowerPoint-derived static `OTF/CFF` embedded sample must
+     remain supported
+7. HarfBuzz integration regression:
+   - the CLI conversion path must execute through the same HarfBuzz adapter
+     boundary used by the subsetting path
+8. allsorts convergence regression:
+   - the final supported `CFF/CFF2/WOFF` encode, subset, and convert paths must
+     execute without routing through `fonttool-harfbuzz`
 
 Out of scope for formal completion:
 
-- byte-identical parity with the retired native backend
-- automated GUI Office save/reopen verification
-- TTC/OTC collection support
-- broad guarantees for every advanced OpenType layout behavior
+- PowerPoint GUI automation
+- requiring PowerPoint to emit native variable `CFF2` fixtures
+- byte-identical parity with retired native output
+- TTC/OTC support
 
 ## Testing Strategy
 
@@ -351,83 +490,112 @@ Cover:
 - static CFF detection
 - variable CFF2 detection
 - variation argument validation
-- subset output validity
-- CFF/CFF2 flavor preservation
+- variable-instance materialization
+- static CFF serialization
+- optional TTF conversion boundary selection
 
-### 2. CLI and Integration Tests
+### 2. Unit Tests in `fonttool-harfbuzz`
+
+Cover:
+
+- face creation from source OTF bytes
+- axis inspection / normalized coordinate construction
+- glyph outline collection for a known OTF fixture
+- subsetting through the unified adapter boundary
+
+### 3. CLI and Integration Tests
 
 Add successful integration coverage for:
 
-- `decode`:
-  - `otto-cff2-variable.fntdata`
-  - existing static CFF samples
-- `encode`:
+- `decode`
+  - `otto-cff-office.fntdata`
+  - source OTF and roundtrip-derived variable fixtures as needed
+- `encode`
   - `cff-static.otf`
   - `cff2-variable.otf`
-- `subset`:
+- `subset`
   - static CFF with `--text`
   - variable CFF2 with `--text + --variation`
+- optional conversion
+  - explicit `OTF -> TTF`
+  - explicit `WOFF/WOFF2 -> TTF`
+  - flavor-aware `WOFF/WOFF2 -> embedded output`
 
-### 3. Roundtrip Tests
+### 4. Roundtrip Tests
 
 Add:
 
-- static CFF `OTF -> EOT -> OTF`
-- variable CFF2 `OTF -> EOT -> OTF`
+- static CFF `OTF -> embedded -> OTF`
+- variable CFF2 `OTF -> instantiate -> embedded -> static OTF`
 - static CFF `subset -> encode -> decode`
 - variable CFF2 `subset -> encode -> decode`
+- explicit `OTF -> TTF` compatibility conversions
 
-Assertions must include flavor-sensitive checks:
+### 5. Fixture Documentation
 
-- static CFF roundtrip keeps `CFF`
-- variable CFF2 roundtrip keeps `CFF2`
-- variable support markers such as `fvar` remain or are removed according to the
-  chosen instance semantics
-
-### 4. Fixture Documentation
-
-Document the origin and regeneration policy of the embedded fixture without
-committing the `.pptx`.
+Document the origin and regeneration policy of the embedded Office fixture
+without committing the `.pptx`.
 
 ## Implementation Sequence
 
-Even though the desired outcome is full end-to-end support, implementation
-should still proceed in this order:
+Implementation should proceed in this order:
 
-1. fixture and decode stabilization
-   - add `otto-cff2-variable.fntdata`
-   - make decode succeed on it
-2. OTF encode path
-   - add `encode_otf_file()`
-   - support static CFF and variable CFF2 encode to `.eot`
-3. OTF roundtrip stabilization
-   - verify Office-oriented raw-SFNT embedding path
-4. OTF subset path
-   - implement static CFF and variable CFF2 subset
-5. contract and docs cleanup
-   - replace current deferred-boundary tests with success-path coverage
-   - update README and support docs
+1. replace the old blocked Office-fixture assumption
+   - store the current static Office fixture
+   - update regression coverage and docs
+2. stabilize decode around the real Office static CFF path
+3. implement variable-instance handling for `CFF2`
+4. implement default OTF encode through static `OTF/CFF`
+5. implement static and variable subset flows
+6. promote `fonttool-harfbuzz` to the single HarfBuzz adapter
+7. rebase explicit `OTF -> TTF` conversion on that adapter
+8. add `WOFF/WOFF2` fixtures and source-materialization support through
+   `allsorts`
+9. rebase supported `CFF/CFF2/WOFF` subset and outline extraction onto
+   `allsorts`
+10. remove `fonttool-harfbuzz` from the steady-state supported path, update
+    docs/contracts, and run final verification
 
 ## Risk Controls
 
-### Decode First
+### Office Compatibility Uses the Real Supported Path
 
-If `otto-cff2-variable.fntdata` cannot be decoded successfully, the project is
-not considered complete regardless of encode/subset progress.
+The project is blocked only on the real Office-compatible static `OTF/CFF`
+fixture, not on PowerPoint producing a variable sample it does not appear to
+support.
 
-### OTF Encode Defaults to Raw-SFNT Payload
+### Variable Support Still Must Be Real
 
-The first shipping OTF path should optimize for Office compatibility instead of
-trying to mimic the TrueType MTX specialization.
+`CFF2` support cannot be reduced to a deferred error. Variable input must be
+accepted, instantiated, tested, and emitted through at least one supported path.
 
-### Third-Party Dependency Containment
+### TTF Conversion Stays Opt-In
 
-If a third-party crate is used, it must remain inside `fonttool-cff` so the
-rest of the workspace stays insulated from dependency churn.
+The explicit `OTF -> TTF` branch is valuable for compatibility, but it must not
+silently replace the default static `OTF/CFF` Office path.
+
+### HarfBuzz Transition Must Be Singular
+
+The workspace must not ship two independent HarfBuzz integration paths in the
+same CLI binary. `fonttool-harfbuzz` is the only allowed HarfBuzz boundary
+while the transition phase exists.
+
+### Allsorts Convergence Must Actually Finish
+
+This plan is not complete if it stops at "HarfBuzz is unified". The same plan
+must also land the allsorts-owned `WOFF/WOFF2` source path and retire
+`fonttool-harfbuzz` from supported `CFF/CFF2/WOFF` encode, subset, and convert
+flows.
 
 ## Completion Definition
 
-This project is complete when the Rust CLI provides test-covered pure-Rust
-support for static `CFF` and `CFF2/variable` `decode + encode + subset`, and
-the default `.eot` raw-SFNT embedding path satisfies the current
-PowerPoint-derived Office compatibility regression samples.
+This project is complete when the Rust CLI provides test-covered support for:
+
+- embedded static `CFF` decode from a real Office fixture
+- static `CFF` `encode + subset`
+- variable `CFF2` instance selection plus `encode + subset`
+- default Office-compatible embedded output through static `OTF/CFF`
+- explicit CLI-selectable `OTF -> TTF` conversion
+- explicit `WOFF/WOFF2` input support with flavor-aware dispatch
+- a final allsorts-first supported path for `CFF/CFF2/WOFF` flows, with no
+  product requirement on `fonttool-harfbuzz`

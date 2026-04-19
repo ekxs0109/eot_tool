@@ -342,7 +342,7 @@ fn run_subset_command(args: &[&str], cwd: &Path) -> std::process::Output {
 }
 
 fn build_subset_fixture_font(include_extra_tables: bool) -> fonttool_sfnt::OwnedSfntFont {
-    let bytes = fs::read(workspace_root().join("testdata/OpenSans-Regular.ttf"))
+    let bytes = fs::read(support::fixture_path("testdata/OpenSans-Regular.ttf"))
         .expect("OpenSans fixture should be readable");
     let mut font = load_sfnt(&bytes).expect("OpenSans fixture should load");
 
@@ -617,8 +617,137 @@ fn subset_opensans_ttf_glyph_ids_rebuilds_core_tables() {
 }
 
 #[test]
+fn subset_static_cff_text_input_emits_a_legal_static_cff_font() {
+    let input_path = support::fixture_path("testdata/cff-static.otf");
+    let output_path = temp_file("fntdata");
+    let isolated_cwd = temp_file("cwd");
+    fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
+
+    let output = run_subset_command(
+        &[
+            "subset",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+            "--text",
+            ".",
+        ],
+        &isolated_cwd,
+    );
+
+    assert!(
+        output.status.success(),
+        "expected static CFF subset to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output_path.is_file(),
+        "expected subset to create an output file"
+    );
+
+    let decoded_path = decode_subset_output(&output_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(decoded_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
+}
+
+#[test]
+fn subset_embedded_static_cff_text_input_uses_decoded_sfnt_bytes() {
+    let input_path = support::tracked_testdata_path("testdata/otto-cff-office.fntdata");
+    let output_path = temp_file("fntdata");
+    let isolated_cwd = temp_file("cwd");
+    fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
+
+    let output = run_subset_command(
+        &[
+            "subset",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+            "--text",
+            ".",
+        ],
+        &isolated_cwd,
+    );
+
+    assert!(
+        output.status.success(),
+        "expected embedded static CFF subset to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output_path.is_file(),
+        "expected subset to create an output file"
+    );
+
+    let decoded_path = decode_subset_output(&output_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
+    let font = read_font(&decoded_path);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('.')), 1);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('A')), 0);
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(decoded_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
+}
+
+#[test]
+fn subset_variable_cff2_text_input_materializes_static_cff_output() {
+    let input_path = support::fixture_path("testdata/cff2-variable.otf");
+    let output_path = temp_file("fntdata");
+    let isolated_cwd = temp_file("cwd");
+    fs::create_dir_all(&isolated_cwd).expect("isolated cwd should be creatable");
+
+    let output = run_subset_command(
+        &[
+            "subset",
+            input_path
+                .to_str()
+                .expect("fixture path should be valid utf-8"),
+            output_path
+                .to_str()
+                .expect("temp path should be valid utf-8"),
+            "--text",
+            "ABC",
+            "--variation",
+            "wght=700",
+        ],
+        &isolated_cwd,
+    );
+
+    assert!(
+        output.status.success(),
+        "expected variable CFF2 subset to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output_path.is_file(),
+        "expected subset to create an output file"
+    );
+
+    let decoded_path = decode_subset_output(&output_path);
+    support::assert_decoded_otto_static_cff_output(&decoded_path);
+    let font = read_font(&decoded_path);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('A')), 1);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('B')), 0);
+    assert_eq!(cmap_lookup_gid(&font, u32::from('C')), 0);
+
+    let _ = fs::remove_file(output_path);
+    let _ = fs::remove_file(decoded_path);
+    let _ = fs::remove_dir_all(isolated_cwd);
+}
+
+#[test]
 fn subset_can_emit_raw_sfnt_v2_output() {
-    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = temp_file("eot");
     let _cleanup = TempCleanup::new(vec![output_path.clone()]);
 
@@ -651,7 +780,7 @@ fn subset_can_emit_raw_sfnt_v2_output() {
 
 #[test]
 fn subset_fntdata_output_defaults_to_xor_on() {
-    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let output_path = temp_file("fntdata");
     let _cleanup = TempCleanup::new(vec![output_path.clone()]);
 
@@ -675,12 +804,13 @@ fn subset_fntdata_output_defaults_to_xor_on() {
     let header = parse_eot_header(&bytes).unwrap();
     assert_ne!(header.flags & 0x1000_0000, 0);
     let payload = read_embedded_payload_bytes(&bytes);
-    parse_mtx_container(&payload).expect("default fntdata payload should remain an XOR-decoded MTX container");
+    parse_mtx_container(&payload)
+        .expect("default fntdata payload should remain an XOR-decoded MTX container");
 }
 
 #[test]
 fn subset_supports_all_embedded_output_mode_combinations() {
-    let source_path = workspace_root().join("testdata/OpenSans-Regular.ttf");
+    let source_path = support::fixture_path("testdata/OpenSans-Regular.ttf");
     let cases = [
         ("sfnt", "off", "v1", 0x0002_0001, false),
         ("sfnt", "off", "v2", 0x0002_0002, false),

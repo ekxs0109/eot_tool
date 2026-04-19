@@ -9,17 +9,17 @@ use embedded_output::{
     build_embedded_output, embedded_output_allowed, EmbeddedEotVersion, EmbeddedMtxExtraBlocks,
     EmbeddedOutputOptions, EmbeddedPayloadFormat, EmbeddedXorMode,
 };
-use fonttool_cff::{inspect_otf_font, CffError};
+use fonttool_cff::{
+    convert_otf_to_ttf, inspect_otf_font, instantiate_variable_cff2, load_font_source,
+    parse_variation_axes, serialize_subset_otf, subset_static_cff, subset_variable_cff2,
+    CffError,
+};
 use fonttool_eot::parse_eot_header;
 use fonttool_glyf::{decode_glyf, encode_glyf};
-use fonttool_harfbuzz::subset_font_bytes;
-use fonttool_mtx::{
-    decompress_lz, parse_mtx_container,
-};
+use fonttool_mtx::{decompress_lz, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
 use fonttool_subset::{
-    apply_output_table_policy, plan_glyph_subset, should_copy_encode_block1_table, GlyphIdRequest,
-    SubsetWarnings,
+    should_copy_encode_block1_table, subset_owned_font, GlyphIdRequest,
 };
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
@@ -33,7 +33,6 @@ const TAG_NAME: u32 = u32::from_be_bytes(*b"name");
 const TAG_OS_2: u32 = u32::from_be_bytes(*b"OS/2");
 const TAG_CFF: u32 = u32::from_be_bytes(*b"CFF ");
 const TAG_CFF2: u32 = u32::from_be_bytes(*b"CFF2");
-
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);
 
@@ -60,6 +59,7 @@ fn main() -> ExitCode {
                 &request.input_path,
                 &request.output_path,
                 request.embedded_output,
+                request.variation_axes.as_deref(),
             ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
@@ -85,6 +85,19 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Some("convert") => match handle_convert_args(args.collect()) {
+            Ok(request) => match convert_file(request) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("fonttool: {error}");
+                    ExitCode::from(1)
+                }
+            },
+            Err(error) => {
+                eprintln!("fonttool: {error}");
+                ExitCode::from(2)
+            }
+        },
         Some(command) => {
             eprintln!("fonttool: unknown command `{command}`");
             ExitCode::from(2)
@@ -96,7 +109,16 @@ fn main() -> ExitCode {
 struct EncodeCliRequest {
     input_path: PathBuf,
     output_path: PathBuf,
+    variation_axes: Option<String>,
     embedded_output: EmbeddedOutputOptions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConvertCliRequest {
+    input_path: PathBuf,
+    output_path: PathBuf,
+    target: String,
+    variation_axes: Option<String>,
 }
 
 fn parse_payload_format(value: &str) -> Result<EmbeddedPayloadFormat, String> {
@@ -167,14 +189,80 @@ fn handle_encode_args(args: Vec<String>) -> Result<EncodeCliRequest, String> {
         return Err("encode expects INPUT and OUTPUT paths".to_string());
     }
 
-    let output_path: PathBuf = args[1].clone().into();
-    let (embedded_output, _) = parse_embedded_output_args(&args, 2, &output_path)?;
-
-    Ok(EncodeCliRequest {
+    let mut request = EncodeCliRequest {
         input_path: args[0].clone().into(),
-        output_path,
-        embedded_output,
-    })
+        output_path: args[1].clone().into(),
+        variation_axes: None,
+        embedded_output: EmbeddedOutputOptions::default(),
+    };
+    let mut embedded_output_args = Vec::new();
+    let mut index = 2usize;
+
+    while index < args.len() {
+        let flag = &args[index];
+        if index + 1 >= args.len() {
+            return Err("encode flag is missing a value".to_string());
+        }
+
+        match flag.as_str() {
+            "--variation" => {
+                request.variation_axes = Some(args[index + 1].clone());
+            }
+            "--payload-format" | "--xor" | "--eot-version" => {
+                embedded_output_args.push(flag.clone());
+                embedded_output_args.push(args[index + 1].clone());
+            }
+            _ => return Err(format!("unsupported encode flag `{flag}`")),
+        }
+
+        index += 2;
+    }
+
+    if !embedded_output_args.is_empty() {
+        let (embedded_output, _) =
+            parse_embedded_output_args(&embedded_output_args, 0, &request.output_path)?;
+        request.embedded_output = embedded_output;
+    }
+
+    Ok(request)
+}
+
+fn handle_convert_args(args: Vec<String>) -> Result<ConvertCliRequest, String> {
+    if args.len() < 4 {
+        return Err("convert expects INPUT OUTPUT and `--to <FORMAT>`".to_string());
+    }
+
+    let mut request = ConvertCliRequest {
+        input_path: args[0].clone().into(),
+        output_path: args[1].clone().into(),
+        target: String::new(),
+        variation_axes: None,
+    };
+
+    let mut index = 2usize;
+    while index < args.len() {
+        let flag = &args[index];
+        if index + 1 >= args.len() {
+            return Err("convert flag is missing a value".to_string());
+        }
+
+        match flag.as_str() {
+            "--to" => request.target = args[index + 1].clone(),
+            "--variation" => request.variation_axes = Some(args[index + 1].clone()),
+            _ => return Err(format!("unsupported convert flag `{flag}`")),
+        }
+
+        index += 2;
+    }
+
+    if request.target.is_empty() {
+        return Err("convert expects INPUT OUTPUT and `--to <FORMAT>`".to_string());
+    }
+    if request.target != "ttf" {
+        return Err(format!("unsupported convert target `{}`", request.target));
+    }
+
+    Ok(request)
 }
 
 fn print_help() {
@@ -183,9 +271,10 @@ fn print_help() {
     println!("Usage: fonttool <COMMAND>");
     println!();
     println!("Commands:");
-    println!("  encode <INPUT> <OUTPUT>  Encode a TrueType font into EOT/MTX");
+    println!("  encode <INPUT> <OUTPUT>  Encode a font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
     println!("  subset <INPUT> <OUTPUT> ...  Subset supported non-OTF glyph-id inputs in Rust");
+    println!("  convert <INPUT> <OUTPUT>  Explicitly convert supported OTF input to another format");
     println!();
     println!("Options:");
     println!("  -h, --help  Print help");
@@ -207,11 +296,201 @@ fn decode_file(input_path: impl AsRef<Path>, output_path: impl AsRef<Path>) -> R
     Ok(())
 }
 
-fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    decode_embedded_font_bytes_full(input_bytes)
+struct PreparedEmbeddedPayload {
+    payload_bytes: Vec<u8>,
 }
 
-fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
+const TAG_BASE: u32 = u32::from_be_bytes(*b"BASE");
+const TAG_DSIG: u32 = u32::from_be_bytes(*b"DSIG");
+const TAG_GSUB: u32 = u32::from_be_bytes(*b"GSUB");
+const TAG_HVAR: u32 = u32::from_be_bytes(*b"HVAR");
+const TAG_STAT: u32 = u32::from_be_bytes(*b"STAT");
+const TAG_VORG: u32 = u32::from_be_bytes(*b"VORG");
+const TAG_AVAR: u32 = u32::from_be_bytes(*b"avar");
+const TAG_CMAP: u32 = u32::from_be_bytes(*b"cmap");
+const TAG_FVAR: u32 = u32::from_be_bytes(*b"fvar");
+const TAG_POST: u32 = u32::from_be_bytes(*b"post");
+const TAG_VHEA: u32 = u32::from_be_bytes(*b"vhea");
+const TAG_VMTX: u32 = u32::from_be_bytes(*b"vmtx");
+const OFFICE_CFF2_VALID_PREFIX_TAGS: [u32; 13] = [
+    TAG_BASE, TAG_CFF2, TAG_DSIG, TAG_GSUB, TAG_HVAR, TAG_OS_2, TAG_STAT, TAG_VORG, TAG_AVAR,
+    TAG_CMAP, TAG_FVAR, TAG_HEAD, TAG_HHEA,
+];
+const OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS: [u32; 6] =
+    [TAG_HMTX, TAG_MAXP, TAG_NAME, TAG_POST, TAG_VHEA, TAG_VMTX];
+
+#[derive(Clone, Copy)]
+struct SfntRecord {
+    tag: u32,
+    offset: usize,
+    length: usize,
+}
+
+fn read_u16_be(bytes: &[u8], offset: usize) -> Option<u16> {
+    let bytes = bytes.get(offset..offset + 2)?;
+    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+}
+
+fn read_u32_be(bytes: &[u8], offset: usize) -> Option<u32> {
+    let bytes = bytes.get(offset..offset + 4)?;
+    Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn parse_sfnt_directory_record(bytes: &[u8], index: usize) -> Option<SfntRecord> {
+    let record_offset = 12 + index * 16;
+    Some(SfntRecord {
+        tag: read_u32_be(bytes, record_offset)?,
+        offset: usize::try_from(read_u32_be(bytes, record_offset + 8)?).ok()?,
+        length: usize::try_from(read_u32_be(bytes, record_offset + 12)?).ok()?,
+    })
+}
+
+fn salvage_office_prefixed_cff2_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
+    if !bytes.starts_with(b"OTTO") {
+        return None;
+    }
+
+    let num_tables = usize::from(read_u16_be(bytes, 4)?);
+    if num_tables != OFFICE_CFF2_VALID_PREFIX_TAGS.len() + OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS.len() {
+        return None;
+    }
+    let directory_len = 12usize.checked_add(num_tables.checked_mul(16)?)?;
+    if bytes.len() < directory_len {
+        return None;
+    }
+
+    let mut seen_tags = Vec::with_capacity(num_tables);
+    let mut kept_records = Vec::new();
+    let mut dropped_tags = Vec::new();
+    let mut seen_invalid = false;
+    let mut last_valid_end = 0usize;
+    let mut first_invalid_offset = None;
+
+    for index in 0..num_tables {
+        let record = parse_sfnt_directory_record(bytes, index)?;
+        if record.length == 0 || seen_tags.contains(&record.tag) {
+            return None;
+        }
+        seen_tags.push(record.tag);
+
+        let end = record.offset.checked_add(record.length)?;
+        let is_valid = record.offset >= directory_len && end <= bytes.len();
+
+        if is_valid {
+            if seen_invalid || record.offset < last_valid_end {
+                return None;
+            }
+            last_valid_end = end;
+            kept_records.push(record);
+        } else {
+            if record.offset < directory_len {
+                return None;
+            }
+            if first_invalid_offset.is_none() {
+                first_invalid_offset = Some(record.offset);
+                if record.offset != last_valid_end {
+                    return None;
+                }
+            }
+            if record.offset < first_invalid_offset? || end <= bytes.len() {
+                return None;
+            }
+            seen_invalid = true;
+            dropped_tags.push(record.tag);
+        }
+    }
+
+    if kept_records.len() != OFFICE_CFF2_VALID_PREFIX_TAGS.len()
+        || dropped_tags.len() != OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS.len()
+    {
+        return None;
+    }
+
+    let kept_tags: Vec<u32> = kept_records.iter().map(|record| record.tag).collect();
+    if kept_tags != OFFICE_CFF2_VALID_PREFIX_TAGS
+        || dropped_tags != OFFICE_CFF2_TRUNCATED_SUFFIX_TAGS
+    {
+        return None;
+    }
+
+    let mut font = OwnedSfntFont::new(u32::from_be_bytes(*b"OTTO"));
+    for record in kept_records {
+        let table_end = record.offset.checked_add(record.length)?;
+        font.add_table(record.tag, bytes[record.offset..table_end].to_vec());
+    }
+
+    let serialized = serialize_sfnt(&font).ok()?;
+    let kind = inspect_otf_font(&serialized).ok()?;
+    if !kind.is_cff_flavor || !kind.is_variable {
+        return None;
+    }
+
+    Some(serialized)
+}
+
+fn extract_office_prefixed_static_cff_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
+    let prefixed_bytes = bytes.get(1..)?;
+    if !prefixed_bytes.starts_with(b"OTTO") {
+        return None;
+    }
+
+    parse_sfnt(prefixed_bytes).ok()?;
+    let kind = inspect_otf_font(prefixed_bytes).ok()?;
+    if !kind.is_cff_flavor || kind.is_variable {
+        return None;
+    }
+
+    let font = load_sfnt(prefixed_bytes).ok()?;
+    if font.table(TAG_CFF).is_none()
+        || font.table(TAG_CFF2).is_some()
+        || font.table(TAG_GLYF).is_some()
+    {
+        return None;
+    }
+
+    Some(prefixed_bytes.to_vec())
+}
+
+fn extract_single_byte_prefixed_cff_sfnt(bytes: &[u8]) -> Option<Vec<u8>> {
+    let prefixed_bytes = bytes.get(1..)?;
+    if !prefixed_bytes.starts_with(b"OTTO") {
+        return None;
+    }
+
+    parse_sfnt(prefixed_bytes).ok()?;
+    let kind = inspect_otf_font(prefixed_bytes).ok()?;
+    if !kind.is_cff_flavor {
+        return None;
+    }
+
+    Some(prefixed_bytes.to_vec())
+}
+
+fn extract_cff_sfnt_payload(block1: &[u8], block2: &[u8], block3: &[u8]) -> Option<Vec<u8>> {
+    if !block2.is_empty() || !block3.is_empty() {
+        return None;
+    }
+
+    if let Ok(kind) = inspect_otf_font(block1) {
+        if kind.is_cff_flavor {
+            return Some(block1.to_vec());
+        }
+    }
+
+    // The real Office static CFF fixture carries a single-byte prefix in
+    // block1 before the embedded OTTO font.
+    if let Some(static_cff_payload) = extract_office_prefixed_static_cff_sfnt(block1) {
+        return Some(static_cff_payload);
+    }
+
+    if let Some(prefixed_cff_payload) = extract_single_byte_prefixed_cff_sfnt(block1) {
+        return Some(prefixed_cff_payload);
+    }
+
+    salvage_office_prefixed_cff2_sfnt(block1.get(1..)?)
+}
+
+fn prepare_embedded_payload(input_bytes: &[u8]) -> Result<PreparedEmbeddedPayload, String> {
     let header =
         parse_eot_header(input_bytes).map_err(|error| format!("invalid EOT header: {error}"))?;
     let payload_start = header.header_length as usize;
@@ -230,15 +509,18 @@ fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String
         }
     }
 
-    let container = match parse_mtx_container(&payload_bytes) {
-        Ok(container) => container,
-        Err(error) => {
-            if parse_sfnt(&payload_bytes).is_ok() {
-                return Ok(payload_bytes);
-            }
-            return Err(format!("invalid MTX container: {error}"));
-        }
-    };
+    Ok(PreparedEmbeddedPayload { payload_bytes })
+}
+
+fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let prepared = prepare_embedded_payload(input_bytes)?;
+
+    if parse_sfnt(&prepared.payload_bytes).is_ok() {
+        return Ok(prepared.payload_bytes);
+    }
+
+    let container = parse_mtx_container(&prepared.payload_bytes)
+        .map_err(|error| format!("invalid MTX container: {error}"))?;
     let block1 = decompress_lz(container.block1)
         .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
     let block2 = match container.block2 {
@@ -254,6 +536,18 @@ fn decode_embedded_font_bytes_full(input_bytes: &[u8]) -> Result<Vec<u8>, String
         None => Vec::new(),
     };
 
+    if let Some(cff_payload) = extract_cff_sfnt_payload(&block1, &block2, &block3) {
+        return Ok(cff_payload);
+    }
+
+    decode_embedded_font_bytes_full(block1, block2, block3)
+}
+
+fn decode_embedded_font_bytes_full(
+    block1: Vec<u8>,
+    block2: Vec<u8>,
+    block3: Vec<u8>,
+) -> Result<Vec<u8>, String> {
     let mut font = load_sfnt(&block1).map_err(|error| format!("invalid block1 SFNT: {error}"))?;
     let needs_glyf_reconstruction = font.version_tag() == SFNT_VERSION_TRUETYPE
         && font.table(TAG_GLYF).is_some()
@@ -303,8 +597,19 @@ fn encode_file(
     input_path: impl AsRef<Path>,
     output_path: impl AsRef<Path>,
     output_options: EmbeddedOutputOptions,
+    variation_axes: Option<&str>,
 ) -> Result<(), String> {
     let output_path = output_path.as_ref();
+    if output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("ttf"))
+    {
+        return Err(
+            "encode output must be .eot or .fntdata; use `convert --to ttf` for TrueType output"
+                .to_string(),
+        );
+    }
     if output_path
         .extension()
         .and_then(|value| value.to_str())
@@ -315,13 +620,24 @@ fn encode_file(
         );
     }
 
-    let input_bytes = fs::read(input_path.as_ref())
+    let raw_input_bytes = fs::read(input_path.as_ref())
         .map_err(|error| format!("failed to read {}: {error}", input_path.as_ref().display()))?;
-    let source_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
-
-    if source_font.table(TAG_CFF).is_some() || source_font.table(TAG_CFF2).is_some() {
-        return Err(CffError::EncodeDeferredToPhase3.to_string());
+    let input_bytes = load_font_source(&raw_input_bytes).map_err(|error| error.to_string())?;
+    let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
+    if kind.is_cff_flavor {
+        return encode_otf_file(
+            &input_bytes,
+            output_path,
+            output_options,
+            variation_axes,
+            &kind,
+        );
     }
+    if variation_axes.is_some() {
+        return Err("encode does not support --variation for non-OTF input".to_string());
+    }
+
+    let source_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
 
     if source_font.version_tag() != SFNT_VERSION_TRUETYPE {
         return Err(
@@ -378,11 +694,70 @@ fn encode_file(
     Ok(())
 }
 
+fn convert_file(request: ConvertCliRequest) -> Result<(), String> {
+    let raw_bytes = fs::read(&request.input_path)
+        .map_err(|error| format!("failed to read {}: {error}", request.input_path.display()))?;
+    let bytes = load_font_source(&raw_bytes).map_err(|error| error.to_string())?;
+
+    let output = match request.target.as_str() {
+        "ttf" => {
+            let axes = parse_variation_axes(request.variation_axes.as_deref().unwrap_or_default())
+                .map_err(|error| error.to_string())?;
+            let source_font = load_sfnt(&bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+            if source_font.version_tag() == SFNT_VERSION_TRUETYPE {
+                if !axes.is_empty() {
+                    return Err("convert does not support --variation for non-OTF input".to_string());
+                }
+                bytes
+            } else {
+                convert_otf_to_ttf(&bytes, &axes).map_err(|error| error.to_string())?
+            }
+        }
+        other => return Err(format!("unsupported convert target `{other}`")),
+    };
+
+    fs::write(&request.output_path, output)
+        .map_err(|error| format!("failed to write {}: {error}", request.output_path.display()))
+}
+
+fn encode_otf_file(
+    input_bytes: &[u8],
+    output_path: &Path,
+    output_options: EmbeddedOutputOptions,
+    variation_axes: Option<&str>,
+    kind: &fonttool_cff::CffFontKind,
+) -> Result<(), String> {
+    let otf_bytes = if kind.is_variable {
+        let axes = parse_variation_axes(variation_axes.unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+        instantiate_variable_cff2(input_bytes, &axes).map_err(|error| error.to_string())?
+    } else {
+        if variation_axes.is_some() {
+            return Err(CffError::VariationRejectedForStaticInput.to_string());
+        }
+        input_bytes.to_vec()
+    };
+
+    let otf_font = load_sfnt(&otf_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+    let head = table_bytes(&otf_font, TAG_HEAD, "head")?;
+    let os2 = table_bytes(&otf_font, TAG_OS_2, "OS/2")?;
+    let name = otf_font
+        .table(TAG_NAME)
+        .map(|table| table.data.as_slice())
+        .unwrap_or(&[]);
+    let encoded_eot = build_embedded_output(head, os2, name, &otf_bytes, None, output_options)?;
+
+    fs::write(output_path, encoded_eot)
+        .map_err(|error| format!("failed to write {}: {error}", output_path.display()))?;
+
+    Ok(())
+}
+
 fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
     let input_bytes = load_subset_input_sfnt_bytes(&request.input_path)?;
     let kind = inspect_otf_font(&input_bytes).map_err(|error| error.to_string())?;
     if kind.is_cff_flavor {
-        return subset_otf_file(&request, &kind);
+        return subset_otf_file(&request, &input_bytes, &kind);
     }
     if request.variation_axes.is_some() {
         return Err("subset does not support --variation for non-OTF input".to_string());
@@ -394,18 +769,8 @@ fn subset_file(request: SubsetCliRequest) -> Result<(), String> {
     let glyph_ids = GlyphIdRequest::parse_csv(glyph_ids_csv)
         .map_err(|error| format!("invalid subset arguments: {error}"))?;
     let input_font = load_sfnt(&input_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
-    let plan =
-        plan_glyph_subset(&input_font, &glyph_ids, false).map_err(|error| error.to_string())?;
-    let mut harfbuzz_input = input_font.clone();
-    let mut subset_warnings = SubsetWarnings::default();
-    apply_output_table_policy(&mut harfbuzz_input, &mut subset_warnings);
-    let harfbuzz_input_bytes = serialize_sfnt(&harfbuzz_input)
-        .map_err(|error| format!("failed to serialize subset input: {error}"))?;
-    let subset_bytes = subset_font_bytes(&harfbuzz_input_bytes, &plan)
-        .map_err(|error| format!("failed to subset font with HarfBuzz: {error}"))?;
-    let mut subset_font = load_sfnt(&subset_bytes)
-        .map_err(|error| format!("invalid HarfBuzz subset SFNT: {error}"))?;
-    apply_output_table_policy(&mut subset_font, &mut subset_warnings);
+    let (subset_font, subset_warnings) =
+        subset_owned_font(input_font, &glyph_ids).map_err(|error| error.to_string())?;
     let subset_bytes = serialize_sfnt(&subset_font)
         .map_err(|error| format!("failed to serialize subset: {error}"))?;
     let head = table_bytes(&subset_font, TAG_HEAD, "head")?;
@@ -531,13 +896,17 @@ fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
                 )
             })
         }
-        _ => fs::read(input_path)
-            .map_err(|error| format!("failed to read {}: {error}", input_path.display())),
+        _ => {
+            let input_bytes = fs::read(input_path)
+                .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
+            load_font_source(&input_bytes)
+                .map_err(|error| format!("failed to load subset input {}: {error}", input_path.display()))
+        }
     }
 }
 
 fn load_subset_input_sfnt_from_embedded_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    decode_embedded_font_bytes_full(input_bytes)
+    decode_embedded_font_bytes(input_bytes)
 }
 
 fn table_bytes<'a>(font: &'a OwnedSfntFont, tag: u32, name: &str) -> Result<&'a [u8], String> {
@@ -590,6 +959,7 @@ fn emit_subset_warnings(subset_warnings: &fonttool_subset::SubsetWarnings) {
 
 fn subset_otf_file(
     request: &SubsetCliRequest,
+    input_bytes: &[u8],
     kind: &fonttool_cff::CffFontKind,
 ) -> Result<(), String> {
     let text = request
@@ -600,6 +970,32 @@ fn subset_otf_file(
         return Err(CffError::VariationRejectedForStaticInput.to_string());
     }
 
-    let _ = text;
-    Err(CffError::SubsetDeferredToPhase3.to_string())
+    let subset = if kind.is_variable {
+        let axes = parse_variation_axes(request.variation_axes.as_deref().unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+        subset_variable_cff2(input_bytes, text, &axes).map_err(|error| error.to_string())?
+    } else {
+        subset_static_cff(input_bytes, text).map_err(|error| error.to_string())?
+    };
+    let subset_bytes = serialize_subset_otf(subset).map_err(|error| error.to_string())?;
+    let subset_font = load_sfnt(&subset_bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+    let head = table_bytes(&subset_font, TAG_HEAD, "head")?;
+    let os2 = table_bytes(&subset_font, TAG_OS_2, "OS/2")?;
+    let name = subset_font
+        .table(TAG_NAME)
+        .map(|table| table.data.as_slice())
+        .unwrap_or(&[]);
+    let encoded_output = build_embedded_output(
+        head,
+        os2,
+        name,
+        &subset_bytes,
+        None,
+        request.embedded_output,
+    )?;
+
+    fs::write(&request.output_path, encoded_output)
+        .map_err(|error| format!("failed to write {}: {error}", request.output_path.display()))?;
+
+    Ok(())
 }

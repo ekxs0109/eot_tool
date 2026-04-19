@@ -11,7 +11,7 @@ use std::thread;
 
 pub use fonttool_cff::CffError;
 
-use fonttool_cff::{encode_otf_with_legacy_backend, inspect_otf_font};
+use fonttool_cff::inspect_otf_font;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeThreadMode {
@@ -65,6 +65,9 @@ pub enum OutputKind {
     Eot,
     Fntdata,
 }
+
+const CFF_ENCODE_DEFERRED_MESSAGE: &str =
+    "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows";
 
 impl OutputKind {
     #[must_use]
@@ -315,7 +318,11 @@ fn run_conversion_request(
         ));
     }
 
-    encode_otf_with_legacy_backend(input_path, output_path).map_err(RuntimeError::from)
+    let _ = input_path;
+    let _ = output_path;
+    Err(RuntimeError::Backend(
+        CFF_ENCODE_DEFERRED_MESSAGE.to_string(),
+    ))
 }
 
 fn temp_runtime_output_path(output_kind: OutputKind) -> PathBuf {
@@ -570,7 +577,12 @@ mod tests {
         })
         .expect_err("static CFF conversion should stay outside the Phase 1 runtime boundary");
 
-        assert_eq!(error, RuntimeError::Cff(CffError::EncodeDeferredToPhase3));
+        assert_eq!(
+            error,
+            RuntimeError::Backend(
+                "OTF(CFF/CFF2) encode remains Phase 3-owned; use the archived native binary for compatibility flows".to_string()
+            )
+        );
     }
 
     #[test]

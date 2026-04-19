@@ -9,7 +9,6 @@ version.workspace = true
 fonttool-cff = { path = "../fonttool-cff" }
 fonttool-eot = { path = "../fonttool-eot" }
 fonttool-glyf = { path = "../fonttool-glyf" }
-fonttool-harfbuzz = { path = "../fonttool-harfbuzz" }
 fonttool-mtx = { path = "../fonttool-mtx" }
 fonttool-sfnt = { path = "../fonttool-sfnt" }
 fonttool-subset = { path = "../fonttool-subset" }
@@ -38,6 +37,10 @@ path = "../../tests/rust_integration/subset.rs"
 [[test]]
 name = "otf_convert"
 path = "../../tests/rust_integration/otf_convert.rs"
+
+[[test]]
+name = "woff"
+path = "../../tests/rust_integration/woff.rs"
 
 [[test]]
 name = "runtime_wasm"
