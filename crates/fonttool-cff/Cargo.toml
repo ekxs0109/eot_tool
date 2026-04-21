@@ -14,3 +14,7 @@ fonttool-sfnt = { path = "../fonttool-sfnt" }
 
 [build-dependencies]
 cc = "1.2"
+
+[dev-dependencies]
+fonttool-eot = { path = "../fonttool-eot" }
+fonttool-mtx = { path = "../fonttool-mtx" }
