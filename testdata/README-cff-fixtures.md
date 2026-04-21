@@ -156,3 +156,29 @@
   - on the current synced baseline, that later step still fails because `convert` rejects the decoded output as not `OTF/CFF` or `OTF/CFF2`
 - The repository keeps the extracted `.fntdata` only; it does not keep the `.pptx`
 - To refresh the fixture, embed the same font in local PowerPoint, extract `ppt/fonts/font2.fntdata`, overwrite `testdata/presentation1-font2-bold.fntdata`, and update the recorded checksum intentionally
+
+## `testdata/sourcehan-sc-regular-cff-prefix-through-global-subrs.bin`
+
+- Derived from local source: `/Users/ekxs/Downloads/09_SourceHanSansSC/OTF/SimplifiedChinese/SourceHanSansSC-Regular.otf`
+- Extraction method:
+  - locate the `CFF ` table inside the source OTF
+  - slice the first `2806` bytes
+- Meaning of the cut:
+  - the file contains the standard source `CFF ` bytes through the start of Global Subr data
+  - this includes the standard CFF header plus `Name`, `Top DICT`, `String`, and `Global Subr` INDEX framing
+- Why it is tracked:
+  - Office static CFF Task 3 is fixture-bounded
+  - the rebuild path needs a stable standard prefix reference without depending on local ad-hoc extraction in every worktree
+
+## `testdata/sourcehan-sc-bold-cff-prefix-through-global-subrs.bin`
+
+- Derived from local source: `/Users/ekxs/Downloads/09_SourceHanSansSC/OTF/SimplifiedChinese/SourceHanSansSC-Bold.otf`
+- Extraction method:
+  - locate the `CFF ` table inside the source OTF
+  - slice the first `3362` bytes
+- Meaning of the cut:
+  - the file contains the standard source `CFF ` bytes through the start of Global Subr data
+  - this includes the standard CFF header plus `Name`, `Top DICT`, `String`, and `Global Subr` INDEX framing
+- Why it is tracked:
+  - Office static CFF Task 3 is fixture-bounded
+  - the rebuild path needs a stable standard prefix reference without depending on local ad-hoc extraction in every worktree

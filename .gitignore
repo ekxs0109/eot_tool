@@ -12,7 +12,6 @@ coverage/
 *.local
 *.cache
 target/
-testdata/
 docs/superpowers/
 .worktrees/
 tests/macos-swift/.build/
