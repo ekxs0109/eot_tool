@@ -152,7 +152,7 @@ fn decode_otto_cff2_variable_fixture_writes_variable_otto_output() {
 }
 
 #[test]
-fn decode_otto_cff_office_fixture_writes_static_otto_output() {
+fn decode_otto_cff_office_fixture_writes_office_intermediate_output() {
     let input_path = support::tracked_testdata_path("testdata/otto-cff-office.fntdata");
     let output_path = temp_out();
     let _output_cleanup = support::TempPathGuard::new(output_path.clone());
@@ -237,6 +237,8 @@ fn decode_raw_otto_cff2_payload_eot_writes_variable_otto_output() {
 fn decode_rejects_malformed_prefixed_office_like_cff2_block1() {
     let input_path = temp_in("fntdata");
     let output_path = temp_out();
+    let _input_cleanup = support::TempPathGuard::new(input_path.clone());
+    let _output_cleanup = support::TempPathGuard::new(output_path.clone());
     let fixture = build_prefixed_office_like_otf_eot(true);
     fs::write(&input_path, fixture).expect("mutated fixture should be writable");
 
@@ -262,9 +264,6 @@ fn decode_rejects_malformed_prefixed_office_like_cff2_block1() {
             || stderr.contains("decoded SFNT is invalid"),
         "expected malformed prefixed Office-like failure, stderr: {stderr}"
     );
-
-    let _ = fs::remove_file(input_path);
-    let _ = fs::remove_file(output_path);
 }
 
 #[test]
@@ -408,6 +407,8 @@ fn decode_xor_raw_sfnt_payload_eot_writes_truetype_output() {
 fn decode_rejects_incomplete_extra_mtx_blocks_for_truetype_reconstruction() {
     let input_path = temp_in("fntdata");
     let output_path = temp_out();
+    let _input_cleanup = support::TempPathGuard::new(input_path.clone());
+    let _output_cleanup = support::TempPathGuard::new(output_path.clone());
     let fixture = build_fixture_with_non_empty_block3();
 
     fs::write(&input_path, fixture).expect("mutated fixture should be writable");
@@ -432,9 +433,6 @@ fn decode_rejects_incomplete_extra_mtx_blocks_for_truetype_reconstruction() {
         stderr.contains("current Rust MTX decode requires both block2 and block3"),
         "expected incomplete-block error, stderr: {stderr}"
     );
-
-    let _ = fs::remove_file(input_path);
-    let _ = fs::remove_file(output_path);
 }
 
 fn build_fixture_with_non_empty_block3() -> Vec<u8> {

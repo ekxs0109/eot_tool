@@ -138,7 +138,10 @@
 - Source path: `ppt/fonts/font1.fntdata` inside the current local `Presentation1.pptx`
 - Extraction provenance: the fixture is extracted from the local `Presentation1.pptx` and represents the real Office-compatible embedded path
 - Fixture identity: `sha256 06ee8f3c7e480590ec6121608ad27de2f80d64ea3f04a7f77fbbae2c20e577f9`
-- Decoded output: a static `OTTO + CFF` font
+- Decoded output today:
+  - current Rust decode writes the known Office static-CFF intermediate with the nonstandard `OTTO 0001 0200 0004 0010` prefix
+  - the focused Office fixture regression for this path stops at that shallow intermediate-shape check
+  - stronger later `convert --to ttf` boundary validation is covered separately by the bold `presentation1-font2-bold.fntdata` regression
 - The repository keeps the extracted `.fntdata` only; it does not keep the `.pptx`
 - Compatibility note: PowerPoint may accept static `OTF/CFF` while rejecting variable `OTF/CFF2`, so Office compatibility is tested with this static fixture while variable support remains covered through source fixtures and roundtrip tests
 
