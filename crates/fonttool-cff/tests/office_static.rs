@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use fonttool_cff::office_static::extract_office_static_cff;
+use fonttool_cff::office_static::{extract_office_static_cff, rebuild_office_static_cff_table};
 use fonttool_eot::parse_eot_header;
 use fonttool_mtx::{decompress_lz_with_limit, parse_mtx_container};
 
@@ -29,6 +29,43 @@ fn decode_block1_from_fntdata(relative: &str) -> Vec<u8> {
         parse_mtx_container(&payload).expect("fixture should contain a valid MTX container");
     let copy_limit = usize::try_from(container.copy_dist).expect("copy_dist should fit usize");
     decompress_lz_with_limit(container.block1, copy_limit).expect("block1 should decompress")
+}
+
+fn tracked_bytes(relative: &str) -> Vec<u8> {
+    fs::read(fixture(relative)).expect("tracked fixture should be readable")
+}
+
+fn read_index_header(bytes: &[u8], offset: usize) -> (u16, u8, usize) {
+    let count = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
+    if count == 0 {
+        return (0, 0, offset + 2);
+    }
+
+    let off_size = bytes[offset + 2];
+    assert!(
+        (1..=4).contains(&off_size),
+        "invalid offSize {} at offset {}",
+        off_size,
+        offset
+    );
+
+    let offsets_end = offset + 3 + (usize::from(count) + 1) * usize::from(off_size);
+    let mut previous = 0u32;
+    for chunk in bytes[offset + 3..offsets_end].chunks_exact(usize::from(off_size)) {
+        let mut value = 0u32;
+        for byte in chunk {
+            value = (value << 8) | u32::from(*byte);
+        }
+        if previous == 0 {
+            assert_eq!(value, 1, "first CFF offset must be 1");
+        } else {
+            assert!(value >= previous, "CFF offsets must be monotonic");
+        }
+        previous = value;
+    }
+
+    let data_len = usize::try_from(previous - 1).expect("CFF data length should fit usize");
+    (count, off_size, offsets_end + data_len)
 }
 
 #[test]
@@ -75,4 +112,71 @@ fn extract_office_static_cff_normalizes_single_leading_nul_before_otto() {
     assert_eq!(&office.sfnt_bytes[..4], b"OTTO");
     assert_eq!(office.cff_offset, 0x20e);
     assert_eq!(office.office_cff_suffix, &[0x04, 0x03, 0x00, 0x01]);
+}
+
+#[test]
+fn office_static_raw_suffix_is_not_a_direct_standard_name_index() {
+    for relative in [
+        "testdata/otto-cff-office.fntdata",
+        "testdata/presentation1-font2-bold.fntdata",
+    ] {
+        let block1 = decode_block1_from_fntdata(relative);
+        let office = extract_office_static_cff(&block1).expect("fixture should decode");
+        let raw_name_off_size = office.office_cff_suffix[6];
+
+        assert!(raw_name_off_size > 4);
+        assert_eq!(office.office_cff_suffix[4], 0x01);
+        assert_eq!(office.office_cff_suffix[5], 0x02);
+    }
+}
+
+#[test]
+fn rebuild_office_static_cff_table_restores_regular_standard_prefix_and_splices_office_tail() {
+    let block1 = decode_block1_from_fntdata("testdata/otto-cff-office.fntdata");
+    let office = extract_office_static_cff(&block1).expect("regular fixture should decode");
+    let rebuilt =
+        rebuild_office_static_cff_table(&block1).expect("regular fixture should rebuild");
+    let prefix = tracked_bytes("testdata/sourcehan-sc-regular-cff-prefix-through-global-subrs.bin");
+
+    assert!(rebuilt.starts_with(&prefix));
+    assert_eq!(
+        &rebuilt[prefix.len()..prefix.len() + 32],
+        &office.office_cff_suffix[2804..2804 + 32]
+    );
+
+    let (name_count, name_off_size, after_name) = read_index_header(&rebuilt, 4);
+    let (top_count, top_off_size, after_top) = read_index_header(&rebuilt, after_name);
+    let (string_count, string_off_size, after_string) = read_index_header(&rebuilt, after_top);
+    let (global_count, global_off_size, global_data_start) =
+        read_index_header(&rebuilt, after_string);
+
+    assert_eq!((name_count, name_off_size), (1, 1));
+    assert_eq!((top_count, top_off_size), (1, 1));
+    assert_eq!((string_count, string_off_size), (23, 2));
+    assert_eq!((global_count, global_off_size, global_data_start), (932, 2, 2806));
+}
+
+#[test]
+fn rebuild_office_static_cff_table_restores_bold_standard_prefix_and_splices_office_tail() {
+    let block1 = decode_block1_from_fntdata("testdata/presentation1-font2-bold.fntdata");
+    let office = extract_office_static_cff(&block1).expect("bold fixture should decode");
+    let rebuilt = rebuild_office_static_cff_table(&block1).expect("bold fixture should rebuild");
+    let prefix = tracked_bytes("testdata/sourcehan-sc-bold-cff-prefix-through-global-subrs.bin");
+
+    assert!(rebuilt.starts_with(&prefix));
+    assert_eq!(
+        &rebuilt[prefix.len()..prefix.len() + 32],
+        &office.office_cff_suffix[3360..3360 + 32]
+    );
+
+    let (name_count, name_off_size, after_name) = read_index_header(&rebuilt, 4);
+    let (top_count, top_off_size, after_top) = read_index_header(&rebuilt, after_name);
+    let (string_count, string_off_size, after_string) = read_index_header(&rebuilt, after_top);
+    let (global_count, global_off_size, global_data_start) =
+        read_index_header(&rebuilt, after_string);
+
+    assert_eq!((name_count, name_off_size), (1, 1));
+    assert_eq!((top_count, top_off_size), (1, 1));
+    assert_eq!((string_count, string_off_size), (23, 2));
+    assert_eq!((global_count, global_off_size, global_data_start), (1240, 2, 3362));
 }
