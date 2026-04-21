@@ -46,6 +46,22 @@ const OFFICE_STATIC_CFF_TAGS: [u32; 17] = [
 const OFFICE_STATIC_CFF_INTERMEDIATE_HEADER: [u8; 12] =
     *b"OTTO\x00\x01\x02\x00\x00\x04\x00\x10";
 
+pub struct TempPathGuard {
+    path: PathBuf,
+}
+
+impl TempPathGuard {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl Drop for TempPathGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -179,7 +195,7 @@ pub fn assert_decoded_otto_cff2_variable_output(path: &Path) {
     );
 }
 
-pub fn assert_decoded_otto_office_static_cff_output(path: &Path) {
+pub fn assert_decoded_otto_office_static_cff_intermediate_shape(path: &Path) {
     let bytes = fs::read(path).expect("decoded font should be readable");
     assert!(
         bytes.len() >= 12 + OFFICE_STATIC_CFF_TAGS.len() * 16,
@@ -228,10 +244,11 @@ pub fn assert_decoded_otto_office_static_cff_output(path: &Path) {
     }
 }
 
-pub fn assert_decoded_otto_office_static_cff_deep_parseable(path: &Path) {
-    assert_decoded_otto_office_static_cff_output(path);
+pub fn assert_decoded_otto_office_static_cff_passes_convert_ttf_input_boundary(path: &Path) {
+    assert_decoded_otto_office_static_cff_intermediate_shape(path);
 
     let ttf_path = temp_ttf();
+    let _ttf_cleanup = TempPathGuard::new(ttf_path.clone());
     let output = run_fonttool([
         "convert",
         path.to_str().expect("decoded path should be valid utf-8"),
@@ -242,12 +259,11 @@ pub fn assert_decoded_otto_office_static_cff_deep_parseable(path: &Path) {
 
     assert!(
         output.status.success(),
-        "expected convert --to ttf to succeed, stderr: {}",
+        "expected decoded Office static CFF intermediate to pass the convert --to ttf input boundary, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
     assert_true_type_glyf_output(&ttf_path);
-    let _ = fs::remove_file(ttf_path);
 }
 
 pub fn assert_decoded_otto_static_cff_output(path: &Path) {

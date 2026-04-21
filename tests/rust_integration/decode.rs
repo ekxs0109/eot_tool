@@ -155,6 +155,7 @@ fn decode_otto_cff2_variable_fixture_writes_variable_otto_output() {
 fn decode_otto_cff_office_fixture_writes_static_otto_output() {
     let input_path = support::tracked_testdata_path("testdata/otto-cff-office.fntdata");
     let output_path = temp_out();
+    let _output_cleanup = support::TempPathGuard::new(output_path.clone());
 
     let output = run_fonttool([
         "decode",
@@ -171,18 +172,14 @@ fn decode_otto_cff_office_fixture_writes_static_otto_output() {
         "expected decode to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    support::assert_decoded_otto_office_static_cff_output(&output_path);
-    fs::remove_file(&output_path).expect("decoded Office fixture temp output should be removable");
-    assert!(
-        !output_path.exists(),
-        "decoded Office fixture temp output should be deleted"
-    );
+    support::assert_decoded_otto_office_static_cff_intermediate_shape(&output_path);
 }
 
 #[test]
-fn decode_presentation1_font2_fntdata_writes_deep_parseable_static_otto_output() {
+fn decode_presentation1_font2_fntdata_passes_convert_ttf_input_boundary() {
     let input_path = support::tracked_testdata_path("testdata/presentation1-font2-bold.fntdata");
     let output_path = temp_out();
+    let _output_cleanup = support::TempPathGuard::new(output_path.clone());
 
     let output = run_fonttool([
         "decode",
@@ -199,9 +196,7 @@ fn decode_presentation1_font2_fntdata_writes_deep_parseable_static_otto_output()
         "expected Presentation1 font2 decode to succeed, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    support::assert_decoded_otto_office_static_cff_deep_parseable(&output_path);
-
-    let _ = fs::remove_file(output_path);
+    support::assert_decoded_otto_office_static_cff_passes_convert_ttf_input_boundary(&output_path);
 }
 
 #[test]

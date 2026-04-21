@@ -149,6 +149,7 @@
 - Fixture identity: `sha256 0c716d9a54f71708cc9c8c172d498b86dadd3baccccb87a4a530a6440acaf474`
 - Decoded output today:
   - current Rust decode writes the known Office static-CFF intermediate with the nonstandard `OTTO 0001 0200 0004 0010` prefix
-  - the focused regression for this fixture is intended to fail later in the `convert --to ttf` path, not during MTX decode
+  - the focused regression for this fixture first checks that intermediate shape, then tries the later `convert --to ttf` input boundary
+  - on the current synced baseline, that later step still fails because `convert` rejects the decoded output as not `OTF/CFF` or `OTF/CFF2`
 - The repository keeps the extracted `.fntdata` only; it does not keep the `.pptx`
 - To refresh the fixture, embed the same font in local PowerPoint, extract `ppt/fonts/font2.fntdata`, overwrite `testdata/presentation1-font2-bold.fntdata`, and update the recorded checksum intentionally
