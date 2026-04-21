@@ -8,6 +8,51 @@ pub struct OfficeStaticCff<'a> {
 }
 
 const OFFICE_CFF_OFFSET: usize = 0x20e;
+const REGULAR_PREFIX_THROUGH_GLOBAL_SUBRS: &[u8] = include_bytes!(
+    "../../../testdata/sourcehan-sc-regular-cff-prefix-through-global-subrs.bin"
+);
+const BOLD_PREFIX_THROUGH_GLOBAL_SUBRS: &[u8] = include_bytes!(
+    "../../../testdata/sourcehan-sc-bold-cff-prefix-through-global-subrs.bin"
+);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OfficeStaticCffKind {
+    SourceHanSansScRegular,
+    SourceHanSansScBold,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OfficeStaticCffLayout {
+    kind: OfficeStaticCffKind,
+    standard_prefix: &'static [u8],
+    office_tail_start: usize,
+}
+
+fn detect_office_static_cff_layout(
+    office: &OfficeStaticCff<'_>,
+) -> Result<OfficeStaticCffLayout, CffError> {
+    let suffix = office.office_cff_suffix;
+
+    if suffix.starts_with(b"\x04\x03\x00\x01\x01\x02\x18SourceHanSaSsSC-Regular") {
+        return Ok(OfficeStaticCffLayout {
+            kind: OfficeStaticCffKind::SourceHanSansScRegular,
+            standard_prefix: REGULAR_PREFIX_THROUGH_GLOBAL_SUBRS,
+            office_tail_start: 2804,
+        });
+    }
+
+    if suffix.starts_with(b"\x04\x03\x00\x01\x01\x02\x15SourceHanSaSsSC-Bold") {
+        return Ok(OfficeStaticCffLayout {
+            kind: OfficeStaticCffKind::SourceHanSansScBold,
+            standard_prefix: BOLD_PREFIX_THROUGH_GLOBAL_SUBRS,
+            office_tail_start: 3360,
+        });
+    }
+
+    Err(CffError::InvalidInput(
+        "unsupported office static cff prefix fixture".to_string(),
+    ))
+}
 
 pub fn extract_office_static_cff(bytes: &[u8]) -> Result<OfficeStaticCff<'_>, CffError> {
     let sfnt_bytes = if bytes.first() == Some(&0) && bytes.get(1..5) == Some(b"OTTO".as_slice()) {
@@ -39,10 +84,22 @@ pub fn extract_office_static_cff(bytes: &[u8]) -> Result<OfficeStaticCff<'_>, Cf
     })
 }
 
-pub fn rebuild_office_static_cff_table(_bytes: &[u8]) -> Result<Vec<u8>, CffError> {
-    Err(CffError::EncodeFailed(
-        "office static cff table rebuild not implemented yet".to_string(),
-    ))
+pub fn rebuild_office_static_cff_table(bytes: &[u8]) -> Result<Vec<u8>, CffError> {
+    let office = extract_office_static_cff(bytes)?;
+    let layout = detect_office_static_cff_layout(&office)?;
+
+    if office.office_cff_suffix.len() < layout.office_tail_start {
+        return Err(CffError::InvalidInput(format!(
+            "office static cff payload is shorter than expected splice point for {:?}",
+            layout.kind
+        )));
+    }
+
+    let suffix_tail = &office.office_cff_suffix[layout.office_tail_start..];
+    let mut rebuilt = Vec::with_capacity(layout.standard_prefix.len() + suffix_tail.len());
+    rebuilt.extend_from_slice(layout.standard_prefix);
+    rebuilt.extend_from_slice(suffix_tail);
+    Ok(rebuilt)
 }
 
 pub fn rebuild_office_static_cff_sfnt(_bytes: &[u8]) -> Result<Vec<u8>, CffError> {
