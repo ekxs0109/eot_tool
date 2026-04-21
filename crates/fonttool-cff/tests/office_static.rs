@@ -35,10 +35,22 @@ fn tracked_bytes(relative: &str) -> Vec<u8> {
     fs::read(fixture(relative)).expect("tracked fixture should be readable")
 }
 
-fn read_index_header(bytes: &[u8], offset: usize) -> (u16, u8, usize) {
+struct CffIndexHeader {
+    count: u16,
+    off_size: u8,
+    data_start: usize,
+    next: usize,
+}
+
+fn read_index_header(bytes: &[u8], offset: usize) -> CffIndexHeader {
     let count = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
     if count == 0 {
-        return (0, 0, offset + 2);
+        return CffIndexHeader {
+            count: 0,
+            off_size: 0,
+            data_start: offset + 2,
+            next: offset + 2,
+        };
     }
 
     let off_size = bytes[offset + 2];
@@ -65,7 +77,12 @@ fn read_index_header(bytes: &[u8], offset: usize) -> (u16, u8, usize) {
     }
 
     let data_len = usize::try_from(previous - 1).expect("CFF data length should fit usize");
-    (count, off_size, offsets_end + data_len)
+    CffIndexHeader {
+        count,
+        off_size,
+        data_start: offsets_end,
+        next: offsets_end + data_len,
+    }
 }
 
 #[test]
@@ -144,16 +161,15 @@ fn rebuild_office_static_cff_table_restores_regular_standard_prefix_and_splices_
         &office.office_cff_suffix[2804..2804 + 32]
     );
 
-    let (name_count, name_off_size, after_name) = read_index_header(&rebuilt, 4);
-    let (top_count, top_off_size, after_top) = read_index_header(&rebuilt, after_name);
-    let (string_count, string_off_size, after_string) = read_index_header(&rebuilt, after_top);
-    let (global_count, global_off_size, global_data_start) =
-        read_index_header(&rebuilt, after_string);
+    let name = read_index_header(&rebuilt, 4);
+    let top = read_index_header(&rebuilt, name.next);
+    let string = read_index_header(&rebuilt, top.next);
+    let global = read_index_header(&rebuilt, string.next);
 
-    assert_eq!((name_count, name_off_size), (1, 1));
-    assert_eq!((top_count, top_off_size), (1, 1));
-    assert_eq!((string_count, string_off_size), (23, 2));
-    assert_eq!((global_count, global_off_size, global_data_start), (932, 2, 2806));
+    assert_eq!((name.count, name.off_size), (1, 1));
+    assert_eq!((top.count, top.off_size), (1, 1));
+    assert_eq!((string.count, string.off_size), (23, 2));
+    assert_eq!((global.count, global.off_size, global.data_start), (932, 2, 2806));
 }
 
 #[test]
@@ -169,14 +185,13 @@ fn rebuild_office_static_cff_table_restores_bold_standard_prefix_and_splices_off
         &office.office_cff_suffix[3360..3360 + 32]
     );
 
-    let (name_count, name_off_size, after_name) = read_index_header(&rebuilt, 4);
-    let (top_count, top_off_size, after_top) = read_index_header(&rebuilt, after_name);
-    let (string_count, string_off_size, after_string) = read_index_header(&rebuilt, after_top);
-    let (global_count, global_off_size, global_data_start) =
-        read_index_header(&rebuilt, after_string);
+    let name = read_index_header(&rebuilt, 4);
+    let top = read_index_header(&rebuilt, name.next);
+    let string = read_index_header(&rebuilt, top.next);
+    let global = read_index_header(&rebuilt, string.next);
 
-    assert_eq!((name_count, name_off_size), (1, 1));
-    assert_eq!((top_count, top_off_size), (1, 1));
-    assert_eq!((string_count, string_off_size), (23, 2));
-    assert_eq!((global_count, global_off_size, global_data_start), (1240, 2, 3362));
+    assert_eq!((name.count, name.off_size), (1, 1));
+    assert_eq!((top.count, top.off_size), (1, 1));
+    assert_eq!((string.count, string.off_size), (23, 2));
+    assert_eq!((global.count, global.off_size, global.data_start), (1240, 2, 3362));
 }
