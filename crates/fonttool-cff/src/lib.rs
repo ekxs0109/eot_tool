@@ -1,7 +1,7 @@
 mod convert;
 mod inspect;
 mod instance;
-mod office_static;
+pub mod office_static;
 mod source;
 mod subset;
 mod variation;

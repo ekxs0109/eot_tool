@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use fonttool_cff::extract_office_static_cff;
+use fonttool_cff::office_static::extract_office_static_cff;
 use fonttool_eot::parse_eot_header;
 use fonttool_mtx::{decompress_lz_with_limit, parse_mtx_container};
 
