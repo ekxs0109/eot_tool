@@ -38,7 +38,7 @@ fn extract_office_static_cff_finds_regular_fixture_payload() {
 
     assert!(office.sfnt_bytes.starts_with(b"OTTO"));
     assert_eq!(office.cff_offset, 0x20e);
-    assert!(office.cff_bytes.starts_with(&[0x04, 0x03, 0x00, 0x01]));
+    assert!(office.office_cff_suffix.starts_with(&[0x04, 0x03, 0x00, 0x01]));
 }
 
 #[test]
@@ -48,5 +48,31 @@ fn extract_office_static_cff_finds_bold_fixture_payload() {
 
     assert!(office.sfnt_bytes.starts_with(b"OTTO"));
     assert_eq!(office.cff_offset, 0x20e);
-    assert!(office.cff_bytes.starts_with(&[0x04, 0x03, 0x00, 0x01]));
+    assert!(office.office_cff_suffix.starts_with(&[0x04, 0x03, 0x00, 0x01]));
+}
+
+#[test]
+fn extract_office_static_cff_accepts_minimal_exact_length_payload() {
+    let mut bytes = vec![0; 0x20e + 4];
+    bytes[..4].copy_from_slice(b"OTTO");
+    bytes[0x20e..0x20e + 4].copy_from_slice(&[0x04, 0x03, 0x00, 0x01]);
+
+    let office = extract_office_static_cff(&bytes).expect("minimal payload should be accepted");
+
+    assert_eq!(office.cff_offset, 0x20e);
+    assert_eq!(office.office_cff_suffix, &[0x04, 0x03, 0x00, 0x01]);
+}
+
+#[test]
+fn extract_office_static_cff_normalizes_single_leading_nul_before_otto() {
+    let mut bytes = vec![0; 1 + 0x20e + 4];
+    bytes[1..5].copy_from_slice(b"OTTO");
+    bytes[1 + 0x20e..1 + 0x20e + 4].copy_from_slice(&[0x04, 0x03, 0x00, 0x01]);
+
+    let office =
+        extract_office_static_cff(&bytes).expect("leading nul-prefixed payload should normalize");
+
+    assert_eq!(&office.sfnt_bytes[..4], b"OTTO");
+    assert_eq!(office.cff_offset, 0x20e);
+    assert_eq!(office.office_cff_suffix, &[0x04, 0x03, 0x00, 0x01]);
 }

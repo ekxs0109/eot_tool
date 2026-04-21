@@ -4,7 +4,7 @@ use crate::CffError;
 pub struct OfficeStaticCff<'a> {
     pub sfnt_bytes: &'a [u8],
     pub cff_offset: usize,
-    pub cff_bytes: &'a [u8],
+    pub office_cff_suffix: &'a [u8],
 }
 
 const OFFICE_CFF_OFFSET: usize = 0x20e;
@@ -21,7 +21,7 @@ pub fn extract_office_static_cff(bytes: &[u8]) -> Result<OfficeStaticCff<'_>, Cf
             "office static cff block1 must begin with OTTO".to_string(),
         ));
     }
-    if sfnt_bytes.len() <= OFFICE_CFF_OFFSET + 4 {
+    if sfnt_bytes.len() < OFFICE_CFF_OFFSET + 4 {
         return Err(CffError::InvalidInput(
             "office static cff block1 is truncated before the cff payload".to_string(),
         ));
@@ -35,7 +35,7 @@ pub fn extract_office_static_cff(bytes: &[u8]) -> Result<OfficeStaticCff<'_>, Cf
     Ok(OfficeStaticCff {
         sfnt_bytes,
         cff_offset: OFFICE_CFF_OFFSET,
-        cff_bytes: &sfnt_bytes[OFFICE_CFF_OFFSET..],
+        office_cff_suffix: &sfnt_bytes[OFFICE_CFF_OFFSET..],
     })
 }
 
