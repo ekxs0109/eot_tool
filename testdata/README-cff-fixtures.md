@@ -141,3 +141,14 @@
 - Decoded output: a static `OTTO + CFF` font
 - The repository keeps the extracted `.fntdata` only; it does not keep the `.pptx`
 - Compatibility note: PowerPoint may accept static `OTF/CFF` while rejecting variable `OTF/CFF2`, so Office compatibility is tested with this static fixture while variable support remains covered through source fixtures and roundtrip tests
+
+## `testdata/presentation1-font2-bold.fntdata`
+
+- Source path: `ppt/fonts/font2.fntdata` inside the current local `Presentation1.pptx`
+- Extraction provenance: the fixture is extracted from the local `Presentation1.pptx` and represents the real Office-compatible embedded Source Han Sans SC Bold path
+- Fixture identity: `sha256 0c716d9a54f71708cc9c8c172d498b86dadd3baccccb87a4a530a6440acaf474`
+- Decoded output today:
+  - current Rust decode writes the known Office static-CFF intermediate with the nonstandard `OTTO 0001 0200 0004 0010` prefix
+  - the focused regression for this fixture is intended to fail later in the `convert --to ttf` path, not during MTX decode
+- The repository keeps the extracted `.fntdata` only; it does not keep the `.pptx`
+- To refresh the fixture, embed the same font in local PowerPoint, extract `ppt/fonts/font2.fntdata`, overwrite `testdata/presentation1-font2-bold.fntdata`, and update the recorded checksum intentionally

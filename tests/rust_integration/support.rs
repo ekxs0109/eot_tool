@@ -43,6 +43,8 @@ const OFFICE_STATIC_CFF_TAGS: [u32; 17] = [
     TAG_BASE, TAG_CFF, TAG_DSIG, TAG_GDEF, TAG_GPOS, TAG_GSUB, TAG_OS_2, TAG_VORG, TAG_CMAP,
     TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_NAME, TAG_POST, TAG_VHEA, TAG_VMTX,
 ];
+const OFFICE_STATIC_CFF_INTERMEDIATE_HEADER: [u8; 12] =
+    *b"OTTO\x00\x01\x02\x00\x00\x04\x00\x10";
 
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -180,34 +182,72 @@ pub fn assert_decoded_otto_cff2_variable_output(path: &Path) {
 pub fn assert_decoded_otto_office_static_cff_output(path: &Path) {
     let bytes = fs::read(path).expect("decoded font should be readable");
     assert!(
-        bytes.len() >= 4,
-        "decoded font should contain an sfnt version header"
+        bytes.len() >= 12 + OFFICE_STATIC_CFF_TAGS.len() * 16,
+        "decoded Office static CFF intermediate should contain the expected faux directory prefix"
     );
-    assert_eq!(&bytes[..4], b"OTTO");
+    assert_eq!(
+        &bytes[..12],
+        &OFFICE_STATIC_CFF_INTERMEDIATE_HEADER,
+        "decoded Office static CFF output should keep the known Office intermediate header"
+    );
 
-    let font = load_sfnt(&bytes).expect("decoded font should load as sfnt");
-    assert_eq!(font.version_tag(), SFNT_VERSION_OTTO);
-
-    for tag in OFFICE_STATIC_CFF_TAGS {
-        assert!(
-            font.table(tag).is_some(),
-            "decoded Office static CFF font should contain required table `{}`",
-            String::from_utf8_lossy(&tag.to_be_bytes())
+    for (index, tag) in [
+        (0usize, TAG_BASE),
+        (1usize, TAG_CFF),
+        (2usize, TAG_DSIG),
+        (3usize, TAG_GDEF),
+        (4usize, TAG_GPOS),
+        (5usize, TAG_GSUB),
+        (6usize, TAG_OS_2),
+        (7usize, TAG_VORG),
+        (8usize, TAG_CMAP),
+        (9usize, TAG_HEAD),
+        (11usize, TAG_HMTX),
+        (13usize, TAG_NAME),
+        (14usize, TAG_POST),
+    ] {
+        let offset = 12 + index * 16;
+        assert_eq!(
+            &bytes[offset..offset + 4],
+            &tag.to_be_bytes(),
+            "decoded Office static CFF intermediate should keep faux directory tag `{}` at record {}",
+            String::from_utf8_lossy(&tag.to_be_bytes()),
+            index
         );
     }
 
+    for (index, prefix) in [(10usize, b"hh"), (12usize, b"mp"), (15usize, b"vh"), (16usize, b"vm")] {
+        let offset = 12 + index * 16;
+        assert_eq!(
+            &bytes[offset..offset + prefix.len()],
+            prefix,
+            "decoded Office static CFF intermediate should keep the transformed faux directory prefix `{}` at record {}",
+            String::from_utf8_lossy(prefix),
+            index
+        );
+    }
+}
+
+pub fn assert_decoded_otto_office_static_cff_deep_parseable(path: &Path) {
+    assert_decoded_otto_office_static_cff_output(path);
+
+    let ttf_path = temp_ttf();
+    let output = run_fonttool([
+        "convert",
+        path.to_str().expect("decoded path should be valid utf-8"),
+        ttf_path.to_str().expect("temp ttf path should be valid utf-8"),
+        "--to",
+        "ttf",
+    ]);
+
     assert!(
-        font.table(TAG_CFF2).is_none(),
-        "decoded Office static CFF font should not contain CFF2"
+        output.status.success(),
+        "expected convert --to ttf to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        font.table(TAG_FVAR).is_none(),
-        "decoded Office static CFF font should not contain fvar"
-    );
-    assert!(
-        font.table(TAG_GLYF).is_none(),
-        "decoded Office static CFF font should not contain glyf"
-    );
+
+    assert_true_type_glyf_output(&ttf_path);
+    let _ = fs::remove_file(ttf_path);
 }
 
 pub fn assert_decoded_otto_static_cff_output(path: &Path) {

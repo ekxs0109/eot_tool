@@ -180,6 +180,31 @@ fn decode_otto_cff_office_fixture_writes_static_otto_output() {
 }
 
 #[test]
+fn decode_presentation1_font2_fntdata_writes_deep_parseable_static_otto_output() {
+    let input_path = support::tracked_testdata_path("testdata/presentation1-font2-bold.fntdata");
+    let output_path = temp_out();
+
+    let output = run_fonttool([
+        "decode",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected Presentation1 font2 decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    support::assert_decoded_otto_office_static_cff_deep_parseable(&output_path);
+
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
 fn decode_raw_otto_cff2_payload_eot_writes_variable_otto_output() {
     let input_path = temp_in("eot");
     let output_path = temp_out();
