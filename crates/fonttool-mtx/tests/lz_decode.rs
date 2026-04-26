@@ -1,4 +1,6 @@
-use fonttool_mtx::{compress_lz, compress_lz_literals, decompress_lz, LzDecompressError};
+use fonttool_mtx::{
+    analyze_lz, compress_lz, compress_lz_literals, decompress_lz, LzDecompressError,
+};
 
 #[test]
 fn decodes_java_reference_literal_stream() {
@@ -13,6 +15,20 @@ fn decodes_java_reference_literal_stream() {
 }
 
 #[test]
+fn analyzes_java_reference_literal_stream_without_copy_span() {
+    let compressed = [
+        0x00, 0x00, 0x05, 0x04, 0xC2, 0x82, 0x31, 0x20, 0x4C, 0x28, 0x23, 0x12, 0x04, 0xC2, 0x80,
+    ];
+
+    let stats = analyze_lz(&compressed).unwrap();
+
+    assert_eq!(stats.decompressed_len, 10);
+    assert_eq!(stats.max_copy_distance, 0);
+    assert_eq!(stats.max_copy_length, 0);
+    assert_eq!(stats.max_copy_span, 0);
+}
+
+#[test]
 fn decodes_java_reference_copy_stream() {
     let compressed = [0x00, 0x00, 0x08, 0x2A, 0x2A, 0x89, 0x80, 0xA8, 0x0C, 0x20];
     let expected = *b"ABABABABABABABAB";
@@ -20,6 +36,19 @@ fn decodes_java_reference_copy_stream() {
     let decompressed = decompress_lz(&compressed).unwrap();
 
     assert_eq!(decompressed, expected);
+}
+
+#[test]
+fn analyzes_java_reference_copy_stream_with_positive_copy_span() {
+    let compressed = [0x00, 0x00, 0x08, 0x2A, 0x2A, 0x89, 0x80, 0xA8, 0x0C, 0x20];
+
+    let stats = analyze_lz(&compressed).unwrap();
+
+    assert_eq!(stats.decompressed_len, 16);
+    assert!(stats.max_copy_distance > 0);
+    assert!(stats.max_copy_length > 0);
+    assert!(stats.max_copy_span > 0);
+    assert!(stats.max_copy_span >= stats.max_copy_distance);
 }
 
 #[test]

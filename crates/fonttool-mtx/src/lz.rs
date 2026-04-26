@@ -40,6 +40,14 @@ impl fmt::Display for LzDecompressError {
 impl std::error::Error for LzDecompressError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LzAnalysis {
+    pub decompressed_len: usize,
+    pub max_copy_distance: usize,
+    pub max_copy_length: usize,
+    pub max_copy_span: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EncodeOp {
     Literal(u8),
     Dup2,
@@ -501,26 +509,49 @@ impl HuffmanDecoder {
     }
 }
 
-#[must_use]
-pub fn decompress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
+fn decompress_lz_with_analysis(bytes: &[u8]) -> Result<(Vec<u8>, LzAnalysis), LzDecompressError> {
+    decompress_lz_with_analysis_and_limit(bytes, None)
+}
+
+fn decompress_lz_with_analysis_and_limit(
+    bytes: &[u8],
+    copy_limit: Option<usize>,
+) -> Result<(Vec<u8>, LzAnalysis), LzDecompressError> {
     if bytes.len() < 4 {
         return Err(LzDecompressError::Truncated);
     }
 
     let mut reader = BitReader::new(bytes);
     let _ignored_run_length_flag = reader.read_bit()?;
-    let decompressed_length = reader.read_bits(24)? as usize;
-
-    if decompressed_length > MAX_DECOMPRESSED_LENGTH {
-        return Err(LzDecompressError::OutputTooLarge);
-    }
+    let raw_decompressed_length = reader.read_bits(24)? as usize;
+    let decompressed_length = recover_decompressed_length(raw_decompressed_length, bytes.len())?;
 
     if decompressed_length == 0 {
-        return Ok(Vec::new());
+        return Ok((
+            Vec::new(),
+            LzAnalysis {
+                decompressed_len: 0,
+                max_copy_distance: 0,
+                max_copy_length: 0,
+                max_copy_span: 0,
+            },
+        ));
     }
 
-    let mut output = vec![0u8; PRELOAD_SIZE + decompressed_length];
-    initialize_preload_buffer(&mut output[..PRELOAD_SIZE]);
+    let max_out_size = PRELOAD_SIZE
+        .checked_add(decompressed_length)
+        .ok_or(LzDecompressError::OutputTooLarge)?;
+    let size_limited = copy_limit.is_some_and(|limit| limit < max_out_size);
+    let window_size = if size_limited {
+        copy_limit
+            .unwrap_or(max_out_size)
+            .max(PRELOAD_SIZE.saturating_add(64))
+    } else {
+        max_out_size
+    };
+
+    let mut window = vec![0u8; window_size];
+    initialize_preload_buffer(&mut window[..PRELOAD_SIZE]);
 
     let num_dist_ranges = num_dist_ranges(decompressed_length);
     let dup2 = 256 + (1 << LEN_WIDTH) * num_dist_ranges;
@@ -533,40 +564,88 @@ pub fn decompress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
     let mut sym_decoder = HuffmanDecoder::new(num_syms)?;
 
     let mut output_pos = PRELOAD_SIZE;
+    let mut ring_pos = PRELOAD_SIZE;
     let output_limit = PRELOAD_SIZE + decompressed_length;
+    let mut decoded = Vec::with_capacity(decompressed_length);
+    let mut analysis = LzAnalysis {
+        decompressed_len: decompressed_length,
+        max_copy_distance: 0,
+        max_copy_length: 0,
+        max_copy_span: 0,
+    };
 
     while output_pos < output_limit {
         let symbol = sym_decoder.read_symbol(&mut reader)?;
 
         if symbol == dup2 {
+            if size_limited {
+                let src = wrap_sub(ring_pos, 2, window_size);
+                let value = window[src];
+                window[ring_pos] = value;
+                ring_pos = (ring_pos + 1) % window_size;
+                decoded.push(value);
+                output_pos += 1;
+                continue;
+            }
             if output_pos < 2 {
                 return Err(LzDecompressError::InvalidBackReference);
             }
-            output[output_pos] = output[output_pos - 2];
+            let value = window[output_pos - 2];
+            window[output_pos] = value;
+            decoded.push(value);
             output_pos += 1;
             continue;
         }
 
         if symbol == dup4 {
+            if size_limited {
+                let src = wrap_sub(ring_pos, 4, window_size);
+                let value = window[src];
+                window[ring_pos] = value;
+                ring_pos = (ring_pos + 1) % window_size;
+                decoded.push(value);
+                output_pos += 1;
+                continue;
+            }
             if output_pos < 4 {
                 return Err(LzDecompressError::InvalidBackReference);
             }
-            output[output_pos] = output[output_pos - 4];
+            let value = window[output_pos - 4];
+            window[output_pos] = value;
+            decoded.push(value);
             output_pos += 1;
             continue;
         }
 
         if symbol == dup6 {
+            if size_limited {
+                let src = wrap_sub(ring_pos, 6, window_size);
+                let value = window[src];
+                window[ring_pos] = value;
+                ring_pos = (ring_pos + 1) % window_size;
+                decoded.push(value);
+                output_pos += 1;
+                continue;
+            }
             if output_pos < 6 {
                 return Err(LzDecompressError::InvalidBackReference);
             }
-            output[output_pos] = output[output_pos - 6];
+            let value = window[output_pos - 6];
+            window[output_pos] = value;
+            decoded.push(value);
             output_pos += 1;
             continue;
         }
 
         if symbol < 256 {
-            output[output_pos] = symbol as u8;
+            let value = symbol as u8;
+            if size_limited {
+                window[ring_pos] = value;
+                ring_pos = (ring_pos + 1) % window_size;
+            } else {
+                window[output_pos] = value;
+            }
+            decoded.push(value);
             output_pos += 1;
             continue;
         }
@@ -589,24 +668,86 @@ pub fn decompress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
             return Err(LzDecompressError::MalformedStream);
         }
 
-        if dist + length - 1 > output_pos {
-            return Err(LzDecompressError::InvalidBackReference);
-        }
-
         let copy_span = dist
             .checked_add(length)
             .and_then(|value| value.checked_sub(1))
             .ok_or(LzDecompressError::InvalidBackReference)?;
+        if size_limited {
+            if copy_span > window_size {
+                return Err(LzDecompressError::InvalidBackReference);
+            }
+        } else if copy_span > output_pos {
+            return Err(LzDecompressError::InvalidBackReference);
+        }
+
         let copy_start = output_pos
             .checked_sub(copy_span)
             .ok_or(LzDecompressError::InvalidBackReference)?;
-        for index in 0..length {
-            output[output_pos] = output[copy_start + index];
-            output_pos += 1;
+        analysis.max_copy_distance = analysis.max_copy_distance.max(dist);
+        analysis.max_copy_length = analysis.max_copy_length.max(length);
+        analysis.max_copy_span = analysis.max_copy_span.max(copy_span);
+        if size_limited {
+            for index in 0..length {
+                let source_index = ((ring_pos as isize - dist as isize - length as isize + 1)
+                    + index as isize)
+                    .rem_euclid(window_size as isize) as usize;
+                let value = window[source_index];
+                window[ring_pos] = value;
+                ring_pos = (ring_pos + 1) % window_size;
+                decoded.push(value);
+                output_pos += 1;
+            }
+        } else {
+            for index in 0..length {
+                let value = window[copy_start + index];
+                window[output_pos] = value;
+                decoded.push(value);
+                output_pos += 1;
+            }
         }
     }
 
-    Ok(output[PRELOAD_SIZE..output_limit].to_vec())
+    Ok((decoded, analysis))
+}
+
+fn recover_decompressed_length(
+    raw_decompressed_length: usize,
+    compressed_len: usize,
+) -> Result<usize, LzDecompressError> {
+    let mut decompressed_length = raw_decompressed_length;
+
+    while decompressed_length != 0 && decompressed_length < compressed_len {
+        decompressed_length = decompressed_length
+            .checked_add(0x01_00_00_00)
+            .ok_or(LzDecompressError::OutputTooLarge)?;
+    }
+
+    if decompressed_length > MAX_DECOMPRESSED_LENGTH {
+        return Err(LzDecompressError::OutputTooLarge);
+    }
+
+    Ok(decompressed_length)
+}
+
+#[must_use]
+pub fn decompress_lz(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError> {
+    let (output, _analysis) = decompress_lz_with_analysis(bytes)?;
+    Ok(output)
+}
+
+#[must_use]
+pub fn decompress_lz_with_limit(
+    bytes: &[u8],
+    copy_limit: usize,
+) -> Result<Vec<u8>, LzDecompressError> {
+    let (output, _analysis) = decompress_lz_with_analysis_and_limit(bytes, Some(copy_limit))?;
+    Ok(output)
+}
+
+#[must_use]
+pub fn analyze_lz(bytes: &[u8]) -> Result<LzAnalysis, LzDecompressError> {
+    let (_output, analysis) = decompress_lz_with_analysis(bytes)?;
+    Ok(analysis)
 }
 
 #[must_use]
@@ -664,6 +805,15 @@ fn compress_lz_backreferences(bytes: &[u8]) -> Result<Vec<u8>, LzDecompressError
     }
 
     Ok(writer.finish())
+}
+
+fn wrap_sub(index: usize, amount: usize, modulus: usize) -> usize {
+    debug_assert!(modulus > 0);
+    if index >= amount {
+        index - amount
+    } else {
+        modulus - (amount - index)
+    }
 }
 
 #[must_use]
@@ -786,6 +936,25 @@ fn matches_dup(bytes: &[u8], finder: &MatchFinder, step: usize) -> bool {
                 .get(finder.history.len().saturating_sub(step)),
         )
         .is_some_and(|(&current, &previous)| current == previous)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recover_decompressed_length;
+
+    #[test]
+    fn recover_decompressed_length_preserves_normal_24_bit_lengths() {
+        let recovered = recover_decompressed_length(16_529_832, 14_093_050)
+            .expect("normal 24-bit length should remain valid");
+        assert_eq!(recovered, 16_529_832);
+    }
+
+    #[test]
+    fn recover_decompressed_length_restores_wrapped_overflow_length() {
+        let recovered = recover_decompressed_length(186_212, 14_539_322)
+            .expect("wrapped 24-bit overflow should be reconstructed");
+        assert_eq!(recovered, 16_963_428);
+    }
 }
 
 fn choose_copy_candidate(
@@ -978,19 +1147,13 @@ fn consider_virtual_candidate(
     }
 
     let literal_cost = literal_run_cost(bytes, 0, matched, context.sym_encoder, literal_cache);
-    if literal_cost
-        <= best.as_ref().map_or(0, |old| old.gain)
-    {
+    if literal_cost <= best.as_ref().map_or(0, |old| old.gain) {
         return;
     }
 
     let dist_ranges = num_dist_ranges_for_distance(dist);
-    let fast_copy_cost = copy_length_symbol_cost(
-        dist,
-        matched,
-        context.sym_encoder,
-        context.len_encoder,
-    );
+    let fast_copy_cost =
+        copy_length_symbol_cost(dist, matched, context.sym_encoder, context.len_encoder);
     let gain_threshold = literal_cost
         .saturating_sub(fast_copy_cost)
         .saturating_sub(dist_ranges << 16);

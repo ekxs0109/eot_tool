@@ -11,16 +11,13 @@ use embedded_output::{
 };
 use fonttool_cff::{
     convert_otf_to_ttf, inspect_otf_font, instantiate_variable_cff2, load_font_source,
-    parse_variation_axes, serialize_subset_otf, subset_static_cff, subset_variable_cff2,
-    CffError,
+    parse_variation_axes, serialize_subset_otf, subset_static_cff, subset_variable_cff2, CffError,
 };
 use fonttool_eot::parse_eot_header;
 use fonttool_glyf::{decode_glyf, encode_glyf};
-use fonttool_mtx::{decompress_lz, parse_mtx_container};
+use fonttool_mtx::{decompress_lz_with_limit, parse_mtx_container};
 use fonttool_sfnt::{load_sfnt, parse_sfnt, serialize_sfnt, OwnedSfntFont, SFNT_VERSION_TRUETYPE};
-use fonttool_subset::{
-    should_copy_encode_block1_table, subset_owned_font, GlyphIdRequest,
-};
+use fonttool_subset::{should_copy_encode_block1_table, subset_owned_font, GlyphIdRequest};
 
 const EOT_FLAG_PPT_XOR: u32 = 0x1000_0000;
 const TAG_HEAD: u32 = u32::from_be_bytes(*b"head");
@@ -274,7 +271,9 @@ fn print_help() {
     println!("  encode <INPUT> <OUTPUT>  Encode a font into EOT/MTX");
     println!("  decode <INPUT> <OUTPUT>  Decode an EOT/MTX font payload into SFNT");
     println!("  subset <INPUT> <OUTPUT> ...  Subset supported non-OTF glyph-id inputs in Rust");
-    println!("  convert <INPUT> <OUTPUT>  Explicitly convert supported OTF input to another format");
+    println!(
+        "  convert <INPUT> <OUTPUT>  Explicitly convert supported OTF input to another format"
+    );
     println!();
     println!("Options:");
     println!("  -h, --help  Print help");
@@ -521,18 +520,18 @@ fn decode_embedded_font_bytes(input_bytes: &[u8]) -> Result<Vec<u8>, String> {
 
     let container = parse_mtx_container(&prepared.payload_bytes)
         .map_err(|error| format!("invalid MTX container: {error}"))?;
-    let block1 = decompress_lz(container.block1)
+    let copy_limit = usize::try_from(container.copy_dist)
+        .map_err(|_| "invalid MTX copy distance".to_string())?;
+    let block1 = decompress_lz_with_limit(container.block1, copy_limit)
         .map_err(|error| format!("failed to decode MTX block1: {error}"))?;
     let block2 = match container.block2 {
-        Some(block) => {
-            decompress_lz(block).map_err(|error| format!("failed to decode MTX block2: {error}"))?
-        }
+        Some(block) => decompress_lz_with_limit(block, copy_limit)
+            .map_err(|error| format!("failed to decode MTX block2: {error}"))?,
         None => Vec::new(),
     };
     let block3 = match container.block3 {
-        Some(block) => {
-            decompress_lz(block).map_err(|error| format!("failed to decode MTX block3: {error}"))?
-        }
+        Some(block) => decompress_lz_with_limit(block, copy_limit)
+            .map_err(|error| format!("failed to decode MTX block3: {error}"))?,
         None => Vec::new(),
     };
 
@@ -703,10 +702,13 @@ fn convert_file(request: ConvertCliRequest) -> Result<(), String> {
         "ttf" => {
             let axes = parse_variation_axes(request.variation_axes.as_deref().unwrap_or_default())
                 .map_err(|error| error.to_string())?;
-            let source_font = load_sfnt(&bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
+            let source_font =
+                load_sfnt(&bytes).map_err(|error| format!("invalid SFNT: {error}"))?;
             if source_font.version_tag() == SFNT_VERSION_TRUETYPE {
                 if !axes.is_empty() {
-                    return Err("convert does not support --variation for non-OTF input".to_string());
+                    return Err(
+                        "convert does not support --variation for non-OTF input".to_string()
+                    );
                 }
                 bytes
             } else {
@@ -899,8 +901,12 @@ fn load_subset_input_sfnt_bytes(input_path: &Path) -> Result<Vec<u8>, String> {
         _ => {
             let input_bytes = fs::read(input_path)
                 .map_err(|error| format!("failed to read {}: {error}", input_path.display()))?;
-            load_font_source(&input_bytes)
-                .map_err(|error| format!("failed to load subset input {}: {error}", input_path.display()))
+            load_font_source(&input_bytes).map_err(|error| {
+                format!(
+                    "failed to load subset input {}: {error}",
+                    input_path.display()
+                )
+            })
         }
     }
 }

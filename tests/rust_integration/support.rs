@@ -43,8 +43,7 @@ const OFFICE_STATIC_CFF_TAGS: [u32; 17] = [
     TAG_BASE, TAG_CFF, TAG_DSIG, TAG_GDEF, TAG_GPOS, TAG_GSUB, TAG_OS_2, TAG_VORG, TAG_CMAP,
     TAG_HEAD, TAG_HHEA, TAG_HMTX, TAG_MAXP, TAG_NAME, TAG_POST, TAG_VHEA, TAG_VMTX,
 ];
-const OFFICE_STATIC_CFF_INTERMEDIATE_HEADER: [u8; 12] =
-    *b"OTTO\x00\x01\x02\x00\x00\x04\x00\x10";
+const OFFICE_STATIC_CFF_INTERMEDIATE_HEADER: [u8; 12] = *b"OTTO\x00\x01\x02\x00\x00\x04\x00\x10";
 
 pub struct TempPathGuard {
     path: PathBuf,
@@ -232,7 +231,12 @@ pub fn assert_decoded_otto_office_static_cff_intermediate_shape(path: &Path) {
         );
     }
 
-    for (index, prefix) in [(10usize, b"hh"), (12usize, b"mp"), (15usize, b"vh"), (16usize, b"vm")] {
+    for (index, prefix) in [
+        (10usize, b"hh"),
+        (12usize, b"mp"),
+        (15usize, b"vh"),
+        (16usize, b"vm"),
+    ] {
         let offset = 12 + index * 16;
         assert_eq!(
             &bytes[offset..offset + prefix.len()],
@@ -252,7 +256,9 @@ pub fn assert_decoded_otto_office_static_cff_passes_convert_ttf_input_boundary(p
     let output = run_fonttool([
         "convert",
         path.to_str().expect("decoded path should be valid utf-8"),
-        ttf_path.to_str().expect("temp ttf path should be valid utf-8"),
+        ttf_path
+            .to_str()
+            .expect("temp ttf path should be valid utf-8"),
         "--to",
         "ttf",
     ]);

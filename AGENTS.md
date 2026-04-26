@@ -1,6 +1,6 @@
 # Office Static CFF Working Notes
 
-Last updated: 2026-04-21
+Last updated: 2026-04-22
 
 ## Current Scope
 
@@ -11,6 +11,41 @@ Last updated: 2026-04-21
 - The tracked standard prefix fixtures are:
   - `testdata/sourcehan-sc-regular-cff-prefix-through-global-subrs.bin`
   - `testdata/sourcehan-sc-bold-cff-prefix-through-global-subrs.bin`
+  - `testdata/sourcehan-sc-extralight-cff-prefix-through-global-subrs.bin`
+  - `testdata/sourcehan-sc-heavy-cff-prefix-through-global-subrs.bin`
+  - `testdata/sourcehan-sc-light-cff-prefix-through-global-subrs.bin`
+  - `testdata/sourcehan-sc-medium-cff-prefix-through-global-subrs.bin`
+  - `testdata/sourcehan-sc-normal-cff-prefix-through-global-subrs.bin`
+- The tracked standard `CharStrings INDEX` offset fixtures are:
+  - `testdata/sourcehan-sc-regular-charstrings-offsets.bin`
+  - `testdata/sourcehan-sc-bold-charstrings-offsets.bin`
+  - `testdata/sourcehan-sc-extralight-charstrings-offsets.bin`
+  - `testdata/sourcehan-sc-heavy-charstrings-offsets.bin`
+  - `testdata/sourcehan-sc-light-charstrings-offsets.bin`
+  - `testdata/sourcehan-sc-medium-charstrings-offsets.bin`
+  - `testdata/sourcehan-sc-normal-charstrings-offsets.bin`
+- The tracked source-backed CID parse-range fixtures are:
+  - `testdata/sourcehan-sc-regular-cff-global-subrs-data.bin`
+  - `testdata/sourcehan-sc-bold-cff-global-subrs-data.bin`
+  - `testdata/sourcehan-sc-extralight-cff-global-subrs-data.bin`
+  - `testdata/sourcehan-sc-heavy-cff-global-subrs-data.bin`
+  - `testdata/sourcehan-sc-light-cff-global-subrs-data.bin`
+  - `testdata/sourcehan-sc-medium-cff-global-subrs-data.bin`
+  - `testdata/sourcehan-sc-normal-cff-global-subrs-data.bin`
+  - `testdata/sourcehan-sc-regular-cff-fdselect.bin`
+  - `testdata/sourcehan-sc-bold-cff-fdselect.bin`
+  - `testdata/sourcehan-sc-extralight-cff-fdselect.bin`
+  - `testdata/sourcehan-sc-heavy-cff-fdselect.bin`
+  - `testdata/sourcehan-sc-light-cff-fdselect.bin`
+  - `testdata/sourcehan-sc-medium-cff-fdselect.bin`
+  - `testdata/sourcehan-sc-normal-cff-fdselect.bin`
+  - `testdata/sourcehan-sc-regular-cff-fdarray-tail.bin`
+  - `testdata/sourcehan-sc-bold-cff-fdarray-tail.bin`
+  - `testdata/sourcehan-sc-extralight-cff-fdarray-tail.bin`
+  - `testdata/sourcehan-sc-heavy-cff-fdarray-tail.bin`
+  - `testdata/sourcehan-sc-light-cff-fdarray-tail.bin`
+  - `testdata/sourcehan-sc-medium-cff-fdarray-tail.bin`
+  - `testdata/sourcehan-sc-normal-cff-fdarray-tail.bin`
 
 ## Stable Facts
 
@@ -22,32 +57,245 @@ Last updated: 2026-04-21
   - exposes `cff_offset = 0x20e`
   - exposes `office_cff_suffix = &sfnt_bytes[0x20e..]`
 - `office_cff_suffix` is not a bounded standard `CFF ` table slice.
+- The whole `SourceHanSansSC` static-CFF family now shares the same Office intermediate wrapper shape:
+  - `OTTO 0001 0200 0004 0010 BASE...`
+  - `office_cff_suffix[0..4] == 04 03 00 01`
+  - verified locally on:
+    - `Regular`
+    - `Bold`
+    - `ExtraLight`
+    - `Heavy`
+    - `Light`
+    - `Medium`
+    - `Normal`
+- `But Head` is **not** on this faux-SFNT path:
+  - its decoded payload already looks like a standard static `OTTO/CFF`
+  - do not try to force it through `office_static`
 
 ## Do Not Repeat
 
 - Do not try to parse `office_cff_suffix[4..]` as a standard raw `Name INDEX`.
 - Do not treat `2806` or `3362` as Office-side `Global Subr INDEX` starts.
 - Do not treat `935` (regular) or `875` (bold) as valid raw standard INDEX starts either.
-- Do not broaden this branch into `CharStrings INDEX`, `charset`, `FDSelect`, or CLI decode wiring yet.
+- Do not assume the Office static-CFF outer `OTTO` wrapper is a standard SFNT just because it starts with `OTTO`.
+- Do not feed the Office static-CFF wrapper into `load_sfnt()` and expect a correct table directory; the faux header reports only `1` table and later record fields are transformed.
 
-## Current Task 3 Boundary
+## Current Bounded Rebuild
 
-- The bounded Task 3 strategy is fixture-coupled prefix grafting.
-- Regular fixture:
-  - tracked standard prefix length = `2806`
-  - Office tail splice offset = `2804`
-- Bold fixture:
-  - tracked standard prefix length = `3362`
-  - Office tail splice offset = `3360`
+- The current bounded strategy is still fixture-coupled, but now includes source-backed CID parse-range repair plus `CharStrings INDEX` repair.
+- Layout selection is no longer based on two literal `starts_with(...)` checks.
+- The code now parses the Office embedded font name from the transformed prefix and matches it against the tracked `SourceHanSansSC` registry.
+- The currently tracked Office font names are:
+  - `SourceHanSaSsSC-Regular`
+  - `SourceHanSaSsSC-Bold`
+  - `SourceHanSaSsSC-ExtraLight`
+  - `SourceHanSaSsSC-Heavy`
+  - `SourceHanSaSsSC-Light`
+  - `SourceHanSaSsSC-Medium`
+  - `SourceHanSaSsSC-Normal`
+- The following offsets are no longer hard-coded literals in the layout:
+  - `office_tail_start`
+  - `charset_offset`
+  - `charstrings_offset`
+  - `charstrings_data_start`
+  - `fdarray_offset`
+- Those values are now derived from:
+  - the tracked standard prefix fixture
+  - the tracked standard `CharStrings INDEX` offsets fixture
 - `rebuild_office_static_cff_table()` now rebuilds:
   - `tracked_standard_prefix + office_cff_suffix[office_tail_start..]`
-- `rebuild_office_static_cff_sfnt()` remains intentionally unimplemented.
+  - then patches the source-backed `Global Subr data .. charset` range from the tracked fixture
+  - then patches the source-backed `FDSelect` range from the tracked fixture
+  - then patches the standard `CharStrings INDEX` window in place from the tracked reference offsets
+  - then patches the source-backed `FDArray..end` tail from the tracked fixture
+- `rebuild_office_static_cff_sfnt()` is now implemented as a bounded donor-shell rebuild:
+  - load the tracked standard `OTTO` shell for the matched Source Han Sans SC weight
+  - inject the rebuilt standard `CFF ` table
+  - reserialize a fresh standard SFNT with recalculated directory/checksums
+
+## Updated Blocker: Deeper CID CFF Structures
+
+- `CharStrings INDEX` repair is now structurally green for the two tracked fixtures.
+- The old faux-SFNT wrapper blocker is now partially retired:
+  - the donor-shell path proves we do not need to invert the faux directory to get a standard `OTTO` wrapper
+  - the rebuilt SFNT now loads through `fonttool_sfnt::load_sfnt()`
+- Evidence from the decoded bold intermediate:
+  - header bytes are `OTTO 0001 0200 0004 0010`
+  - the header advertises only `1` table even though the faux directory visually contains `17` records
+  - many later record `offset` / `length` fields are transformed and out of range if interpreted as standard SFNT table records
+- The same faux-directory shape also appears across the additional local `SourceHanSansSC` cases from:
+  - `testdata/OTF_CFF/SourceHanSansSC/full.pptx`
+- Local decode probe summary for those extra cases:
+  - `font1..font7` all decoded successfully
+  - all seven begin with `OTTO 0001 0200 0004 0010 BASE`
+  - all seven expose `04 03 00 01` at `0x20e`
+- Example raw bold record probe:
+  - record `1` (`CFF `) had out-of-range raw offset/length
+  - record `3` (`GDEF`) had raw offset `4090233044`
+  - record `8` (`cmap`) had raw length `1621925117`
+- Practical meaning:
+  - we no longer need a literal decode of the faux directory to materialize a standard wrapper
+  - but even after repairing the tracked source-backed CID parse regions plus the standard `CharStrings INDEX`, deep CFF consumers are still not fully satisfied
+  - current regular-case evidence:
+    - `rebuild_office_static_cff_sfnt()` produces a parseable `OTTO`
+    - `inspect_otf_font()` accepts that output as static `OTF/CFF`
+    - `convert_otf_to_ttf()` now fails later with `failed to visit glyph outline: an invalid amount of items are in an arguments stack`
+  - local regular control tests now narrow that failure further:
+    - if source bytes are backfilled from `global_subrs_data_start` through the source `CFF ` end, `convert_otf_to_ttf()` succeeds
+    - if only source `Global Subr` data plus the `FDArray..end` tail are backfilled, the error advances to `failed to visit glyph outline: an invalid amount of items are in an arguments stack`
+    - the current production rebuild's first outline failure is glyph `0` (`.notdef`)
+    - that rebuilt `.notdef` `CharString` is still a bytewise mismatch against source even though the byte length matches
+    - a local Type 2 token pass now sharpens that `.notdef` mismatch:
+      - tokens `0..27` still match source exactly
+      - the first divergence is later, at token `28`, so `.notdef` is not globally scrambled
+      - the source midstream segment `-313 403 313 403 rlineto -31 -846 rmoveto` becomes `66 -100 369 147 rlineto -100 rlineto -31`
+    - glyph-level source backfill experiments now show the outline blocker walking forward one glyph at a time:
+      - backfilling only glyph `0` (`.notdef`) moves the first outline failure to glyph `3` (`quotedbl`)
+      - backfilling glyphs `0` and `3` moves the first outline failure again to glyph `4` (`numbersign`)
+      - backfilling glyphs `0`, `3`, and `4` moves the first outline failure to glyph `5` (`dollar`)
+      - backfilling glyphs `0`, `3`, `4`, and `5` moves the first outline failure to glyph `6` (`percent`)
+      - that fourth step also changes the error type from `invalid amount of items are in an arguments stack` to `an invalid operator occurred`
+      - backfilling glyphs `0` and `29` does **not** change that first post-`.notdef` failure; it still lands on glyph `3`
+      - for glyph `3` (`quotedbl`), patching only the suffix starting at the first draw op is already enough to advance the failure to glyph `4`
+      - for glyph `4` (`numbersign`), patching only the suffix starting at the first draw op is already enough to advance the failure to glyph `5`
+      - for glyph `5` (`dollar`), neither a prefix-only patch through the first draw op nor a suffix-only patch after that boundary is sufficient on its own
+      - a more precise glyph `5` slice matrix now narrows that down further:
+        - patching the glyph `5` prefix plus a later window `[70, 91)` is already enough to advance the first failure to glyph `6`
+        - leaving only a middle window `[31, 48)` unpatched still advances the failure to glyph `6`, so that mid window is not currently causal
+        - leaving only the later window `[70, 91)` unpatched still fails at glyph `5`, so that later window is currently necessary
+        - splitting that late window shows the current causal subwindow is even smaller:
+          - patching the glyph `5` prefix plus bytes `[72, 74)` is already enough to advance the first failure to glyph `6`
+          - patching the glyph `5` prefix plus bytes `[70, 72)` is **not** enough
+          - leaving only bytes `[70, 72)` unpatched still advances to glyph `6`
+          - leaving only bytes `[72, 74)` unpatched still fails at glyph `5`
+          - that subwindow now narrows again to a single differing byte:
+            - source byte `72` is `0xf7`, rebuilt byte `72` is `0x07`
+            - byte `73` already matches source in both versions
+          - patching only glyph `5` byte `72` together with the glyph `5` prefix is already enough to advance the first failure to glyph `6`
+          - leaving only glyph `5` byte `72` unpatched still fails at glyph `5`
+        - a new diagnostic helper now shows the current late glyph `5` fix really does sit inside the broader kind-swapped-lead family:
+          - if glyph `5`'s prefix is source-backed, then applying only the local kind-swapped-lead fixes inside glyph `5` is already enough to advance the first failure to glyph `6`
+      - glyph `6` (`percent`) is already partially characterized too:
+        - patching only its prefix through the first draw boundary changes the error from `invalid operator` to `invalid amount of items are in an arguments stack`, but still fails at glyph `6`
+        - patching everything except a coarse late window `[90, end)` still leaves `invalid operator`
+        - patching everything except a coarse mid window `[30, 90)` leaves only the stack-shape error
+        - the prefix-side `invalid operator` is not caused by the whole prefix uniformly:
+          - patching glyph `6` byte `25` alone is not enough
+          - patching glyph `6` byte `27` alone is not enough
+          - patching glyph `6` bytes `25` and `27` together is already enough to change the failure class from `invalid operator` to the later stack-shape error
+          - the broader kind-swapped-lead helper is also already sufficient to make that same `glyph 6` transition from `invalid operator` to stack-shape error
+        - the late-side `invalid operator` is now sharper too:
+          - in an otherwise source-backed glyph `6`, leaving only byte `114` rebuilt is enough to retain `invalid operator`
+          - leaving only byte `119` rebuilt is also enough to retain `invalid operator`
+          - but leaving only bytes `[118, 121)` rebuilt no longer keeps glyph `6` stuck; the first failure advances to glyph `7` (`ampersand`) with a stack-shape error
+        - a stronger token-aware diagnostic now improves on the narrower kind-swapped-lead helper:
+          - a source-token-span scan of glyph `6` shows the late `111..121` region is normal draw program structure, not a local `hintmask` / `cntrmask` boundary:
+            - byte `111` is `hvcurveto`
+            - byte `113` is `vmoveto`
+            - byte `114` is a `num1`
+            - bytes `117` and `119` are `num2_pos` starts
+          - with glyphs `0`, `3`, `4`, and `5` source-backed, patching glyph `6` only at source token starts / token-head bytes is already enough to advance the first failure to glyph `7` (`ampersand`) with a stack-shape error
+          - practical reading: glyph `6` late damage is broader than the earlier `f7/fb` sign-bucket family; `num1` / operator token heads participate too
+        - glyph `7` (`ampersand`) is now characterized too:
+          - on top of the glyph `6` token-start-head baseline, patching glyph `7` token-start heads is already enough to advance the first failure to glyph `8` (`quotesingle`) with `invalid operator`
+          - fully source-backing glyph `7` gives that same `(glyph 8, quotesingle, invalid operator)` result, so the token-start abstraction is already sufficient for this glyph
+          - the current glyph `7` diff windows are `[57,60)`, `[98,101)`, `[114,115)`, `[132,133)`, and `[153,154)`
+          - of those, only `[98,101)` is currently sufficient by itself to advance the failure frontier to glyph `8`
+          - practical reading: glyph `7` is narrower than glyph `6`; its current causal window sits around two consecutive `num2_pos` tokens before a `rmoveto`
+        - glyph `8` (`quotesingle`) also now follows the token-start chain:
+          - on top of the glyph `6` and `7` token-start-head baseline, patching glyph `8` token-start heads is already enough to advance the first failure to glyph `9` (`parenleft`) with `missing moveto operator`
+          - fully source-backing glyph `8` gives that same `(glyph 9, parenleft, missing moveto operator)` result
+          - practical reading: for the current frontier, glyph `8` is still explainable at the token-head level; deeper payload-localization can wait until glyph `9` is characterized
+        - glyph `9` (`parenleft`) continues the same pattern:
+          - on top of the glyph `6`, `7`, and `8` token-start-head baseline, patching glyph `9` token-start heads is already enough to advance the first failure to glyph `10` (`parenright`) with a stack-shape error
+          - fully source-backing glyph `9` gives that same `(glyph 10, parenright, stack error)` result
+          - practical reading: the current first-failure frontier is still moving forward via token-head normalization alone through glyph `9`
+      - practical reading:
+        - glyphs `3` and `4` have causal corruption in their post-first-draw suffixes
+        - glyph `5` has at least two independently relevant bad regions:
+          - the prefix through the first draw op
+          - a later post-hintmask subwindow currently narrowed to byte `72`
+        - glyph `6` already looks coarser and likely at least three-region:
+          - a prefix region whose current invalid-operator trigger is already narrowed to bytes `25` and `27`
+          - a mid region that still causes stack-shape failure after prefix+late repair
+          - a late region where bytes `114` and `119` each look individually sufficient to preserve the earlier `invalid operator`
+    - the current production rebuild now restores source `FDSelect`; for example regular glyph `103` (`dieresis`) matches source again (`14`)
+    - if only the source `CharStrings` data payload is backfilled on top of the current rebuild, `convert_otf_to_ttf()` succeeds
+    - the same source-backed `CharStrings` payload control also succeeds for the tracked bold fixture
+    - practical reading:
+      - the current production path is already past the earlier parse-stage blocker
+      - the remaining blocker is now narrowed to the transformed `CharStrings` payload
+    - short `callsubr` / `callgsubr` glyphs now provide small byte-level probes:
+      - regular glyph `42`: source `fb d8 ed 0a` -> rebuilt `75 d8 ed 0a`
+      - regular glyph `194`: source `e8 ac 0a` -> rebuilt `ac f5 0a`
+      - bold glyph `42`: source `fb e7 e4 0a` -> rebuilt `77 e7 e4 0a`
+      - bold glyph `89`: source `20 fb 6b 1d` -> rebuilt `20 fb 15 1d`
+    - broader regular-family byte scans now show that those small probes are not isolated:
+      - all `CharStrings` keep the same byte lengths between source and rebuilt
+      - only a small minority of glyphs are byte-identical; the dominant mismatch family is a first-byte category swap inside stable 2-byte slots
+      - the strongest recurring family is:
+        - source Type 2 number leads such as `f7` / `fb` becoming operator-range bytes such as `15`, `06`, `07`, or `0a`
+        - and the reverse family where operator bytes such as `13`, `08`, `0a`, or `15` become number leads such as `f7` / `fb`
+      - current top local regular pairs include:
+        - `f7 -> fb` (`12465`)
+        - `fb -> f7` (`10811`)
+        - `13 -> f7` (`7698`)
+        - `f7 -> 15` (`6776`)
+        - `f7 -> 06` (`6601`)
+        - `f7 -> 07` (`6302`)
+      - in a majority of those pairwise examples, the second byte in the 2-byte slot stays unchanged
+      - practical reading:
+        - this does not yet look like random corruption
+        - it increasingly looks like a stable state-machine or token-kind rewrite bug on the first byte of a local 2-byte unit
+    - current working hypothesis:
+      - the remaining `CharStrings` problem is not a single global wrapper mistake
+      - at least two payload-level transforms seem to be present:
+        - a very early operand rewrite that often hits `callsubr` / `callgsubr` / first-stem arguments
+        - a later local numeric rewrite inside otherwise recognizable outline programs such as `.notdef`
+  - direct byte comparison against the matching source `CFF ` table shows the next transformed CID-keyed structures are at least:
+    - `charset`
+    - `FDSelect`
+    - `FDArray`
+    - `Private DICT` / local subr data referenced by `FDArray`
+  - cross-weight local findings across the 7 Source Han Sans SC cases:
+    - `charset` is mostly stable; 6/7 weights matched source directly, with the current observed anomaly concentrated in bold
+    - `FDSelect` is 7/7 transformed but keeps a stable `format 3` container shape
+    - `FDArray` is 7/7 transformed in the object bodies while preserving the INDEX header shape
+  - current regular-case structural facts:
+    - `charset` is already identical to source in regular
+    - `FDSelect` keeps the same `format=3` / `nranges=113` shape but its range starts are corrupted
+    - `FDArray` preserves object `0`, but objects `1..17` are no longer standard `Font DICT` byte streams
+    - only private dict `0` still matches source; the later private dicts diverge
+  - `CharStrings INDEX` is repaired; the next reverse-engineering pass should focus on those CID structures rather than the outer wrapper
 
 ## Validation State
 
 - `cargo test -p fonttool-cff --test office_static -- --nocapture` passes on this branch.
 - The focused rebuild tests now prove:
   - the rebuilt bytes start with the tracked standard prefix
-  - the post-prefix bytes splice into the expected Office tail
+  - the `Global Subr data .. charset` window is restored from tracked source bytes
+  - the `FDSelect` window is restored from tracked source bytes
+  - the `FDArray..end` tail is restored from tracked source bytes
+  - untouched windows still splice into the expected Office tail
   - the rebuilt prefix exposes standard `Name`, `Top DICT`, `String`, and `Global Subr` framing
-
+  - the rebuilt `CharStrings INDEX` offsets now exactly match the tracked standard reference arrays for both fixtures
+  - the donor-shell SFNT rebuild now materializes a standard parseable `OTTO` for the regular fixture
+  - the same test file also records that deeper allsorts/CFF outline conversion still fails on the current bounded rebuild
+    - optional local control tests also record:
+      - full source backfill from `global_subrs_data_start` onward unblocks `convert_otf_to_ttf()`
+      - partial source backfill of `Global Subr` data plus the `FDArray` tail only advances the failure to outline visitation
+      - the current rebuild's first outline failure is `.notdef`
+      - `.notdef` keeps its Type 2 token prefix through token `27` and only diverges midstream
+      - several 3-4 byte `callsubr` / `callgsubr` glyphs expose stable operand-prefix rewrites in both regular and bold
+      - single-glyph source backfill now proves the first outline blocker is not unique to `.notdef`; once glyph `0` is fixed, the next broken glyph is `quotedbl`, then `numbersign`
+      - extending that chain now pushes the first failure onward to `dollar` and then `percent`
+      - suffix-only backfill is already sufficient for glyph `3` and glyph `4`
+      - glyph `5` is the first early glyph where simple prefix-only or suffix-only repair is not enough
+      - glyph `5` now localizes further to `prefix + late window`; the current middle diff cluster is not required to move the failure onward
+      - that late window now narrows again to a single byte `72`; the preceding `hintmask/mask` bytes `[70,72)` and byte `73` are not currently causal
+      - glyph `6` is already partly localized too: prefix repair changes the failure class, while a coarse late tail still participates in the earlier invalid-operator failure
+      - source `CharStrings` payload alone now fully unblocks conversion on top of the current rebuild
+      - the tracked bold fixture behaves the same way after the new `FDSelect` patch
+      - the current diagnostic kind-swapped-lead helper is already strong enough to explain:
+        - glyph `5`'s late byte-72 fix, once its prefix is source-backed
+        - glyph `6`'s prefix-side invalid-operator family, without source-backing its whole prefix

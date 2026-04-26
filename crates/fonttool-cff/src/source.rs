@@ -27,7 +27,9 @@ pub fn load_font_source(bytes: &[u8]) -> Result<Vec<u8>, CffError> {
     for tag in tags {
         let data = provider
             .table_data(tag)
-            .map_err(|error| CffError::InvalidInput(format!("failed to read source table: {error}")))?
+            .map_err(|error| {
+                CffError::InvalidInput(format!("failed to read source table: {error}"))
+            })?
             .ok_or_else(|| {
                 CffError::InvalidInput(format!(
                     "font source advertised missing table `{}`",
@@ -37,6 +39,7 @@ pub fn load_font_source(bytes: &[u8]) -> Result<Vec<u8>, CffError> {
         font.add_table(tag, data.into_owned());
     }
 
-    serialize_sfnt(&font)
-        .map_err(|error| CffError::InvalidInput(format!("failed to serialize materialized SFNT: {error}")))
+    serialize_sfnt(&font).map_err(|error| {
+        CffError::InvalidInput(format!("failed to serialize materialized SFNT: {error}"))
+    })
 }

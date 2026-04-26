@@ -162,6 +162,8 @@ version = "0.1.0"
 dependencies = [
  "allsorts",
  "cc",
+ "fonttool-eot",
+ "fonttool-mtx",
  "fonttool-sfnt",
 ]
 

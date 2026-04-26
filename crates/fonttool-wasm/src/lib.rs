@@ -70,7 +70,10 @@ mod tests {
         .expect("wasm bridge should convert static CFF input to EOT");
 
         assert_eq!(result.output_kind, OutputKind::Eot);
-        assert!(!result.data.is_empty(), "wasm bridge should return encoded bytes");
+        assert!(
+            !result.data.is_empty(),
+            "wasm bridge should return encoded bytes"
+        );
     }
 
     #[test]
