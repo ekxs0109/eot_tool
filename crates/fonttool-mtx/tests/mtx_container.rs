@@ -1,4 +1,4 @@
-use fonttool_mtx::{parse_mtx_container, MtxContainerError};
+use fonttool_mtx::{pack_mtx_container, parse_mtx_container, MtxContainerError, MTX_PRELOAD_SIZE};
 
 fn fixture_bytes() -> Vec<u8> {
     let mut bytes = vec![0u8; 18];
@@ -48,4 +48,19 @@ fn rejects_invalid_block_order() {
 
     let err = parse_mtx_container(&bytes).unwrap_err();
     assert_eq!(err, MtxContainerError::InvalidMetadata);
+}
+
+#[test]
+fn pack_uses_java_compatible_copy_limit_upper_bound() {
+    let block1 = vec![0xaa; 12];
+    let block2 = vec![0xbb; 25];
+    let block3 = vec![0xcc; 7];
+
+    let packed = pack_mtx_container(&block1, Some(&block2), Some(&block3)).unwrap();
+    let container = parse_mtx_container(&packed).unwrap();
+
+    assert_eq!(
+        container.copy_dist as usize,
+        MTX_PRELOAD_SIZE + block1.len().max(block2.len()).max(block3.len()),
+    );
 }

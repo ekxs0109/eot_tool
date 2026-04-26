@@ -28,11 +28,7 @@ fn fixture(path: &str) -> PathBuf {
     workspace_root().join(path)
 }
 
-fn assert_embedded_roundtrip(
-    data: &[u8],
-    extension: &str,
-    assert_decoded: fn(&Path),
-) {
+fn assert_embedded_roundtrip(data: &[u8], extension: &str, assert_decoded: fn(&Path)) {
     let output_path = if extension == "fntdata" {
         support::temp_fntdata()
     } else {

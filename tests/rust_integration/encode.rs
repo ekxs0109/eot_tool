@@ -836,6 +836,69 @@ fn embedded_font_copy_dist(bytes: &[u8]) -> u32 {
     container.copy_dist
 }
 
+fn assert_roundtrip_preserves_legacy_header_flags(relative_fixture: &str) {
+    let input_path = support::fixture_path(relative_fixture);
+    let decoded_path = support::temp_ttf();
+    let encoded_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![decoded_path.clone(), encoded_path.clone()]);
+
+    let original_bytes = fs::read(&input_path).expect("embedded fixture should be readable");
+    let original_header =
+        parse_eot_header(&original_bytes).expect("original embedded header should parse");
+
+    run_decode(&input_path, &decoded_path);
+    run_encode(&decoded_path, &encoded_path);
+
+    let encoded_bytes = fs::read(&encoded_path).expect("encoded eot should be readable");
+    let encoded_header =
+        parse_eot_header(&encoded_bytes).expect("roundtrip embedded header should parse");
+    let original_family = decode_utf16le_string(original_header.family_name)
+        .trim_end_matches('\0')
+        .to_string();
+    let encoded_family = decode_utf16le_string(encoded_header.family_name)
+        .trim_end_matches('\0')
+        .to_string();
+
+    assert_eq!(
+        encoded_header.charset, original_header.charset,
+        "decode -> encode should preserve the legacy EOT charset byte for Office compatibility"
+    );
+    assert_eq!(
+        encoded_header.italic, original_header.italic,
+        "decode -> encode should preserve the legacy EOT italic byte for Office compatibility"
+    );
+    assert_eq!(
+        encoded_family, original_family,
+        "decode -> encode should preserve the legacy EOT family name Office uses for font binding"
+    );
+}
+
+fn assert_roundtrip_preserves_mtx_copy_distance(relative_fixture: &str) {
+    let input_path = support::fixture_path(relative_fixture);
+    let decoded_path = support::temp_ttf();
+    let encoded_path = support::temp_eot();
+    let _temps = TempFiles::new(vec![decoded_path.clone(), encoded_path.clone()]);
+
+    let original_report = support::inspect_embedded_font_file(&input_path);
+    run_decode(&input_path, &decoded_path);
+    run_encode(&decoded_path, &encoded_path);
+    let encoded_report = support::inspect_embedded_font_file(&encoded_path);
+
+    assert_eq!(
+        embedded_font_copy_dist(&fs::read(&encoded_path).expect("encoded eot should be readable")),
+        embedded_font_copy_dist(&fs::read(&input_path).expect("original fixture should be readable")),
+        "decode -> encode should preserve the legacy MTX copy distance Office-authored samples use"
+    );
+    assert_eq!(
+        encoded_report.block2.compressed_len, original_report.block2.compressed_len,
+        "decode -> encode should preserve the MTX block2 footprint expected by the original embedded font"
+    );
+    assert_eq!(
+        encoded_report.block3.compressed_len, original_report.block3.compressed_len,
+        "decode -> encode should preserve the MTX block3 footprint expected by the original embedded font"
+    );
+}
+
 #[test]
 fn encode_pptx_case7_preserves_office_save_header_metadata() {
     let source_path = support::fixture_path("testdata/font1.decoded.ttf");
@@ -864,6 +927,26 @@ fn encode_pptx_case7_preserves_office_save_header_metadata() {
         header.root_string_checksum, 0x5047_5342,
         "PowerPoint save compatibility depends on the legacy Java EOT checksum sentinel"
     );
+}
+
+#[test]
+fn encode_roundtrip_preserves_legacy_header_flags_for_smiley_sans_fixture() {
+    assert_roundtrip_preserves_legacy_header_flags("testdata/font1.fntdata");
+}
+
+#[test]
+fn encode_roundtrip_preserves_legacy_header_flags_for_dengxian_fixture() {
+    assert_roundtrip_preserves_legacy_header_flags("testdata/font3.fntdata");
+}
+
+#[test]
+fn encode_roundtrip_preserves_mtx_shape_for_smiley_sans_fixture() {
+    assert_roundtrip_preserves_mtx_copy_distance("testdata/font1.fntdata");
+}
+
+#[test]
+fn encode_roundtrip_preserves_mtx_shape_for_dengxian_fixture() {
+    assert_roundtrip_preserves_mtx_copy_distance("testdata/font3.fntdata");
 }
 
 #[test]
@@ -1013,7 +1096,8 @@ fn subset_output_uses_backreference_compressor_for_block1() {
     fs::write(&source_path, &input_bytes).expect("fixture font should be writable");
     let input_font = load_sfnt(&input_bytes).expect("source font should parse");
     let glyph_ids = GlyphIdRequest::parse_csv("0,36,37,38").expect("glyph ids should parse");
-    let _plan = plan_glyph_subset(&input_font, &glyph_ids, false).expect("subset plan should build");
+    let _plan =
+        plan_glyph_subset(&input_font, &glyph_ids, false).expect("subset plan should build");
     let (subset_font, _subset_warnings) =
         subset_owned_font(input_font, &glyph_ids).expect("pure Rust subset should succeed");
     let subset_bytes = serialize_sfnt(&subset_font).expect("subset sfnt should serialize");

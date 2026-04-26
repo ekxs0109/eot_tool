@@ -84,6 +84,10 @@ fn build_mtx_payload(
         block2: None,
         block3: None,
     });
+    // Keep MTX Copy Limit aligned with the legacy Java/sfntly writer and the
+    // original Office-produced fonts we interoperate with: preload size plus
+    // the largest uncompressed block. This is a conservative compatibility
+    // upper bound, not a smallest-possible value search.
     let copy_dist = block1_sfnt
         .len()
         .max(extra_blocks.block2.map_or(0, |block| block.len()))

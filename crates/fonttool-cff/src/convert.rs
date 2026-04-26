@@ -113,10 +113,7 @@ unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
 
-pub fn convert_otf_to_ttf(
-    bytes: &[u8],
-    axes: &[VariationAxisValue],
-) -> Result<Vec<u8>, CffError> {
+pub fn convert_otf_to_ttf(bytes: &[u8], axes: &[VariationAxisValue]) -> Result<Vec<u8>, CffError> {
     let source_bytes = load_font_source(bytes)?;
     let kind = inspect_otf_font(&source_bytes)?;
     if !kind.is_cff_flavor {
@@ -187,8 +184,9 @@ fn rebuild_truetype_from_outlines(outlines: &[OutlineRecord]) -> Result<Vec<u8>,
 
     let mut serialized_ptr = std::ptr::null_mut();
     let mut serialized_len = 0usize;
-    let rebuild_status =
-        unsafe { tt_rebuilder_build_font(native_outlines.as_ptr(), native_outlines.len(), &mut font) };
+    let rebuild_status = unsafe {
+        tt_rebuilder_build_font(native_outlines.as_ptr(), native_outlines.len(), &mut font)
+    };
     if rebuild_status != 0 {
         unsafe { sfnt_font_destroy(&mut font) };
         return Err(CffError::EncodeFailed(format!(
@@ -239,8 +237,8 @@ fn collect_allsorts_outlines(bytes: &[u8]) -> Result<Vec<OutlineRecord>, CffErro
     let provider = font_file
         .table_provider(0)
         .map_err(|error| CffError::InvalidInput(format!("invalid OTF source: {error}")))?;
-    let mut font =
-        Font::new(provider).map_err(|error| CffError::InvalidInput(format!("invalid OTF source: {error}")))?;
+    let mut font = Font::new(provider)
+        .map_err(|error| CffError::InvalidInput(format!("invalid OTF source: {error}")))?;
 
     if !font.glyph_table_flags.contains(GlyphTableFlags::CFF)
         || font.font_table_provider.sfnt_version() != tag::OTTO
@@ -276,9 +274,9 @@ fn collect_allsorts_outlines(bytes: &[u8]) -> Result<Vec<OutlineRecord>, CffErro
         let advance_width = advance_widths[index];
         let glyph_name = glyph_names.get(glyph_id as usize).cloned();
         let mut sink = QuadraticOutlineSink::default();
-        builder
-            .visit(glyph_id, None, &mut sink)
-            .map_err(|error| CffError::EncodeFailed(format!("failed to visit glyph outline: {error}")))?;
+        builder.visit(glyph_id, None, &mut sink).map_err(|error| {
+            CffError::EncodeFailed(format!("failed to visit glyph outline: {error}"))
+        })?;
         let contours = sink.finish()?;
         outlines.push(OutlineRecord {
             contours,
@@ -305,7 +303,8 @@ impl QuadraticOutlineSink {
             return Err(error);
         }
         if !self.current_contour.is_empty() {
-            self.contours.push(std::mem::take(&mut self.current_contour));
+            self.contours
+                .push(std::mem::take(&mut self.current_contour));
         }
         Ok(self.contours)
     }
@@ -325,11 +324,9 @@ impl QuadraticOutlineSink {
             on_curve,
         };
 
-        if self
-            .current_contour
-            .last()
-            .is_some_and(|last| last.x == point.x && last.y == point.y && last.on_curve == point.on_curve)
-        {
+        if self.current_contour.last().is_some_and(|last| {
+            last.x == point.x && last.y == point.y && last.on_curve == point.on_curve
+        }) {
             return Ok(());
         }
 
@@ -339,7 +336,8 @@ impl QuadraticOutlineSink {
 
     fn finish_current_contour(&mut self) {
         if !self.current_contour.is_empty() {
-            self.contours.push(std::mem::take(&mut self.current_contour));
+            self.contours
+                .push(std::mem::take(&mut self.current_contour));
         }
     }
 }

@@ -11,7 +11,10 @@ pub const MTX_PRELOAD_SIZE: usize = 7168;
 
 pub use cvt::{cvt_decode, cvt_encode, CvtCodecError};
 pub use hdmx::{hdmx_decode, hdmx_encode, HdmxCodecError};
-pub use lz::{compress_lz, compress_lz_literals, decompress_lz, LzDecompressError};
+pub use lz::{
+    analyze_lz, compress_lz, compress_lz_literals, decompress_lz, decompress_lz_with_limit,
+    LzAnalysis, LzDecompressError,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MtxContainerError {
@@ -50,6 +53,9 @@ impl std::error::Error for MtxPackError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtxContainer<'a> {
     pub num_blocks: u8,
+    // This is the MTX header's Copy Limit field. For compatibility we treat it
+    // as a Java/sfntly-style safe upper bound rather than trying to encode the
+    // smallest workable back-reference span for a specific payload.
     pub copy_dist: u32,
     pub block1: &'a [u8],
     pub block2: Option<&'a [u8]>,

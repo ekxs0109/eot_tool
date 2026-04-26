@@ -13,10 +13,30 @@ const EOT_ROOT_STRING_XOR_KEY: u32 = 0x5047_5342;
 const NAME_PLATFORM_WINDOWS: u16 = 3;
 const NAME_ENCODING_UNICODE_BMP: u16 = 1;
 const NAME_LANGUAGE_EN_US: u16 = 0x0409;
+const NAME_LANGUAGE_JA_JP: u16 = 0x0411;
+const NAME_LANGUAGE_KO_KR: u16 = 0x0412;
+const NAME_LANGUAGE_ZH_TW: u16 = 0x0404;
+const NAME_LANGUAGE_ZH_CN: u16 = 0x0804;
 const NAME_ID_FAMILY: u16 = 1;
 const NAME_ID_STYLE: u16 = 2;
 const NAME_ID_FULL: u16 = 4;
 const NAME_ID_VERSION: u16 = 5;
+const EOT_CHARSET_ANSI: u8 = 0;
+const EOT_CHARSET_DEFAULT: u8 = 1;
+const EOT_CHARSET_SHIFTJIS: u8 = 128;
+const EOT_CHARSET_HANGEUL: u8 = 129;
+const EOT_CHARSET_JOHAB: u8 = 130;
+const EOT_CHARSET_GB2312: u8 = 134;
+const EOT_CHARSET_CHINESEBIG5: u8 = 136;
+const EOT_CHARSET_GREEK: u8 = 161;
+const EOT_CHARSET_TURKISH: u8 = 162;
+const EOT_CHARSET_VIETNAMESE: u8 = 163;
+const EOT_CHARSET_HEBREW: u8 = 177;
+const EOT_CHARSET_ARABIC: u8 = 178;
+const EOT_CHARSET_BALTIC: u8 = 186;
+const EOT_CHARSET_RUSSIAN: u8 = 204;
+const EOT_CHARSET_THAI: u8 = 222;
+const EOT_CHARSET_EASTEUROPE: u8 = 238;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EotHeaderError {
@@ -139,7 +159,8 @@ pub fn build_eot_file(
     options: impl Into<EotBuildOptions>,
 ) -> Result<Vec<u8>, EotEncodeError> {
     let options = options.into();
-    let family_name = extract_name_utf16le(name_table, NAME_ID_FAMILY);
+    let charset = derive_eot_charset(os2_table);
+    let family_name = extract_family_name_utf16le(name_table, charset);
     let style_name = extract_name_utf16le(name_table, NAME_ID_STYLE);
     let version_name = extract_name_utf16le(name_table, NAME_ID_VERSION);
     let full_name = extract_name_utf16le(name_table, NAME_ID_FULL);
@@ -199,14 +220,8 @@ pub fn build_eot_file(
         output.extend_from_slice(&[0u8; 10]);
     }
 
-    output.push(1);
-    output.push(
-        if os2_table.len() >= 64 && u16::from_be_bytes([os2_table[62], os2_table[63]]) & 1 != 0 {
-            1
-        } else {
-            0
-        },
-    );
+    output.push(charset);
+    output.push(derive_eot_italic_byte(head_table, os2_table));
 
     push_u32_le(
         &mut output,
@@ -493,17 +508,137 @@ fn push_length_prefixed_bytes(dst: &mut Vec<u8>, bytes: &[u8]) -> Result<(), Eot
     Ok(())
 }
 
+fn derive_eot_charset(os2_table: &[u8]) -> u8 {
+    let os2_version = read_be_u16(os2_table, 0).unwrap_or(0);
+    if os2_version < 1 || os2_table.len() < 86 {
+        return EOT_CHARSET_DEFAULT;
+    }
+
+    let code_page_range1 =
+        u32::from_be_bytes([os2_table[78], os2_table[79], os2_table[80], os2_table[81]]);
+    let code_page_range2 =
+        u32::from_be_bytes([os2_table[82], os2_table[83], os2_table[84], os2_table[85]]);
+
+    let has_code_page = |bit: u8| -> bool {
+        if bit < 32 {
+            code_page_range1 & (1u32 << bit) != 0
+        } else {
+            code_page_range2 & (1u32 << (bit - 32)) != 0
+        }
+    };
+
+    if has_code_page(18) {
+        return EOT_CHARSET_GB2312;
+    }
+    if has_code_page(17) {
+        return EOT_CHARSET_SHIFTJIS;
+    }
+    if has_code_page(19) {
+        return EOT_CHARSET_HANGEUL;
+    }
+    if has_code_page(21) {
+        return EOT_CHARSET_JOHAB;
+    }
+    if has_code_page(20) {
+        return EOT_CHARSET_CHINESEBIG5;
+    }
+    if has_code_page(16) {
+        return EOT_CHARSET_THAI;
+    }
+    if has_code_page(0) {
+        return EOT_CHARSET_ANSI;
+    }
+    if has_code_page(8) {
+        return EOT_CHARSET_VIETNAMESE;
+    }
+    if has_code_page(7) {
+        return EOT_CHARSET_BALTIC;
+    }
+    if has_code_page(6) {
+        return EOT_CHARSET_ARABIC;
+    }
+    if has_code_page(5) {
+        return EOT_CHARSET_HEBREW;
+    }
+    if has_code_page(4) {
+        return EOT_CHARSET_TURKISH;
+    }
+    if has_code_page(3) {
+        return EOT_CHARSET_GREEK;
+    }
+    if has_code_page(2) {
+        return EOT_CHARSET_RUSSIAN;
+    }
+    if has_code_page(1) {
+        return EOT_CHARSET_EASTEUROPE;
+    }
+
+    EOT_CHARSET_DEFAULT
+}
+
+fn derive_eot_italic_byte(head_table: &[u8], os2_table: &[u8]) -> u8 {
+    let os2_italic =
+        os2_table.len() >= 64 && u16::from_be_bytes([os2_table[62], os2_table[63]]) & 1 != 0;
+    let head_italic = read_be_u16(head_table, 44).is_some_and(|mac_style| mac_style & 0x0002 != 0);
+
+    if os2_italic || head_italic {
+        u8::MAX
+    } else {
+        0
+    }
+}
+
+fn extract_family_name_utf16le(name_table: &[u8], charset: u8) -> Vec<u8> {
+    let mut preferred_languages = Vec::new();
+    match charset {
+        EOT_CHARSET_GB2312 => preferred_languages.push(NAME_LANGUAGE_ZH_CN),
+        EOT_CHARSET_CHINESEBIG5 => preferred_languages.push(NAME_LANGUAGE_ZH_TW),
+        EOT_CHARSET_SHIFTJIS => preferred_languages.push(NAME_LANGUAGE_JA_JP),
+        EOT_CHARSET_HANGEUL | EOT_CHARSET_JOHAB => preferred_languages.push(NAME_LANGUAGE_KO_KR),
+        _ => {}
+    }
+
+    extract_name_utf16le_with_fallbacks(name_table, NAME_ID_FAMILY, &preferred_languages)
+}
+
 fn extract_name_utf16le(name_table: &[u8], name_id: u16) -> Vec<u8> {
-    let Some(bytes) = find_name_record(
+    extract_name_utf16le_with_fallbacks(name_table, name_id, &[])
+}
+
+fn extract_name_utf16le_with_fallbacks(
+    name_table: &[u8],
+    name_id: u16,
+    preferred_languages: &[u16],
+) -> Vec<u8> {
+    for language_id in preferred_languages
+        .iter()
+        .copied()
+        .chain([NAME_LANGUAGE_EN_US])
+    {
+        if let Some(bytes) = find_name_record(
+            name_table,
+            NAME_PLATFORM_WINDOWS,
+            NAME_ENCODING_UNICODE_BMP,
+            language_id,
+            name_id,
+        ) {
+            return utf16be_to_utf16le(bytes);
+        }
+    }
+
+    if let Some(bytes) = find_name_record_any_language(
         name_table,
         NAME_PLATFORM_WINDOWS,
         NAME_ENCODING_UNICODE_BMP,
-        NAME_LANGUAGE_EN_US,
         name_id,
-    ) else {
-        return Vec::new();
-    };
+    ) {
+        return utf16be_to_utf16le(bytes);
+    }
 
+    Vec::new()
+}
+
+fn utf16be_to_utf16le(bytes: &[u8]) -> Vec<u8> {
     if bytes.len() % 2 != 0 {
         return Vec::new();
     }
@@ -536,6 +671,39 @@ fn find_name_record(
         if record_platform != platform_id
             || record_encoding != encoding_id
             || record_language != language_id
+            || record_name != name_id
+        {
+            continue;
+        }
+
+        let length = usize::from(u16::from_be_bytes([record[8], record[9]]));
+        let offset = usize::from(u16::from_be_bytes([record[10], record[11]]));
+        let start = storage_offset.checked_add(offset)?;
+        let end = start.checked_add(length)?;
+        return name_table.get(start..end);
+    }
+
+    None
+}
+
+fn find_name_record_any_language(
+    name_table: &[u8],
+    platform_id: u16,
+    encoding_id: u16,
+    name_id: u16,
+) -> Option<&[u8]> {
+    let count = usize::from(read_be_u16(name_table, 2)?);
+    let storage_offset = usize::from(read_be_u16(name_table, 4)?);
+
+    for index in 0..count {
+        let record_offset = 6 + index * 12;
+        let record = name_table.get(record_offset..record_offset + 12)?;
+        let record_platform = u16::from_be_bytes([record[0], record[1]]);
+        let record_encoding = u16::from_be_bytes([record[2], record[3]]);
+        let record_name = u16::from_be_bytes([record[6], record[7]]);
+
+        if record_platform != platform_id
+            || record_encoding != encoding_id
             || record_name != name_id
         {
             continue;

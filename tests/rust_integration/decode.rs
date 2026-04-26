@@ -127,6 +127,31 @@ fn decode_font1_fntdata_writes_otto_sfnt() {
 }
 
 #[test]
+fn decode_presentation1_font2_fntdata_writes_otto_sfnt() {
+    let input_path = support::fixture_path("build/presentation1_more_experiments/orig/ppt/fonts/font2.fntdata");
+    let output_path = temp_out();
+
+    let output = run_fonttool([
+        "decode",
+        input_path
+            .to_str()
+            .expect("fixture path should be valid utf-8"),
+        output_path
+            .to_str()
+            .expect("temp path should be valid utf-8"),
+    ]);
+
+    assert!(
+        output.status.success(),
+        "expected Presentation1 font2 decode to succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_otto_header_matches_fixture(&output_path);
+
+    let _ = fs::remove_file(output_path);
+}
+
+#[test]
 fn decode_otto_cff2_variable_fixture_writes_variable_otto_output() {
     let input_path = support::tracked_testdata_path("testdata/otto-cff2-variable.fntdata");
     let output_path = temp_out();
